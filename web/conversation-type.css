@@ -1,0 +1,34 @@
+/* Conversation reading scale: keep execution metadata compact while making dialogue primary. */
+.message.user .bubble p,
+.assistant-text,
+.stream-message {
+  font-size: 14px;
+  line-height: 1.72;
+  letter-spacing: .002em;
+}
+
+.message.user .bubble {
+  padding: 12px 15px;
+}
+
+.assistant-text,
+.stream-message {
+  padding-right: 6px;
+}
+
+.stream-message code,
+.assistant-text code {
+  font-size: .88em;
+}
+
+.message time {
+  font-size: 8px;
+}
+
+@media (max-width: 360px) {
+  .message.user .bubble p,
+  .assistant-text,
+  .stream-message {
+    font-size: 13.5px;
+  }
+}

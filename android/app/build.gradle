@@ -1,0 +1,70 @@
+plugins {
+    id "com.android.application"
+}
+
+def setting = { String propertyName, String environmentName, String fallback ->
+    providers.gradleProperty(propertyName)
+        .orElse(providers.environmentVariable(environmentName))
+        .orElse(fallback)
+        .get()
+}
+def javaString = { String value -> "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\"" }
+def signingFile = file(setting("wittSigningProperties", "WITT_SIGNING_PROPERTIES", "signing.properties"))
+def webUrl = setting("wittWebUrl", "WITT_WEB_URL", "https://witt.example.com/vault/index.html")
+def apiUrl = setting("wittApiUrl", "WITT_API_URL", "https://witt.example.com/vault-api/")
+def updateUrl = setting("wittUpdateUrl", "WITT_UPDATE_URL", "https://witt.example.com/vault/update.json")
+def signing = new Properties()
+if (signingFile.exists()) signingFile.withInputStream { signing.load(it) }
+
+android {
+    namespace "com.codevibe.dropvault"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.codevibe.dropvault"
+        minSdk 26
+        targetSdk 35
+        versionCode 28
+        versionName "2.2.9"
+        buildConfigField "String", "WEB_URL", javaString(webUrl)
+        buildConfigField "String", "API_URL", javaString(apiUrl)
+        buildConfigField "String", "UPDATE_URL", javaString(updateUrl)
+    }
+
+    signingConfigs {
+        release {
+            if (signingFile.exists()) {
+                storeFile file(signing.getProperty("storeFile"))
+                storePassword signing.getProperty("storePassword")
+                keyAlias signing.getProperty("keyAlias")
+                keyPassword signing.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+        }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            if (signingFile.exists()) signingConfig signingConfigs.release
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation "androidx.core:core:1.15.0"
+    implementation "androidx.webkit:webkit:1.12.1"
+}

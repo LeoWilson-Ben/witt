@@ -1,0 +1,743 @@
+:root {
+  --cinema-text: #fff;
+  --cinema-muted: #a7a7ad;
+  --cinema-line: rgba(255, 255, 255, .13);
+  --cinema-glass: rgba(255, 255, 255, .01);
+  --cinema-glass-raised: rgba(13, 13, 18, .48);
+  --cinema-panel: rgba(10, 10, 15, .76);
+  --cinema-shadow: 0 24px 70px rgba(0, 0, 0, .28);
+  color-scheme: dark;
+  font-family: "Inter", sans-serif;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  color: var(--cinema-text);
+  background: #000;
+  font-family: "Inter", sans-serif;
+}
+
+.cinematic-video {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.cinematic-bottom-blur {
+  position: fixed;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(28px);
+  -webkit-mask-image: linear-gradient(to top, black 0%, transparent 45%);
+  mask-image: linear-gradient(to top, black 0%, transparent 45%);
+}
+
+.liquid-glass {
+  position: relative;
+  overflow: hidden;
+  border: none;
+  background: rgba(255, 255, 255, .01);
+  background-blend-mode: luminosity;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, .1);
+}
+
+.liquid-glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.4px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, .45) 0%,
+    rgba(255, 255, 255, .15) 20%,
+    rgba(255, 255, 255, 0) 40%,
+    rgba(255, 255, 255, 0) 60%,
+    rgba(255, 255, 255, .15) 80%,
+    rgba(255, 255, 255, .45) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+@keyframes blurFadeUp {
+  from {
+    opacity: 0;
+    filter: blur(20px);
+    transform: translateY(40px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+.animate-blur-fade-up {
+  opacity: 0;
+  animation: blurFadeUp 1s ease-out forwards;
+}
+
+.app-shell {
+  position: relative;
+  z-index: 2;
+  background: transparent;
+}
+
+.topbar {
+  z-index: 50;
+  color: #fff;
+  border-color: rgba(255, 255, 255, .1);
+  background: rgba(0, 0, 0, .08);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.topbar .icon-button,
+.quota-button {
+  color: #fff;
+  background: rgba(255, 255, 255, .01);
+}
+
+.topbar .icon-button:active {
+  color: #000;
+  background: #fff;
+}
+
+.avatar,
+.profile-monogram,
+.profile-letter {
+  color: #000;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .22);
+}
+
+.identity-copy strong,
+.identity-copy small,
+.quota-button small,
+.quota-button b {
+  color: #fff;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, .45);
+}
+
+.identity-copy small i {
+  background: #6fffd4;
+  box-shadow: 0 0 0 4px rgba(111, 255, 212, .12), 0 0 14px rgba(111, 255, 212, .55);
+}
+
+.delivery-button b {
+  border-color: rgba(0, 0, 0, .5);
+  color: #000;
+  background: #fff;
+}
+
+.quota-button i {
+  background: rgba(255, 255, 255, .16);
+}
+
+.quota-button em {
+  background: #fff;
+}
+
+.chat-stage {
+  color: #fff;
+  background: transparent;
+  scrollbar-color: rgba(255, 255, 255, .25) transparent;
+}
+
+.welcome {
+  padding: 48px 8px 150px;
+  align-items: flex-start;
+  justify-content: flex-end;
+  color: #fff;
+  text-align: left;
+}
+
+.welcome-mark {
+  width: 64px;
+  height: 64px;
+  margin: 0 0 24px;
+  color: #000;
+  background: #fff;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, .22);
+}
+
+.welcome .eyebrow,
+.eyebrow {
+  color: rgba(255, 255, 255, .62);
+}
+
+.welcome h1 {
+  margin: 10px 0 12px;
+  font-size: clamp(35px, 9vw, 58px);
+  font-weight: 400;
+  letter-spacing: -.055em;
+  text-shadow: 0 8px 30px rgba(0, 0, 0, .28);
+}
+
+.welcome > p {
+  max-width: 470px;
+  color: rgba(255, 255, 255, .66);
+  font-size: 13px;
+}
+
+.suggestions {
+  margin-top: 26px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.suggestions button,
+.stream-action,
+.stream-action-group,
+.activity,
+.inline-image,
+.attachment-chip {
+  border: 1px solid var(--cinema-line);
+  color: #fff;
+  background: rgba(255, 255, 255, .025);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, .08), 0 12px 30px rgba(0, 0, 0, .12);
+}
+
+.suggestions button {
+  min-width: 0;
+  padding: 13px;
+  border-radius: 18px;
+}
+
+.suggestions button:active {
+  color: #000;
+  background: #fff;
+}
+
+.suggestions small,
+.stream-action,
+.stream-group-copy small,
+.activity p,
+.inline-image small {
+  color: var(--cinema-muted);
+}
+
+.message {
+  animation: cinematic-message-in .38s ease-out both;
+}
+
+.assistant-text,
+.stream-message.final {
+  color: #fff;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, .28);
+}
+
+.stream-message.commentary {
+  color: rgba(255, 255, 255, .78);
+}
+
+.assistant-text code,
+.stream-message code {
+  color: #fff;
+  background: rgba(255, 255, 255, .1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
+}
+
+.message.user .bubble {
+  color: #050505;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, .18);
+}
+
+.message time {
+  color: rgba(255, 255, 255, .46);
+}
+
+.stream-action > span,
+.stream-group-icon,
+.activity summary > span {
+  color: #fff;
+  background: rgba(255, 255, 255, .08);
+}
+
+.stream-action p,
+.stream-group-copy strong,
+.activity summary > b {
+  color: rgba(255, 255, 255, .82);
+}
+
+.stream-action-list .stream-action,
+.stream-action.file.completed {
+  color: rgba(255, 255, 255, .78);
+  background: rgba(255, 255, 255, .035);
+}
+
+.approval-card,
+.approval-card.accepted {
+  color: #fff;
+  border-color: rgba(255, 255, 255, .14);
+  background: rgba(8, 8, 12, .46);
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  backdrop-filter: blur(16px) saturate(1.15);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .24), inset 0 1px 1px rgba(255, 255, 255, .1);
+}
+
+.approval-card header strong,
+.approval-card > p,
+.approval-evidence code,
+.approval-resolution {
+  color: #fff;
+}
+
+.approval-card header small,
+.approval-evidence span,
+.approval-note {
+  color: rgba(255, 255, 255, .55);
+}
+
+.approval-card header > b,
+.approval-evidence > div {
+  color: rgba(255, 255, 255, .8);
+  background: rgba(255, 255, 255, .065);
+}
+
+.approval-shield,
+.approval-card.accepted .approval-shield {
+  color: #000;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .2);
+}
+
+.approval-shield::before {
+  border-color: #111;
+}
+
+.inline-image {
+  background: rgba(0, 0, 0, .32);
+}
+
+.inline-image > span {
+  color: #fff;
+  background: rgba(0, 0, 0, .64);
+}
+
+.composer-wrap {
+  z-index: 10;
+  border: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.composer {
+  border: 0;
+  color: #fff;
+  background: rgba(255, 255, 255, .01);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, .1), 0 16px 45px rgba(0, 0, 0, .2);
+}
+
+.composer textarea {
+  color: #fff;
+}
+
+.composer textarea::placeholder,
+.composer-hint,
+.composer-meta p {
+  color: rgba(255, 255, 255, .5);
+}
+
+.attach-button,
+.composer-meta button {
+  color: #fff;
+  background: rgba(255, 255, 255, .04);
+}
+
+.send-button,
+.send-button:disabled,
+.composer.has-active-turn .send-button.working {
+  color: #000;
+  background: #fff !important;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .28) !important;
+}
+
+.send-button.sending::after {
+  border-color: rgba(0, 0, 0, .25);
+  border-top-color: #000;
+}
+
+.send-button.working::after {
+  border-color: rgba(0, 0, 0, .2);
+  border-top-color: #000;
+}
+
+.composer.has-active-turn {
+  border: 0;
+  background: rgba(255, 255, 255, .035);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, .13), 0 0 24px rgba(255, 255, 255, .08);
+  animation: cinematic-glass-pulse 2.8s ease-in-out infinite;
+}
+
+.composer.has-active-turn::before {
+  display: none;
+}
+
+.composer-meta {
+  color: rgba(255, 255, 255, .62);
+  background: transparent;
+}
+
+.drawer-backdrop,
+.sheet-backdrop,
+.dialog-backdrop {
+  background: rgba(0, 0, 0, .42);
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
+}
+
+.drawer-panel,
+.sheet-panel,
+.profile-panel,
+.dialog-card,
+.quota-confirm-card {
+  color: #fff;
+  border-color: rgba(255, 255, 255, .12);
+  background: var(--cinema-panel);
+  -webkit-backdrop-filter: blur(28px) saturate(1.1);
+  backdrop-filter: blur(28px) saturate(1.1);
+  box-shadow: var(--cinema-shadow), inset 0 1px 1px rgba(255, 255, 255, .1);
+}
+
+:root[data-theme] .drawer-panel,
+:root[data-theme] .sheet-panel,
+:root[data-theme] .profile-panel {
+  color: #fff;
+  background: var(--cinema-panel);
+}
+
+.drawer-panel {
+  border-right: 1px solid rgba(255, 255, 255, .1);
+}
+
+.sheet-handle {
+  background: rgba(255, 255, 255, .28);
+}
+
+.drawer-head h2,
+.sheet-head h2,
+.dialog-card h3,
+.sheet-panel section > h3,
+.profile-hero strong,
+.delivery-empty strong,
+.usage-error strong {
+  color: #fff;
+}
+
+.drawer-new,
+.save-settings,
+.device-invite button,
+.usage-error button,
+#confirmQuotaReset {
+  color: #000;
+  background: #fff;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .24);
+}
+
+.conversation-row.active,
+.drawer-profile,
+.drawer-theme,
+.project-options > button,
+.model-options > button,
+.reasoning-options button,
+.access-options button,
+.delivery-file,
+.profile-hero,
+.usage-stats article,
+.usage-card,
+.quota-compact,
+.device-admin,
+.dialog-card button,
+.quota-confirm-card {
+  color: #fff;
+  border-color: rgba(255, 255, 255, .11);
+  background: rgba(255, 255, 255, .045);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, .06);
+}
+
+.project-options > button.selected,
+.model-options > button.selected,
+.reasoning-options button.selected,
+.access-options button.selected {
+  color: #fff;
+  border-color: rgba(255, 255, 255, .42);
+  background: rgba(255, 255, 255, .12);
+}
+
+.conversation-open strong,
+.drawer-profile strong,
+.project-options strong,
+.model-options strong,
+.reasoning-options strong,
+.access-options span,
+.delivery-file strong,
+.usage-stats strong,
+.usage-card strong {
+  color: #fff;
+}
+
+.conversation-open small,
+.drawer-profile small,
+.drawer-theme,
+.project-intro,
+.project-options small,
+.model-options small,
+.reasoning-options small,
+.reasoning-note,
+.access-options small,
+.delivery-intro,
+.delivery-file small,
+.profile-hero small,
+.usage-stats small,
+.usage-card small,
+.usage-card footer,
+.dialog-card p {
+  color: rgba(255, 255, 255, .52);
+}
+
+.conversation-mark,
+.project-code,
+.model-glyph,
+.delivery-type,
+.dialog-icon {
+  color: #000;
+  background: #fff;
+}
+
+.model-glyph.sol,
+.model-glyph.terra,
+.model-glyph.luna,
+.usage-stat.lifetime > i,
+.usage-stat.streak > i,
+.usage-stat.peak > i {
+  color: #000;
+  background: #fff;
+}
+
+.theme-options,
+.drawer-footer button,
+.dialog-card button,
+#cancelQuotaReset {
+  color: rgba(255, 255, 255, .72);
+  border-color: rgba(255, 255, 255, .1);
+  background: rgba(255, 255, 255, .05);
+}
+
+.theme-options button.selected {
+  color: #000;
+  background: #fff;
+}
+
+.usage-day,
+.usage-card footer i {
+  background: rgba(255, 255, 255, .1);
+}
+
+.usage-day.level-1,
+.usage-card footer i.level-1 { background: rgba(255, 255, 255, .28); }
+.usage-day.level-2,
+.usage-card footer i.level-2 { background: rgba(255, 255, 255, .48); }
+.usage-day.level-3,
+.usage-card footer i.level-3 { background: rgba(255, 255, 255, .7); }
+.usage-day.level-4,
+.usage-card footer i.level-4 { background: #fff; }
+
+.quota-compact {
+  color: #fff;
+  border-color: rgba(255, 255, 255, .11) !important;
+  background: rgba(255, 255, 255, .045) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, .06) !important;
+}
+
+.quota-compact .weekly-quota-summary {
+  color: #fff;
+  background: rgba(255, 255, 255, .07);
+}
+
+.quota-compact .weekly-quota-summary small,
+.quota-compact .weekly-quota-summary > span,
+.quota-compact .quota-action-row small {
+  color: rgba(255, 255, 255, .52);
+}
+
+.quota-compact .weekly-quota-summary > i {
+  background: rgba(255, 255, 255, .12);
+}
+
+.quota-compact .weekly-quota-summary b {
+  background: #fff;
+  box-shadow: 0 0 14px rgba(255, 255, 255, .18);
+}
+
+.quota-compact .quota-action-row {
+  border-color: rgba(255, 255, 255, .09);
+}
+
+.quota-compact .glow-reset {
+  color: #000 !important;
+  border-color: #fff !important;
+  background: #fff !important;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .24) !important;
+}
+
+.quota-compact .glow-reset::before,
+.quota-compact .glow-reset::after,
+.quota-compact .glow-reset i,
+.quota-compact .glow-reset em {
+  animation: none;
+}
+
+.quota-compact .glow-reset::before,
+.quota-compact .glow-reset::after,
+.quota-compact .glow-reset i {
+  opacity: 0;
+}
+
+.quota-compact .glow-reset em {
+  color: #000;
+  text-shadow: none;
+}
+
+.usage-insight > i {
+  color: #fff;
+  background:
+    radial-gradient(circle at center, rgba(15, 15, 20, .98) 58%, transparent 60%),
+    conic-gradient(#fff var(--activity), rgba(255, 255, 255, .13) 0);
+}
+
+.auth-gate {
+  color: #fff;
+  background: transparent;
+}
+
+.auth-gate-halo {
+  opacity: .34;
+}
+
+.auth-gate-card {
+  color: #fff;
+  border-color: rgba(255, 255, 255, .12);
+  background: rgba(8, 8, 12, .58);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+  box-shadow: var(--cinema-shadow), inset 0 1px 1px rgba(255, 255, 255, .1);
+}
+
+.auth-gate-card h1,
+.auth-gate-card label {
+  color: #fff;
+}
+
+.auth-gate-card p,
+.auth-gate-card small {
+  color: rgba(255, 255, 255, .55);
+}
+
+.auth-gate-card input,
+.device-invite input {
+  color: #fff;
+  border-color: rgba(255, 255, 255, .12);
+  background: rgba(255, 255, 255, .06);
+}
+
+.auth-gate-card button {
+  color: #000;
+  background: #fff;
+}
+
+.image-viewer-backdrop {
+  background: rgba(0, 0, 0, .72);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+
+.image-viewer-panel,
+.image-viewer-panel footer {
+  color: #fff;
+  background: rgba(10, 10, 14, .84);
+}
+
+.toast {
+  color: #000;
+  background: rgba(255, 255, 255, .92);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+@keyframes cinematic-glass-pulse {
+  0%, 100% {
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, .11), 0 0 16px rgba(255, 255, 255, .04);
+  }
+  50% {
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, .16), 0 0 28px rgba(255, 255, 255, .12);
+  }
+}
+
+@keyframes cinematic-message-in {
+  from {
+    opacity: 0;
+    filter: blur(8px);
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 639px) {
+  .welcome {
+    padding: 38px 4px 148px;
+  }
+
+  .welcome h1 {
+    font-size: 38px;
+  }
+
+  .suggestions {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .suggestions button {
+    padding: 12px 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-blur-fade-up,
+  .message,
+  .composer.has-active-turn {
+    opacity: 1;
+    animation: none !important;
+    transform: none;
+    filter: none;
+  }
+
+  .cinematic-video {
+    display: none;
+  }
+}

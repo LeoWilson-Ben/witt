@@ -1,0 +1,19 @@
+[Unit]
+Description=Witt online data backup
+After=drop-vault.service
+
+[Service]
+Type=oneshot
+User=witt
+Group=witt
+WorkingDirectory=/opt/witt/backend
+Environment=DROP_VAULT_ROOT=/var/lib/witt
+Environment=DROP_VAULT_BACKUP_ROOT=/var/backups/witt
+ExecStart=/usr/bin/node /opt/witt/backend/backup.js
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/witt /var/backups/witt

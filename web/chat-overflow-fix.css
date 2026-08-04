@@ -1,0 +1,70 @@
+/* Keep unbroken commands and paths inside the mobile conversation column. */
+.chat-stage,
+.messages,
+.message,
+.message.assistant,
+.assistant-body,
+.stream-action,
+.stream-action-group,
+.stream-action-list,
+.approval-card,
+.approval-evidence,
+.approval-evidence > div {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chat-stage {
+  overflow-x: hidden;
+}
+
+.messages,
+.message.assistant {
+  width: 100%;
+}
+
+.assistant-text,
+.stream-message,
+.stream-action p,
+.assistant-text code,
+.stream-message code {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.approval-card {
+  width: 100%;
+}
+
+.approval-evidence code {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.approval-resolution {
+  min-width: 0;
+  max-width: 100%;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.approval-resolution i {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 480px) {
+  .approval-evidence > div {
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 6px;
+    padding-inline: 9px;
+  }
+}

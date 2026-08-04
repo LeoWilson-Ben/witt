@@ -1,0 +1,38 @@
+/* Active turn: a compact aurora reactor around the composer, calm when idle. */
+.composer.has-active-turn {
+  isolation: isolate;
+  overflow: visible;
+  border-color: transparent;
+  background: linear-gradient(112deg, rgba(255,255,255,.43), rgba(244,241,255,.5), rgba(237,252,255,.46)) padding-box;
+  box-shadow: 0 5px 17px rgba(40,55,93,.07), 0 0 16px rgba(105,75,255,.22), 0 0 28px rgba(38,209,221,.12);
+}
+/* Retain the horizontal aurora current, but remove the inner-edge color line. */
+.composer.has-active-turn::before {
+  inset:1px;
+  border-radius:17px;
+  opacity:.9;
+  background:linear-gradient(102deg,transparent 4%,rgba(106,240,224,.2) 22%,rgba(161,93,255,.26) 45%,rgba(255,100,193,.18) 66%,transparent 88%);
+  background-size:220% 100%;
+  animation:composer-spectrum-sweep 2.8s linear infinite;
+}
+.composer.has-active-turn::after { content:none !important; animation:none !important; }
+/* Keep the color strictly inside the input field: no outer range frame. */
+.composer.has-active-turn { overflow:hidden; box-shadow:0 5px 17px rgba(40,55,93,.07),0 0 8px rgba(105,75,255,.12); }
+.composer.has-active-turn::after { inset:0; padding:1px; border-radius:inherit; filter:drop-shadow(0 0 3px rgba(121,90,255,.26)); }
+.composer.has-active-turn .attach-button { box-shadow: inset 0 0 0 1px rgba(117,89,224,.12), 0 0 10px rgba(100,213,223,.12); }
+.composer.has-active-turn .send-button.working {
+  position: relative;
+  background: linear-gradient(135deg, #5d5cf0, #a846ec 42%, #f05bc0 67%, #4ed6dc) !important;
+  background-size: 300% 300%;
+  box-shadow: 0 0 0 2px rgba(255,255,255,.46), 0 0 13px rgba(179,74,239,.5), 0 0 26px rgba(58,211,218,.28) !important;
+  animation: composer-button-spectrum 1.9s ease infinite;
+}
+.composer.has-active-turn .send-button.working svg { filter: drop-shadow(0 1px 2px rgba(32,25,93,.45)); animation: composer-arrow-pulse 1.15s ease-in-out infinite; }
+.composer-wrap:has(.composer.has-active-turn) .composer-meta { animation: composer-meta-glow 2.6s ease-in-out infinite; }
+@keyframes composer-spectrum-sweep { from { background-position:180% 0; } to { background-position:-50% 0; } }
+@keyframes composer-button-spectrum { 0%,100% { background-position: 0% 35%; transform: translateY(0) scale(1); } 50% { background-position: 100% 70%; transform: translateY(-1px) scale(1.035); } }
+@keyframes composer-arrow-pulse { 50% { transform: translateY(-2px); opacity: .72; } }
+@keyframes composer-meta-glow { 50% { text-shadow: 0 0 12px rgba(115,79,232,.22); } }
+@media (prefers-reduced-motion: reduce) {
+  .composer.has-active-turn::before,.composer.has-active-turn .send-button.working,.composer.has-active-turn .send-button.working svg,.composer-wrap:has(.composer.has-active-turn) .composer-meta { animation: none !important; }
+}

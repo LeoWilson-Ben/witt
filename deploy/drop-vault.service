@@ -1,0 +1,25 @@
+[Unit]
+Description=Witt private assistant API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=witt
+Group=witt
+WorkingDirectory=/opt/witt/backend
+ExecStart=/usr/bin/node /opt/witt/backend/server.js
+Environment=NODE_ENV=production
+EnvironmentFile=-/etc/witt/witt.env
+Restart=always
+RestartSec=3
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=full
+
+# Witt can intentionally execute Codex tasks. Adapt these protections and the
+# service user's sudo policy to your threat model before enabling production.
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target

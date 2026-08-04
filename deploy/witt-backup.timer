@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Witt backup every day
+
+[Timer]
+OnCalendar=*-*-* 03:17:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+Unit=witt-backup.service
+
+[Install]
+WantedBy=timers.target

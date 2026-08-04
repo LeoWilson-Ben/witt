@@ -1,0 +1,41 @@
+name: Bug report
+description: 报告可以稳定复现的问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: 请先移除日志、截图和配置中的凭据、邮箱、服务器地址及用户数据。安全漏洞请使用私密安全报告。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述
+      description: 实际发生了什么？
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 打开…
+        2. 点击…
+        3. 出现…
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 环境
+      description: Witt 提交或版本、Node.js、Android 与 WebView 版本
+  - type: textarea
+    id: logs
+    attributes:
+      label: 脱敏日志
+      render: shell

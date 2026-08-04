@@ -1,0 +1,2283 @@
+"use strict";
+
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+const { AppServerClient, sharedAppServer } = require("./app-server-client");
+const { ConversationStore } = require("./sqlite-store");
+
+const ID_PATTERN = /^[a-f0-9-]{36}$/;
+const ADMIN_MODELS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
+const NON_ADMIN_MODELS = new Set(["gpt-5.5"]);
+const ALL_MODELS = new Set([...ADMIN_MODELS, ...NON_ADMIN_MODELS]);
+const QUOTA_EXHAUSTED_MESSAGE = "Your quota has been exhausted. Please try again later.";
+const ALLOWED_REASONING = new Set(["low", "medium", "high", "xhigh"]);
+const ALLOWED_ACCESS = new Set(["read-only", "workspace-write", "danger-full-access"]);
+const MAX_ARTIFACT_BYTES = 500 * 1024 * 1024;
+const MAX_INLINE_IMAGE_BYTES = 25 * 1024 * 1024;
+const IMAGE_ID_PATTERN = /^[a-f0-9-]{36}$/;
+
+class ChatService {
+  constructor(options) {
+    this.chatDir = options.chatDir;
+    this.dataDir = options.dataDir;
+    this.codexBin = options.codexBin;
+    this.codexWorkDir = options.codexWorkDir;
+    this.sendJson = options.sendJson;
+    this.readJsonBody = options.readJsonBody;
+    this.allowedModels = Object.hasOwn(options, "allowedModels")
+      ? options.allowedModels : ADMIN_MODELS;
+    this.defaultModel = options.defaultModel || "gpt-5.6-sol";
+    this.quotaExhausted = Boolean(options.quotaExhausted);
+    this.codexProfiles = options.codexProfiles || {
+      default: {
+        id: "default",
+        label: "Witt 默认账号",
+        codexHome: "/home/ubuntu/.codex",
+        workDir: this.codexWorkDir,
+      },
+    };
+    this.allowedCodexProfiles = new Set(
+      (options.allowedCodexProfiles || Object.keys(this.codexProfiles))
+        .filter((profile) => this.codexProfiles[profile]));
+    if (!this.allowedCodexProfiles.size) this.allowedCodexProfiles.add("default");
+    this.defaultCodexProfile = [...this.allowedCodexProfiles][0];
+    this.imageDir = options.imageDir || path.join(path.dirname(this.chatDir), "chat-images");
+    this.deliveryRoots = (options.deliveryRoots || [
+      this.dataDir,
+      this.codexWorkDir,
+      "/home/ubuntu/Documents",
+      "/data/builds",
+      "/data/xuanyu-build-console",
+    ]).flatMap((root) => {
+      try { return [fs.realpathSync(root)]; } catch { return []; }
+    });
+    this.active = null;
+    this.usageCache = new Map();
+    this.capabilityCache = new Map();
+    this.boundClients = new WeakSet();
+    this.availableModels = new Map();
+    fs.mkdirSync(this.chatDir, { recursive: true });
+    fs.mkdirSync(this.imageDir, { recursive: true, mode: 0o700 });
+    this.store = new ConversationStore(this.chatDir);
+    this.store.importJsonFiles();
+    this.jsonCheckpoints = new Map();
+    this.recover();
+  }
+
+  clientFor(profile) {
+    const client = sharedAppServer({
+      codexBin: this.codexBin,
+      cwd: profile.workDir,
+      home: "/home/ubuntu",
+      codexHome: profile.codexHome,
+    });
+    if (!this.boundClients.has(client)) {
+      this.boundClients.add(client);
+      client.on("notification", (method, params) => {
+        const active = this.active;
+        if (!active || active.client !== client) return;
+        this.handleNotification(active.conversationId, active.messageId, method, params);
+      });
+      client.on("request", (request) => {
+        const active = this.active;
+        if (!active || active.client !== client) {
+          try { client.respond(request.id, { decision: "decline" }); } catch {}
+          return;
+        }
+        this.handleServerRequest(active.conversationId, active.messageId, request);
+      });
+      client.on("closed", ({ stderr }) => {
+        if (this.active?.client === client && !this.active.finished) {
+          this.failActive(stderr.trim().slice(-1200) || "Codex 服务意外停止");
+        }
+      });
+      client.on("notification", (method) => {
+        if (method === "skills/changed") this.capabilityCache.clear();
+      });
+    }
+    return client;
+  }
+
+  modelAllowed(model, profileId = this.defaultCodexProfile) {
+    const dynamic = this.availableModels.get(profileId);
+    const policyAllows = this.allowedModels === null || this.allowedModels.has(model);
+    const catalogAllows = !dynamic || dynamic.has(model) || ALL_MODELS.has(model);
+    return policyAllows && catalogAllows;
+  }
+
+  conversationPath(id) {
+    return path.join(this.chatDir, `${id}.json`);
+  }
+
+  readConversation(id) {
+    if (!ID_PATTERN.test(String(id || ""))) return null;
+    const stored = this.store.load(id);
+    if (stored) return stored;
+    try {
+      return JSON.parse(fs.readFileSync(this.conversationPath(id), "utf8"));
+    } catch {
+      return null;
+    }
+  }
+
+  writeConversation(conversation) {
+    this.store.save(conversation);
+    const existing = this.jsonCheckpoints.get(conversation.id);
+    if (existing) {
+      existing.conversation = conversation;
+      return;
+    }
+    const checkpoint = { conversation };
+    checkpoint.timer = setTimeout(() => {
+      this.jsonCheckpoints.delete(conversation.id);
+      this.writeJsonCheckpoint(checkpoint.conversation);
+    }, 2_000);
+    checkpoint.timer.unref();
+    this.jsonCheckpoints.set(conversation.id, checkpoint);
+  }
+
+  writeJsonCheckpoint(conversation) {
+    const destination = this.conversationPath(conversation.id);
+    const temporary = `${destination}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, `${JSON.stringify(conversation)}\n`, { mode: 0o600 });
+    fs.renameSync(temporary, destination);
+  }
+
+  allConversations() {
+    return this.store.all().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  publicMessage(message) {
+    const renderedImageIds = new Set();
+    return {
+      ...message,
+      artifacts: (message.artifacts || []).map(({ sourcePath: ignored, ...artifact }) => artifact),
+      images: (message.images || []).map(
+        ({ sourcePath: ignoredPath, fileName: ignoredFile, ...image }) => image),
+      stream: (message.stream || []).filter((entry) => {
+        if (entry.kind !== "image" || !entry.imageId) return true;
+        if (renderedImageIds.has(entry.imageId)) return false;
+        renderedImageIds.add(entry.imageId);
+        return true;
+      }).map(({ details, ...entry }) => ({
+        ...entry,
+        hasDetails: Boolean(details),
+      })),
+    };
+  }
+
+  publicConversation(conversation, includeMessages = true) {
+    const profile = this.profileFor(conversation);
+    const result = {
+      id: conversation.id,
+      title: conversation.title,
+      createdAt: conversation.createdAt,
+      updatedAt: conversation.updatedAt,
+      archived: Boolean(conversation.archived),
+      codexProfile: profile.id,
+      codexProfileLabel: profile.label,
+      codexProfileAllowed: this.allowedCodexProfiles.has(profile.id),
+      hasCodexContext: Boolean(conversation.codexThreadId),
+      model: this.modelAllowed(conversation.model, profile.id)
+        ? conversation.model : this.defaultModel,
+      reasoning: conversation.reasoning || "medium",
+      accessMode: ALLOWED_ACCESS.has(conversation.accessMode)
+        ? conversation.accessMode : "danger-full-access",
+      workDir: Object.hasOwn(conversation, "workDir")
+        ? (conversation.workDir || "") : this.codexWorkDir,
+      contextUsage: this.quotaExhausted ? {
+        usedTokens: 1,
+        contextWindow: 1,
+        updatedAt: null,
+      } : (conversation.contextUsage?.source === "last-input" ? {
+        usedTokens: Math.max(0, Number(conversation.contextUsage.usedTokens || 0)),
+        contextWindow: Math.max(0, Number(conversation.contextUsage.contextWindow || 0)),
+        updatedAt: conversation.contextUsage.updatedAt || null,
+      } : null),
+      busy: conversation.messages.some((message) =>
+        message.role === "assistant" &&
+        (message.status === "queued" || message.status === "running")),
+      lastMessage: conversation.messages.at(-1)?.text || "",
+    };
+    if (includeMessages) {
+      result.messages = conversation.messages.map((message) => this.publicMessage(message));
+    }
+    return result;
+  }
+
+  publicConversationDelta(conversation) {
+    const lastAssistantIndex = conversation.messages.findLastIndex(
+      (message) => message.role === "assistant");
+    const replaceFrom = lastAssistantIndex >= 0
+      ? lastAssistantIndex : Math.max(0, conversation.messages.length - 2);
+    return {
+      conversation: this.publicConversation(conversation, false),
+      replaceFrom,
+      totalMessages: conversation.messages.length,
+      messages: conversation.messages.slice(replaceFrom)
+        .map((message) => this.publicMessage(message)),
+    };
+  }
+
+  imageType(buffer) {
+    if (!Buffer.isBuffer(buffer) || buffer.length < 12) return null;
+    if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+      return { extension: ".png", mimeType: "image/png" };
+    }
+    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+      return { extension: ".jpg", mimeType: "image/jpeg" };
+    }
+    const signature = buffer.subarray(0, 6).toString("ascii");
+    if (signature === "GIF87a" || signature === "GIF89a") {
+      return { extension: ".gif", mimeType: "image/gif" };
+    }
+    if (buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
+        buffer.subarray(8, 12).toString("ascii") === "WEBP") {
+      return { extension: ".webp", mimeType: "image/webp" };
+    }
+    return null;
+  }
+
+  safeImageSource(requestedPath) {
+    try {
+      const sourcePath = fs.realpathSync(String(requestedPath || ""));
+      const lower = sourcePath.toLowerCase();
+      const generatedImage = /^\/home\/ubuntu\/\.codex(?:-xuanyu)?\/generated_images\/[a-f0-9-]{36}\/[a-z0-9-]+\.(?:png|jpg|jpeg|webp|gif)$/i.test(sourcePath);
+      if ((/(^|\/)(\.ssh|\.gnupg|\.aws|\.codex)(\/|$)/.test(lower) && !generatedImage) ||
+          /(^|\/)(\.env($|\.)|[^/]*(token|credential|secret|private[_-]?key)[^/]*)$/.test(lower)) {
+        return null;
+      }
+      const stats = fs.statSync(sourcePath);
+      if (!stats.isFile() || stats.size < 12 || stats.size > MAX_INLINE_IMAGE_BYTES) return null;
+      const handle = fs.openSync(sourcePath, "r");
+      const header = Buffer.alloc(16);
+      fs.readSync(handle, header, 0, header.length, 0);
+      fs.closeSync(handle);
+      const type = this.imageType(header);
+      return type ? { sourcePath, stats, type } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  storeImageBuffer(buffer, name, source = "execution", artifactId = null) {
+    if (!Buffer.isBuffer(buffer) || buffer.length < 12 || buffer.length > MAX_INLINE_IMAGE_BYTES) {
+      return null;
+    }
+    const type = this.imageType(buffer);
+    if (!type) return null;
+    const id = crypto.randomUUID();
+    const fileName = `${id}${type.extension}`;
+    const destination = path.join(this.imageDir, fileName);
+    fs.writeFileSync(destination, buffer, { mode: 0o600, flag: "wx" });
+    const image = {
+      id,
+      name: String(name || `Witt 图片${type.extension}`).slice(0, 180),
+      size: buffer.length,
+      mimeType: type.mimeType,
+      source,
+      artifactId,
+      createdAt: new Date().toISOString(),
+      fileName,
+      sourcePath: destination,
+    };
+    fs.writeFileSync(
+      path.join(this.imageDir, `${id}.json`),
+      `${JSON.stringify({
+        id: image.id,
+        name: image.name,
+        size: image.size,
+        mimeType: image.mimeType,
+        fileName: image.fileName,
+      })}\n`,
+      { mode: 0o600, flag: "wx" },
+    );
+    return image;
+  }
+
+  storeImagePath(requestedPath, source = "execution", artifactId = null) {
+    const verified = this.safeImageSource(requestedPath);
+    if (!verified) return null;
+    const buffer = fs.readFileSync(verified.sourcePath);
+    return this.storeImageBuffer(
+      buffer, path.basename(verified.sourcePath), source, artifactId);
+  }
+
+  storeImageData(value, name = "Witt 生成图片", source = "execution") {
+    const raw = String(value || "");
+    const dataUrl = raw.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([a-zA-Z0-9+/=\s]+)$/);
+    const encoded = dataUrl ? dataUrl[2] : raw;
+    if (!encoded || encoded.length > Math.ceil(MAX_INLINE_IMAGE_BYTES * 4 / 3) + 16) return null;
+    try {
+      return this.storeImageBuffer(Buffer.from(encoded.replace(/\s+/g, ""), "base64"), name, source);
+    } catch {
+      return null;
+    }
+  }
+
+  attachImage(message, image) {
+    if (!image) return null;
+    message.images = Array.isArray(message.images) ? message.images : [];
+    const duplicate = message.images.find((candidate) =>
+      (image.artifactId && candidate.artifactId === image.artifactId) ||
+      (candidate.size === image.size && candidate.name === image.name &&
+        candidate.source === image.source));
+    if (duplicate) return duplicate;
+    message.images.push(image);
+    return image;
+  }
+
+  captureToolImages(message, item) {
+    const contents = item.type === "dynamicToolCall"
+      ? item.contentItems
+      : item.result?.content;
+    if (!Array.isArray(contents)) return [];
+    const images = [];
+    for (const [index, content] of contents.entries()) {
+      if (!content || typeof content !== "object") continue;
+      let image = null;
+      if (content.type === "image" && content.data) {
+        image = this.storeImageData(content.data, `工具图片 ${index + 1}`);
+      } else if ((content.type === "inputImage" || content.type === "input_image") &&
+          (content.imageUrl || content.image_url)) {
+        image = this.storeImageData(
+          content.imageUrl || content.image_url, `工具图片 ${index + 1}`);
+      }
+      if (image) images.push(this.attachImage(message, image));
+    }
+    return images.filter(Boolean);
+  }
+
+  captureGeneratedImage(message, item) {
+    const savedPath = item.savedPath || item.saved_path;
+    const stored = savedPath
+      ? this.storeImagePath(savedPath, "execution")
+      : this.storeImageData(item.result, "Witt 生成图片", "execution");
+    return this.attachImage(message, stored);
+  }
+
+  generatedImageFiles(threadId, codexHome = "/home/ubuntu/.codex") {
+    if (!ID_PATTERN.test(String(threadId || ""))) return new Set();
+    const directory = path.join(codexHome, "generated_images", threadId);
+    try {
+      return new Set(fs.readdirSync(directory)
+        .map((name) => path.join(directory, name))
+        .filter((file) => fs.statSync(file).isFile() && this.safeImageSource(file)));
+    } catch {
+      return new Set();
+    }
+  }
+
+  captureNewGeneratedImages(message, threadId, before = new Set(),
+      codexHome = "/home/ubuntu/.codex") {
+    const images = [];
+    for (const sourcePath of this.generatedImageFiles(threadId, codexHome)) {
+      if (before.has(sourcePath)) continue;
+      const existingIds = new Set((message.images || []).map((image) => image.id));
+      const image = this.attachImage(message,
+        this.storeImagePath(sourcePath, "execution"));
+      if (image && !existingIds.has(image.id)) images.push(image);
+    }
+    return images;
+  }
+
+  handlePublicImage(req, res, url) {
+    const match = url.pathname.match(/^\/chat-images\/([a-f0-9-]{36})$/);
+    if (!match) return false;
+    if (req.method !== "GET") {
+      this.sendJson(res, 405, { error: "不支持此请求方法" });
+      return true;
+    }
+    try {
+      const metadataPath = path.join(this.imageDir, `${match[1]}.json`);
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+      if (metadata.id !== match[1] || !IMAGE_ID_PATTERN.test(metadata.id) ||
+          !/^[a-f0-9-]{36}\.(?:png|jpg|webp|gif)$/.test(metadata.fileName)) {
+        throw new Error("invalid image metadata");
+      }
+      const imagePath = path.join(this.imageDir, metadata.fileName);
+      const resolved = fs.realpathSync(imagePath);
+      if (!resolved.startsWith(`${path.resolve(this.imageDir)}${path.sep}`)) {
+        throw new Error("invalid image path");
+      }
+      const stats = fs.statSync(resolved);
+      if (!stats.isFile() || stats.size !== metadata.size || stats.size > MAX_INLINE_IMAGE_BYTES) {
+        throw new Error("invalid image file");
+      }
+      const verified = this.safeImageSource(resolved);
+      if (!verified || verified.type.mimeType !== metadata.mimeType) {
+        throw new Error("invalid image type");
+      }
+      res.writeHead(200, {
+        "Cache-Control": "private, max-age=3600",
+        "Content-Length": stats.size,
+        "Content-Type": metadata.mimeType,
+        "Content-Security-Policy": "default-src 'none'",
+        "X-Content-Type-Options": "nosniff",
+      });
+      fs.createReadStream(resolved).pipe(res);
+    } catch {
+      this.sendJson(res, 404, { error: "图片不存在" });
+    }
+    return true;
+  }
+
+  normalizeWorkDir(value) {
+    const requested = String(value || "").trim();
+    if (!requested) return null;
+    if (!path.isAbsolute(requested)) throw new Error("项目路径必须是绝对路径");
+    const resolved = path.resolve(requested);
+    const allowedRoots = ["/home/ubuntu", "/data/drop-vault", "/data/xuanyu-build-console"];
+    if (!allowedRoots.some((root) => resolved === root || resolved.startsWith(`${root}${path.sep}`))) {
+      throw new Error("该项目路径不在 Witt 允许的工作目录范围内");
+    }
+    let stats;
+    try {
+      stats = fs.statSync(resolved);
+    } catch {
+      throw new Error("项目路径不存在");
+    }
+    if (!stats.isDirectory()) throw new Error("项目路径不是目录");
+    return resolved;
+  }
+
+  effectiveWorkDir(conversation) {
+    if (!Object.hasOwn(conversation, "workDir")) return this.codexWorkDir;
+    return conversation.workDir || "/home/ubuntu";
+  }
+
+  profileFor(conversation) {
+    const requested = String(conversation?.codexProfile || "default");
+    return this.codexProfiles[requested] || this.codexProfiles.default;
+  }
+
+  profileAllowed(conversation) {
+    return this.allowedCodexProfiles.has(this.profileFor(conversation).id);
+  }
+
+  createConversation(title = "新对话", model = this.defaultModel, reasoning = "medium",
+      accessMode = "danger-full-access", workDir = "", codexProfile = null) {
+    const requestedProfile = codexProfile == null || codexProfile === ""
+      ? this.defaultCodexProfile : String(codexProfile);
+    if (!this.allowedCodexProfiles.has(requestedProfile)) {
+      throw new Error("该用户不能使用这个 Codex 账号");
+    }
+    const profile = this.codexProfiles[requestedProfile];
+    const requestedWorkDir = workDir || (profile.id === "default" ? "" : profile.workDir);
+    const now = new Date().toISOString();
+    const conversation = {
+      id: crypto.randomUUID(),
+      title: String(title || "新对话").trim().slice(0, 60) || "新对话",
+      createdAt: now,
+      updatedAt: now,
+      archived: false,
+      codexThreadId: null,
+      codexProfile: profile.id,
+      model: this.modelAllowed(model, profile.id) ? model : this.defaultModel,
+      reasoning: ALLOWED_REASONING.has(reasoning) ? reasoning : "medium",
+      accessMode: ALLOWED_ACCESS.has(accessMode) ? accessMode : "danger-full-access",
+      workDir: this.normalizeWorkDir(requestedWorkDir),
+      messages: [],
+    };
+    this.writeConversation(conversation);
+    return conversation;
+  }
+
+  readUpload(id) {
+    if (!/^[a-zA-Z0-9-]+$/.test(String(id || ""))) return null;
+    try {
+      const record = JSON.parse(fs.readFileSync(path.join(this.dataDir, `${id}.json`), "utf8"));
+      const absolutePath = path.join(this.dataDir, record.storedName);
+      if (!absolutePath.startsWith(`${path.resolve(this.dataDir)}${path.sep}`)) return null;
+      if (!fs.statSync(absolutePath).isFile()) return null;
+      return {
+        id: record.id,
+        name: record.originalName,
+        mimeType: record.mimeType || "application/octet-stream",
+        size: Number(record.size || 0),
+        path: absolutePath,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async readCapabilities(res) {
+    const profile = this.codexProfiles[this.defaultCodexProfile];
+    const cached = this.capabilityCache.get(profile.id);
+    if (cached && Date.now() - cached.cachedAt < 5 * 60 * 1000) {
+      this.sendJson(res, 200, cached.payload);
+      return;
+    }
+    try {
+      const client = this.clientFor(profile);
+      await client.start();
+      const settled = await Promise.allSettled([
+        client.request("model/list", { limit: 100, includeHidden: false }),
+        client.request("skills/list", { cwds: [profile.workDir], forceReload: false }),
+        client.request("mcpServerStatus/list", { limit: 100, detail: "toolsAndAuthOnly" }),
+        client.request("collaborationMode/list", {}),
+        client.request("experimentalFeature/list", { limit: 100 }),
+      ]);
+      const value = (index) => settled[index].status === "fulfilled"
+        ? settled[index].value : {};
+      const models = (value(0).data || []).filter((model) => !model.hidden &&
+        (this.allowedModels === null || this.allowedModels.has(String(model.id || model.model || ""))))
+        .map((model) => ({
+        id: String(model.id || model.model || ""),
+        displayName: String(model.displayName || model.id || model.model || ""),
+        isDefault: Boolean(model.isDefault),
+        inputModalities: Array.isArray(model.inputModalities)
+          ? model.inputModalities.map(String) : ["text", "image"],
+        defaultReasoningEffort: String(model.defaultReasoningEffort || "medium"),
+        reasoningEfforts: (model.supportedReasoningEfforts || []).map((effort) => ({
+          id: String(effort.reasoningEffort || ""),
+          description: String(effort.description || ""),
+        })).filter((effort) => effort.id),
+        supportsPersonality: Boolean(model.supportsPersonality),
+        upgrade: model.upgrade ? String(model.upgrade) : null,
+      })).filter((model) => model.id);
+      this.availableModels.set(profile.id, new Set(models.map((model) => model.id)));
+      const skillGroups = value(1).data || [];
+      const skills = skillGroups.flatMap((group) => group.skills || []).map((skill) => ({
+        name: String(skill.name || ""),
+        description: String(skill.description || skill.interface?.shortDescription || ""),
+        enabled: skill.enabled !== false,
+      })).filter((skill) => skill.name);
+      const mcpServers = (value(2).data || []).map((server) => ({
+        name: String(server.name || server.serverName || ""),
+        status: String(server.status || "unknown"),
+        authStatus: String(server.authStatus || server.auth?.status || "unknown"),
+        toolCount: Array.isArray(server.tools) ? server.tools.length : 0,
+      })).filter((server) => server.name);
+      const collaborationModes = (value(3).data || value(3).collaborationModes || [])
+        .map((mode) => ({ id: String(mode.id || mode.name || ""),
+          label: String(mode.label || mode.displayName || mode.id || mode.name || "") }))
+        .filter((mode) => mode.id);
+      const features = (value(4).data || []).map((feature) => ({
+        name: String(feature.name || ""), stage: String(feature.stage || ""),
+        enabled: Boolean(feature.enabled), displayName: String(feature.displayName || ""),
+      })).filter((feature) => feature.name);
+      const payload = {
+        models, skills, mcpServers, collaborationModes, features,
+        support: { fork: true, compact: true, review: true, plans: true },
+        checkedAt: new Date().toISOString(),
+      };
+      this.capabilityCache.set(profile.id, { cachedAt: Date.now(), payload });
+      this.sendJson(res, 200, payload);
+    } catch (error) {
+      this.sendJson(res, 503, { error: error.message || "无法读取 App Server 能力" });
+    }
+  }
+
+  async resumeOnClient(conversation) {
+    if (!conversation.codexThreadId) throw new Error("这个对话还没有可复用的 Codex 上下文");
+    const profile = this.profileFor(conversation);
+    const client = this.clientFor(profile);
+    await client.start();
+    await client.request("thread/resume", {
+      threadId: conversation.codexThreadId,
+      cwd: this.effectiveWorkDir(conversation),
+      model: conversation.model,
+      sandbox: conversation.accessMode,
+      approvalPolicy: "on-request",
+      developerInstructions: this.buildDeveloperInstructions(conversation),
+      excludeTurns: true,
+    });
+    return client;
+  }
+
+  handle(req, res, url) {
+    if (!url.pathname.startsWith("/chat/")) return false;
+
+    if (req.method === "GET" && url.pathname === "/chat/conversations") {
+      const conversations = this.allConversations()
+        .filter((conversation) => !conversation.archived)
+        .map((conversation) => this.publicConversation(conversation, false));
+      this.sendJson(res, 200, { activeConversationId: this.active?.conversationId || null, conversations });
+      return true;
+    }
+
+    if (req.method === "GET" && url.pathname === "/chat/capabilities") {
+      this.readCapabilities(res);
+      return true;
+    }
+
+    if (req.method === "GET" && url.pathname === "/chat/usage") {
+      this.readAccountUsage(res, url.searchParams.get("conversationId"));
+      return true;
+    }
+
+    if (req.method === "POST" && url.pathname === "/chat/usage/reset") {
+      this.consumeRateLimitReset(res);
+      return true;
+    }
+
+    if (req.method === "POST" && url.pathname === "/chat/conversations") {
+      this.readJsonBody(req, 16 * 1024, (error, body) => {
+        if (error) {
+          this.sendJson(res, 400, { error: error.message });
+          return;
+        }
+        try {
+          const conversation = this.createConversation(
+            body?.title, body?.model, body?.reasoning, body?.accessMode, body?.workDir,
+            body?.codexProfile);
+          this.sendJson(res, 201, { conversation: this.publicConversation(conversation) });
+        } catch (createError) {
+          this.sendJson(res, 400, { error: createError.message || "无法创建对话" });
+        }
+      });
+      return true;
+    }
+
+    const messageMatch = url.pathname.match(/^\/chat\/conversations\/([a-f0-9-]{36})\/messages$/);
+    if (req.method === "POST" && messageMatch) {
+      this.createMessage(req, res, messageMatch[1]);
+      return true;
+    }
+
+    const syncMatch = url.pathname.match(/^\/chat\/conversations\/([a-f0-9-]{36})\/sync$/);
+    if (req.method === "GET" && syncMatch) {
+      const conversation = this.readConversation(syncMatch[1]);
+      if (!conversation || conversation.archived) {
+        this.sendJson(res, 404, { error: "对话不存在" });
+        return true;
+      }
+      this.sendJson(res, 200, this.publicConversationDelta(conversation));
+      return true;
+    }
+
+    const artifactMatch = url.pathname.match(
+      /^\/chat\/conversations\/([a-f0-9-]{36})\/messages\/([a-f0-9-]{36})\/artifacts\/([a-f0-9-]{36})$/);
+    if (req.method === "GET" && artifactMatch) {
+      this.downloadArtifact(res, artifactMatch[1], artifactMatch[2], artifactMatch[3]);
+      return true;
+    }
+
+    const streamMatch = url.pathname.match(
+      /^\/chat\/conversations\/([a-f0-9-]{36})\/messages\/([a-f0-9-]{36})\/stream\/([a-zA-Z0-9_-]{1,160})$/);
+    if (req.method === "GET" && streamMatch) {
+      this.streamDetails(res, streamMatch[1], streamMatch[2], streamMatch[3]);
+      return true;
+    }
+
+    const interruptMatch = url.pathname.match(
+      /^\/chat\/conversations\/([a-f0-9-]{36})\/interrupt$/);
+    if (req.method === "POST" && interruptMatch) {
+      this.interruptConversation(res, interruptMatch[1]);
+      return true;
+    }
+
+    const forkMatch = url.pathname.match(
+      /^\/chat\/conversations\/([a-f0-9-]{36})\/fork$/);
+    if (req.method === "POST" && forkMatch) {
+      this.forkConversation(req, res, forkMatch[1]);
+      return true;
+    }
+
+    const compactMatch = url.pathname.match(
+      /^\/chat\/conversations\/([a-f0-9-]{36})\/compact$/);
+    if (req.method === "POST" && compactMatch) {
+      this.compactConversation(res, compactMatch[1]);
+      return true;
+    }
+
+    const reviewMatch = url.pathname.match(
+      /^\/chat\/conversations\/([a-f0-9-]{36})\/review$/);
+    if (req.method === "POST" && reviewMatch) {
+      this.startReview(req, res, reviewMatch[1]);
+      return true;
+    }
+
+    const approvalMatch = url.pathname.match(
+      /^\/chat\/conversations\/([a-f0-9-]{36})\/approvals\/([a-f0-9-]{36})$/);
+    if (req.method === "POST" && approvalMatch) {
+      this.resolveApproval(req, res, approvalMatch[1], approvalMatch[2]);
+      return true;
+    }
+
+    const conversationMatch = url.pathname.match(/^\/chat\/conversations\/([a-f0-9-]{36})$/);
+    if (req.method === "GET" && conversationMatch) {
+      const conversation = this.readConversation(conversationMatch[1]);
+      if (!conversation || conversation.archived) {
+        this.sendJson(res, 404, { error: "对话不存在" });
+        return true;
+      }
+      this.sendJson(res, 200, { conversation: this.publicConversation(conversation) });
+      return true;
+    }
+    if (req.method === "PATCH" && conversationMatch) {
+      this.updateConversationSettings(req, res, conversationMatch[1]);
+      return true;
+    }
+    if (req.method === "DELETE" && conversationMatch) {
+      const conversation = this.readConversation(conversationMatch[1]);
+      if (!conversation) {
+        this.sendJson(res, 404, { error: "对话不存在" });
+        return true;
+      }
+      conversation.archived = true;
+      conversation.updatedAt = new Date().toISOString();
+      this.writeConversation(conversation);
+      this.sendJson(res, 200, { ok: true });
+      return true;
+    }
+
+    this.sendJson(res, 404, { error: "聊天接口不存在" });
+    return true;
+  }
+
+  forkConversation(req, res, conversationId) {
+    this.readJsonBody(req, 8 * 1024, (error, body) => {
+      if (error) { this.sendJson(res, 400, { error: error.message }); return; }
+      const source = this.readConversation(conversationId);
+      if (!source || source.archived) {
+        this.sendJson(res, 404, { error: "对话不存在" });
+        return;
+      }
+      if (this.active?.conversationId === conversationId) {
+        this.sendJson(res, 409, { error: "当前轮次完成后才能创建分支" });
+        return;
+      }
+      void (async () => {
+        try {
+          const client = await this.resumeOnClient(source);
+          const requestedTurnId = String(body?.lastTurnId || "");
+          const params = { threadId: source.codexThreadId };
+          if (requestedTurnId) params.lastTurnId = requestedTurnId;
+          const result = await client.request("thread/fork", params);
+          const now = new Date().toISOString();
+          const conversation = structuredClone(source);
+          conversation.id = crypto.randomUUID();
+          conversation.codexThreadId = result.thread.id;
+          conversation.forkedFromConversationId = source.id;
+          conversation.forkedFromThreadId = source.codexThreadId;
+          conversation.title = `${source.title} · 分支`.slice(0, 60);
+          conversation.createdAt = now;
+          conversation.updatedAt = now;
+          conversation.archived = false;
+          if (requestedTurnId) {
+            const lastIndex = conversation.messages.findIndex(
+              (message) => message.codexTurnId === requestedTurnId);
+            if (lastIndex >= 0) conversation.messages = conversation.messages.slice(0, lastIndex + 1);
+          }
+          this.writeConversation(conversation);
+          this.sendJson(res, 201, { conversation: this.publicConversation(conversation) });
+        } catch (forkError) {
+          this.sendJson(res, 500, { error: forkError.message || "无法创建对话分支" });
+        }
+      })();
+    });
+  }
+
+  compactConversation(res, conversationId) {
+    const conversation = this.readConversation(conversationId);
+    if (!conversation || conversation.archived) {
+      this.sendJson(res, 404, { error: "对话不存在" });
+      return;
+    }
+    if (this.active?.conversationId === conversationId) {
+      this.sendJson(res, 409, { error: "当前轮次完成后才能压缩上下文" });
+      return;
+    }
+    void (async () => {
+      try {
+        const client = await this.resumeOnClient(conversation);
+        await client.request("thread/compact/start", { threadId: conversation.codexThreadId });
+        conversation.contextCompaction = {
+          status: "requested", requestedAt: new Date().toISOString(),
+        };
+        conversation.updatedAt = new Date().toISOString();
+        this.writeConversation(conversation);
+        this.sendJson(res, 202, { ok: true, conversation: this.publicConversation(conversation) });
+      } catch (compactError) {
+        this.sendJson(res, 500, { error: compactError.message || "无法压缩上下文" });
+      }
+    })();
+  }
+
+  startReview(req, res, conversationId) {
+    this.readJsonBody(req, 8 * 1024, (error, body) => {
+      if (error) { this.sendJson(res, 400, { error: error.message }); return; }
+      const conversation = this.readConversation(conversationId);
+      if (!conversation || conversation.archived) {
+        this.sendJson(res, 404, { error: "对话不存在" });
+        return;
+      }
+      if (this.active) {
+        this.sendJson(res, 409, { error: "另一项任务正在执行，请稍后再审查" });
+        return;
+      }
+      let target = { type: "uncommittedChanges" };
+      const requestedType = String(body?.type || "uncommittedChanges");
+      if (requestedType === "custom") {
+        const instructions = String(body?.instructions || "").trim().slice(0, 4000);
+        if (!instructions) { this.sendJson(res, 400, { error: "请输入审查要求" }); return; }
+        target = { type: "custom", instructions };
+      } else if (requestedType === "baseBranch") {
+        const branch = String(body?.branch || "").trim().slice(0, 200);
+        if (!branch) { this.sendJson(res, 400, { error: "请输入基准分支" }); return; }
+        target = { type: "baseBranch", branch };
+      } else if (requestedType === "commit") {
+        const sha = String(body?.sha || "").trim();
+        if (!/^[0-9a-f]{7,40}$/.test(sha)) {
+          this.sendJson(res, 400, { error: "提交编号无效" }); return;
+        }
+        target = { type: "commit", sha, title: String(body?.title || "").slice(0, 200) };
+      } else if (requestedType !== "uncommittedChanges") {
+        this.sendJson(res, 400, { error: "不支持这个审查目标" }); return;
+      }
+      void (async () => {
+        try {
+          const client = await this.resumeOnClient(conversation);
+          const now = new Date().toISOString();
+          const assistant = {
+            id: crypto.randomUUID(), role: "assistant", text: "", attachments: [],
+            createdAt: now, status: "running",
+            activity: [{ type: "review", label: "正在审查代码", status: "running" }],
+            stream: [], review: true,
+          };
+          conversation.messages.push(assistant);
+          conversation.updatedAt = now;
+          this.writeConversation(conversation);
+          const timeout = setTimeout(() => {
+            if (this.active?.messageId === assistant.id) this.failActive("代码审查超时，已停止");
+          }, 30 * 60 * 1000);
+          timeout.unref();
+          this.active = {
+            conversationId, messageId: assistant.id, userId: null, client,
+            threadId: conversation.codexThreadId, turnId: null, turnStarted: false,
+            finalResponse: "", finished: false, pendingSteers: [],
+            pendingApprovals: new Map(), codexHome: this.profileFor(conversation).codexHome,
+            timeout, mode: "review",
+          };
+          const result = await client.request("review/start", {
+            threadId: conversation.codexThreadId, delivery: "inline", target,
+          });
+          this.active.turnId = result.turn?.id || null;
+          assistant.codexTurnId = this.active.turnId;
+          this.writeConversation(conversation);
+          this.sendJson(res, 202, { conversation: this.publicConversation(conversation) });
+        } catch (reviewError) {
+          if (this.active?.conversationId === conversationId) {
+            this.failActive(reviewError.message || "无法启动代码审查");
+          }
+          if (!res.headersSent) this.sendJson(res, 500, { error: reviewError.message || "无法启动代码审查" });
+        }
+      })();
+    });
+  }
+
+  updateConversationSettings(req, res, conversationId) {
+    this.readJsonBody(req, 16 * 1024, (error, body) => {
+      if (error) {
+        this.sendJson(res, 400, { error: error.message });
+        return;
+      }
+      const conversation = this.readConversation(conversationId);
+      if (!conversation || conversation.archived) {
+        this.sendJson(res, 404, { error: "对话不存在" });
+        return;
+      }
+      const requestedModel = body?.model == null
+        ? (this.modelAllowed(conversation.model, this.profileFor(conversation).id)
+          ? conversation.model : this.defaultModel)
+        : body.model;
+      const requestedReasoning = body?.reasoning == null
+        ? (ALLOWED_REASONING.has(conversation.reasoning) ? conversation.reasoning : "medium")
+        : body.reasoning;
+      const requestedAccess = body?.accessMode == null
+        ? (ALLOWED_ACCESS.has(conversation.accessMode)
+          ? conversation.accessMode : "danger-full-access")
+        : body.accessMode;
+      if (!this.modelAllowed(requestedModel, this.profileFor(conversation).id) ||
+          !ALLOWED_REASONING.has(requestedReasoning) ||
+          !ALLOWED_ACCESS.has(requestedAccess)) {
+        this.sendJson(res, 400, { error: "模型、智能程度或访问权限不可用" });
+        return;
+      }
+      if (conversation.messages.some((message) =>
+        message.status === "queued" || message.status === "running")) {
+        this.sendJson(res, 409, { error: "当前对话正在处理，完成后再切换" });
+        return;
+      }
+      let requestedWorkDir = Object.hasOwn(conversation, "workDir")
+        ? conversation.workDir : this.codexWorkDir;
+      if (Object.hasOwn(body || {}, "workDir")) {
+        try {
+          requestedWorkDir = this.normalizeWorkDir(body.workDir);
+        } catch (workDirError) {
+          this.sendJson(res, 400, { error: workDirError.message || "项目目录不可用" });
+          return;
+        }
+      }
+      let requestedProfile = this.profileFor(conversation);
+      if (Object.hasOwn(body || {}, "codexProfile")) {
+        requestedProfile = this.codexProfiles[String(body.codexProfile || "")];
+        if (!requestedProfile) {
+          this.sendJson(res, 400, { error: "Codex 账号不可用" });
+          return;
+        }
+        if (!this.allowedCodexProfiles.has(requestedProfile.id)) {
+          this.sendJson(res, 403, { error: "该用户不能使用这个 Codex 账号" });
+          return;
+        }
+        if (conversation.codexThreadId &&
+            requestedProfile.id !== this.profileFor(conversation).id) {
+          this.sendJson(res, 409, { error: "已有上下文的对话不能切换 Codex 账号" });
+          return;
+        }
+        if (!conversation.codexThreadId && !Object.hasOwn(body || {}, "workDir")) {
+          requestedWorkDir = requestedProfile.id === "default" ? "" : requestedProfile.workDir;
+        }
+      }
+      conversation.model = requestedModel;
+      conversation.reasoning = requestedReasoning;
+      conversation.accessMode = requestedAccess;
+      conversation.workDir = requestedWorkDir;
+      conversation.codexProfile = requestedProfile.id;
+      conversation.updatedAt = new Date().toISOString();
+      this.writeConversation(conversation);
+      this.sendJson(res, 200, { conversation: this.publicConversation(conversation) });
+    });
+  }
+
+  createMessage(req, res, conversationId) {
+    this.readJsonBody(req, 64 * 1024, (error, body) => {
+      if (error) {
+        this.sendJson(res, 400, { error: error.message });
+        return;
+      }
+      const conversation = this.readConversation(conversationId);
+      if (!conversation || conversation.archived) {
+        this.sendJson(res, 404, { error: "对话不存在" });
+        return;
+      }
+      if (this.quotaExhausted) {
+        this.sendJson(res, 429, { error: QUOTA_EXHAUSTED_MESSAGE });
+        return;
+      }
+      if (!this.profileAllowed(conversation)) {
+        this.sendJson(res, 403, { error: "该对话属于未授权的 Codex 账号，请新建玄遇对话" });
+        return;
+      }
+      const text = String(body?.text || "").trim();
+      const attachmentIds = Array.isArray(body?.attachmentIds)
+        ? [...new Set(body.attachmentIds.map(String))].slice(0, 8)
+        : [];
+      const attachments = attachmentIds.map((id) => this.readUpload(id)).filter(Boolean);
+      if (!text && !attachments.length) {
+        this.sendJson(res, 400, { error: "请输入消息或添加附件" });
+        return;
+      }
+      if (Buffer.byteLength(text, "utf8") > 48 * 1024) {
+        this.sendJson(res, 413, { error: "消息内容过长" });
+        return;
+      }
+      const now = new Date().toISOString();
+      const userMessage = {
+        id: crypto.randomUUID(),
+        role: "user",
+        text,
+        attachments: attachments.map(({ path: ignored, ...attachment }) => attachment),
+        createdAt: now,
+        status: "queued",
+      };
+      const activeAssistant = this.active?.conversationId === conversation.id
+        ? conversation.messages.find((message) =>
+          message.id === this.active.messageId && message.role === "assistant")
+        : null;
+      if (activeAssistant) {
+        userMessage.status = "running";
+        userMessage.steeredInto = activeAssistant.id;
+        userMessage.steerAtStreamIndex = Array.isArray(activeAssistant.stream)
+          ? activeAssistant.stream.length
+          : 0;
+        conversation.messages.push(userMessage);
+        this.addActivity(activeAssistant, "steer", "已接收补充要求，正在调整处理方向", "completed");
+        conversation.updatedAt = now;
+        this.writeConversation(conversation);
+        const inputs = this.buildInputs(conversation, userMessage, attachments, false);
+        const pending = !this.active.turnId || !this.active.turnStarted;
+        this.sendJson(res, 202, {
+          conversation: this.publicConversation(conversation),
+          messageId: userMessage.id,
+          steered: true,
+          pending,
+        });
+        if (pending) {
+          this.active.pendingSteers.push({ userMessageId: userMessage.id, inputs });
+        } else {
+          this.sendSteer(userMessage.id, inputs);
+        }
+        return;
+      }
+      const assistantMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        text: "",
+        attachments: [],
+        createdAt: now,
+        status: "queued",
+        activity: [{ type: "queue", label: "消息已送达服务器", status: "completed" }],
+        replyTo: userMessage.id,
+      };
+      conversation.messages.push(userMessage, assistantMessage);
+      if (conversation.messages.filter((message) => message.role === "user").length === 1) {
+        const titleSource = text || attachments[0]?.name || "附件对话";
+        conversation.title = titleSource.replace(/\s+/g, " ").slice(0, 28);
+      }
+      conversation.updatedAt = now;
+      this.writeConversation(conversation);
+      this.sendJson(res, 202, {
+        conversation: this.publicConversation(conversation),
+        messageId: userMessage.id,
+      });
+      setImmediate(() => this.runNext());
+    });
+  }
+
+  async readAccountUsage(res, conversationId = null) {
+    if (this.quotaExhausted) {
+      this.sendJson(res, 200, this.withConversationUsage({
+        summary: {
+          lifetimeTokens: 0, peakDailyTokens: 0, longestRunningTurnSec: 0,
+          currentStreakDays: 0, longestStreakDays: 0,
+        },
+        dailyUsageBuckets: [],
+        rateLimits: {
+          planType: "",
+          primary: { usedPercent: 100, windowDurationMins: 0, resetsAt: 0 },
+          secondary: null,
+          resetCredits: 0,
+        },
+      }, conversationId));
+      return;
+    }
+    const conversation = this.readConversation(conversationId);
+    const storedProfile = this.profileFor(conversation);
+    const profile = this.allowedCodexProfiles.has(storedProfile.id)
+      ? storedProfile : this.codexProfiles[this.defaultCodexProfile];
+    const usageCache = this.usageCache.get(profile.id);
+    if (usageCache && Date.now() - usageCache.cachedAt < 5 * 60 * 1000) {
+      this.sendJson(res, 200, this.withConversationUsage(usageCache.payload, conversationId));
+      return;
+    }
+    const client = new AppServerClient({
+      codexBin: this.codexBin,
+      cwd: profile.workDir,
+      home: "/home/ubuntu",
+      codexHome: profile.codexHome,
+    });
+    try {
+      await client.start();
+      const usage = await client.request("account/usage/read", {});
+      const summary = usage?.summary || {};
+      const rate = await client.request("account/rateLimits/read", {});
+      const limits = rate?.rateLimitsByLimitId?.codex || rate?.rateLimits || {};
+      const window = (value) => value ? {
+        usedPercent: Math.max(0, Math.min(100, Number(value.usedPercent || 0))),
+        windowDurationMins: Number(value.windowDurationMins || 0),
+        resetsAt: Number(value.resetsAt || 0),
+      } : null;
+      const payload = {
+        summary: {
+          lifetimeTokens: Number(summary.lifetimeTokens || 0),
+          peakDailyTokens: Number(summary.peakDailyTokens || 0),
+          longestRunningTurnSec: Number(summary.longestRunningTurnSec || 0),
+          currentStreakDays: Number(summary.currentStreakDays || 0),
+          longestStreakDays: Number(summary.longestStreakDays || 0),
+        },
+        dailyUsageBuckets: Array.isArray(usage?.dailyUsageBuckets)
+          ? usage.dailyUsageBuckets
+            .filter((bucket) => /^\d{4}-\d{2}-\d{2}$/.test(String(bucket?.startDate || "")))
+            .map((bucket) => ({
+              startDate: String(bucket.startDate),
+              tokens: Math.max(0, Number(bucket.tokens || 0)),
+            }))
+          : [],
+        rateLimits: {
+          planType: String(limits.planType || ""),
+          primary: window(limits.primary),
+          secondary: window(limits.secondary),
+          resetCredits: Math.max(0, Number(rate?.rateLimitResetCredits?.availableCount || 0)),
+        },
+      };
+      this.usageCache.set(profile.id, { cachedAt: Date.now(), payload });
+      this.sendJson(res, 200, this.withConversationUsage(payload, conversationId));
+    } catch (error) {
+      this.sendJson(res, 502, {
+        error: `暂时无法读取 Token 用量：${String(error.message || error).slice(0, 160)}`,
+      });
+    } finally {
+      client.close();
+    }
+  }
+
+  withConversationUsage(payload, conversationId) {
+    const conversation = this.readConversation(conversationId);
+    return {
+      ...payload,
+      context: this.quotaExhausted ? { usedTokens: 1, contextWindow: 1 } :
+        (conversation?.contextUsage?.source === "last-input" ? conversation.contextUsage : null),
+    };
+  }
+
+  async consumeRateLimitReset(res) {
+    if (this.quotaExhausted) {
+      this.sendJson(res, 429, { error: QUOTA_EXHAUSTED_MESSAGE });
+      return;
+    }
+    const client = new AppServerClient({ codexBin: this.codexBin, cwd: this.codexWorkDir, home: "/home/ubuntu" });
+    try {
+      await client.start();
+      const result = await client.request("account/rateLimitResetCredit/consume", {
+        idempotencyKey: crypto.randomUUID(),
+      });
+      this.usageCache.clear();
+      this.sendJson(res, 200, { outcome: String(result?.outcome || "noCredit") });
+    } catch (error) {
+      this.sendJson(res, 502, { error: `无法使用重置额度：${String(error.message || error).slice(0, 160)}` });
+    } finally {
+      client.close();
+    }
+  }
+
+  interruptConversation(res, conversationId) {
+    const conversation = this.readConversation(conversationId);
+    if (!conversation || conversation.archived) {
+      this.sendJson(res, 404, { error: "对话不存在" });
+      return;
+    }
+    const current = this.active;
+    if (!current || current.conversationId !== conversationId || current.finished) {
+      this.sendJson(res, 409, { error: "当前对话没有正在执行的任务" });
+      return;
+    }
+    current.interruptRequested = true;
+    const assistant = conversation.messages.find((message) => message.id === current.messageId);
+    if (assistant) {
+      this.addActivity(assistant, "pause", "正在暂停当前执行", "running");
+      conversation.updatedAt = new Date().toISOString();
+      this.writeConversation(conversation);
+    }
+    this.requestActiveInterrupt();
+    this.sendJson(res, 202, {
+      ok: true,
+      conversation: this.publicConversation(conversation),
+    });
+  }
+
+  requestActiveInterrupt() {
+    const current = this.active;
+    if (!current?.interruptRequested || !current.threadId || !current.turnId ||
+        current.interruptSent || current.finished) return;
+    current.interruptSent = true;
+    current.client.request("turn/interrupt", {
+      threadId: current.threadId,
+      turnId: current.turnId,
+    }).catch((error) => {
+      if (!this.active || this.active.messageId !== current.messageId) return;
+      current.interruptSent = false;
+      current.interruptRequested = false;
+      const conversation = this.readConversation(current.conversationId);
+      const assistant = conversation?.messages.find((message) => message.id === current.messageId);
+      if (assistant) {
+        this.addActivity(
+          assistant, "pause", `暂停失败：${String(error.message || error).slice(0, 100)}`, "failed");
+        conversation.updatedAt = new Date().toISOString();
+        this.writeConversation(conversation);
+      }
+    });
+  }
+
+  failSteer(conversationId, userMessageId, error) {
+    const conversation = this.readConversation(conversationId);
+    if (!conversation) return;
+    const user = conversation.messages.find((message) => message.id === userMessageId);
+    const assistant = conversation.messages.find((message) => message.id === this.active?.messageId);
+    const detail = String(error.message || error);
+    if (user && /no active turn|not steerable|active turn/i.test(detail) &&
+        !conversation.messages.some((message) => message.replyTo === userMessageId)) {
+      user.status = "queued";
+      delete user.steeredInto;
+      conversation.messages.push({
+        id: crypto.randomUUID(),
+        role: "assistant",
+        text: "",
+        attachments: [],
+        createdAt: new Date().toISOString(),
+        status: "queued",
+        activity: [{
+          type: "queue",
+          label: "上一轮刚刚结束，补充要求已自动转为下一轮",
+          status: "completed",
+        }],
+        replyTo: userMessageId,
+      });
+      if (assistant) this.addActivity(
+        assistant, "steer", "补充要求已衔接到下一轮", "completed");
+      conversation.updatedAt = new Date().toISOString();
+      this.writeConversation(conversation);
+      setImmediate(() => this.runNext());
+      return;
+    }
+    if (user) user.status = "failed";
+    if (assistant) this.addActivity(
+      assistant, "steer", `补充要求未能送达：${detail.slice(0, 100)}`, "failed");
+    conversation.updatedAt = new Date().toISOString();
+    this.writeConversation(conversation);
+  }
+
+  sendSteer(userMessageId, inputs) {
+    const current = this.active;
+    if (!current?.turnId || !current.threadId || !current.turnStarted) return;
+    current.client.request("turn/steer", {
+      threadId: current.threadId,
+      expectedTurnId: current.turnId,
+      input: inputs,
+      clientUserMessageId: userMessageId,
+    }).catch((error) => this.failSteer(current.conversationId, userMessageId, error));
+  }
+
+  flushPendingSteers() {
+    if (!this.active?.turnStarted || !this.active.turnId) return;
+    const pendingSteers = this.active.pendingSteers.splice(0);
+    for (const pendingSteer of pendingSteers) {
+      this.sendSteer(pendingSteer.userMessageId, pendingSteer.inputs);
+    }
+  }
+
+  recover() {
+    for (const conversation of this.allConversations()) {
+      let changed = false;
+      for (let index = 0; index < conversation.messages.length; index += 1) {
+        const message = conversation.messages[index];
+        for (const entry of message.stream || []) {
+          if (entry.kind === "approval" && entry.status === "pending") {
+            entry.status = "expired";
+            entry.resolvedAt = new Date().toISOString();
+            changed = true;
+          }
+        }
+        if (message.role === "assistant" && message.status === "running") {
+          message.status = "queued";
+          changed = true;
+          continue;
+        }
+        if (message.role !== "user" ||
+            (message.status !== "queued" && message.status !== "running")) continue;
+        if (message.steeredInto) {
+          const target = conversation.messages.find((candidate) =>
+            candidate.role === "assistant" && candidate.id === message.steeredInto);
+          if (target && ["completed", "interrupted", "failed"].includes(target.status)) {
+            message.status = target.status === "failed" ? "failed" : "completed";
+            changed = true;
+            continue;
+          }
+          if (target && (target.status === "queued" || target.status === "running")) {
+            if (message.status !== "running") {
+              message.status = "running";
+              changed = true;
+            }
+            continue;
+          }
+        }
+        const ownReply = conversation.messages.find((candidate) =>
+          candidate.role === "assistant" && candidate.replyTo === message.id &&
+          (candidate.status === "queued" || candidate.status === "running"));
+        if (ownReply) {
+          if (message.status !== "queued") {
+            message.status = "queued";
+            changed = true;
+          }
+          continue;
+        }
+        const followingAssistant = conversation.messages.slice(index + 1)
+          .find((candidate) => candidate.role === "assistant");
+        if (followingAssistant &&
+            ["completed", "interrupted", "failed"].includes(followingAssistant.status)) {
+          message.status = followingAssistant.status === "failed" ? "failed" : "completed";
+          changed = true;
+        }
+      }
+      if (changed) {
+        conversation.updatedAt = new Date().toISOString();
+        this.writeConversation(conversation);
+      }
+    }
+    setImmediate(() => this.runNext());
+  }
+
+  nextQueued() {
+    for (const conversation of this.allConversations().reverse()) {
+      if (conversation.archived) continue;
+      const assistant = conversation.messages.find((message) =>
+        message.role === "assistant" && message.status === "queued");
+      if (!assistant) continue;
+      const user = conversation.messages.find((message) => message.id === assistant.replyTo);
+      if (user) return { conversation, user, assistant };
+    }
+    return null;
+  }
+
+  addActivity(assistant, type, label, status = "running") {
+    const last = assistant.activity?.at(-1);
+    if (last && last.type === type && last.label === label) {
+      last.status = status;
+      return;
+    }
+    assistant.activity = [...(assistant.activity || []), { type, label, status }].slice(-12);
+  }
+
+  upsertStream(assistant, id, values) {
+    assistant.stream = Array.isArray(assistant.stream) ? assistant.stream : [];
+    let entry = assistant.stream.find((item) => item.id === id);
+    if (!entry) {
+      entry = {
+        id,
+        kind: values.kind || "activity",
+        createdAt: new Date().toISOString(),
+        status: "running",
+      };
+      assistant.stream.push(entry);
+    }
+    for (const [key, value] of Object.entries(values)) {
+      if (value !== undefined && value !== null) entry[key] = value;
+    }
+    return entry;
+  }
+
+  approvalChoices(method, params = {}) {
+    const makeChoice = (id, label, description, response, outcome = "accepted") => ({
+      id, label, description, response, outcome,
+    });
+    if (method === "item/permissions/requestApproval") {
+      const permissions = params.permissions || {};
+      return [
+        makeChoice(
+          "allow-turn", "允许本轮", "只在当前这轮任务中授予请求的权限",
+          { permissions, scope: "turn" }),
+        makeChoice(
+          "allow-session", "在本会话中允许", "本次 Codex 会话内不再重复询问相同权限",
+          { permissions, scope: "session" }),
+        makeChoice(
+          "decline", "拒绝并继续", "不授予权限，让 Codex 尝试其他做法",
+          { permissions: {}, scope: "turn" }, "declined"),
+      ];
+    }
+    if (method === "item/tool/requestUserInput") {
+      const questions = Array.isArray(params.questions) ? params.questions : [];
+      if (questions.length !== 1 || !Array.isArray(questions[0]?.options) ||
+          !questions[0].options.length) return [];
+      const question = questions[0];
+      return question.options.slice(0, 12).map((option, index) => {
+        const label = String(option?.label || `选项 ${index + 1}`).slice(0, 120);
+        const declined = /decline|cancel|reject|deny|拒绝|取消|不允许/i.test(label);
+        return makeChoice(
+          `input-${index + 1}`,
+          label,
+          String(option?.description || "提交此选择").slice(0, 300),
+          { answers: { [String(question.id || "answer")]: { answers: [label] } } },
+          declined ? "declined" : "accepted",
+        );
+      });
+    }
+    if (method === "mcpServer/elicitation/request") {
+      const properties = params.requestedSchema?.properties;
+      const isConfirmation = params.mode === "url" ||
+        ((params.mode === "form" || params.mode === "openai/form") &&
+          properties && typeof properties === "object" && !Object.keys(properties).length);
+      if (!isConfirmation) return [];
+      return [
+        makeChoice("mcp-accept", params.mode === "url" ? "已完成并继续" : "允许一次",
+          params.mode === "url" ? "确认已完成外部授权流程" : "允许这次连接器操作",
+          { action: "accept", content: null, _meta: null }),
+        makeChoice("mcp-decline", "拒绝", "不授权，继续当前任务",
+          { action: "decline", content: null, _meta: null }, "declined"),
+        makeChoice("mcp-cancel", "取消本轮", "取消这次连接器操作",
+          { action: "cancel", content: null, _meta: null }, "declined"),
+      ];
+    }
+
+    const hasAvailableDecisions = method === "item/commandExecution/requestApproval" &&
+      Array.isArray(params.availableDecisions) && params.availableDecisions.length > 0;
+    let decisions = hasAvailableDecisions
+      ? params.availableDecisions
+      : ["accept", "acceptForSession"];
+    if (method === "item/commandExecution/requestApproval" &&
+        !hasAvailableDecisions) {
+      if (Array.isArray(params.proposedExecpolicyAmendment) &&
+          params.proposedExecpolicyAmendment.length) {
+        decisions.push({
+          acceptWithExecpolicyAmendment: {
+            execpolicy_amendment: params.proposedExecpolicyAmendment,
+          },
+        });
+      }
+      for (const amendment of params.proposedNetworkPolicyAmendments || []) {
+        decisions.push({
+          applyNetworkPolicyAmendment: { network_policy_amendment: amendment },
+        });
+      }
+      decisions.push("decline", "cancel");
+    } else if (method === "item/fileChange/requestApproval") {
+      decisions = ["accept", "acceptForSession", "decline", "cancel"];
+    }
+
+    return decisions.map((decision, index) => {
+      const id = `choice-${index + 1}`;
+      if (decision === "accept") {
+        return makeChoice(id, "允许一次", "仅批准当前这项操作", { decision });
+      }
+      if (decision === "acceptForSession") {
+        return makeChoice(
+          id, "在本会话中允许", "相同操作在本次 Codex 会话中不再询问", { decision });
+      }
+      if (decision === "decline") {
+        return makeChoice(
+          id, "拒绝并继续", "不执行这项操作，让 Codex 尝试其他做法",
+          { decision }, "declined");
+      }
+      if (decision === "cancel") {
+        return makeChoice(
+          id, "拒绝并停止本轮", "不执行操作，并立即停止当前任务",
+          { decision }, "declined");
+      }
+      const execpolicy = decision?.acceptWithExecpolicyAmendment;
+      if (Array.isArray(execpolicy?.execpolicy_amendment)) {
+        const prefix = execpolicy.execpolicy_amendment.join(" ");
+        return makeChoice(
+          id, `允许并记住“${prefix.slice(0, 70)}”`,
+          "以后匹配这条命令规则的操作不再询问",
+          { decision: { acceptWithExecpolicyAmendment: execpolicy } });
+      }
+      const network = decision?.applyNetworkPolicyAmendment?.network_policy_amendment;
+      if (network?.host && (network.action === "allow" || network.action === "deny")) {
+        return makeChoice(
+          id,
+          `${network.action === "allow" ? "始终允许" : "始终拒绝"} ${network.host}`,
+          `保存一条${network.action === "allow" ? "允许" : "拒绝"}访问该主机的网络规则`,
+          { decision: { applyNetworkPolicyAmendment: { network_policy_amendment: network } } },
+          network.action === "allow" ? "accepted" : "declined");
+      }
+      return null;
+    }).filter(Boolean);
+  }
+
+  approvalPresentation(method, params = {}) {
+    const compact = (value, limit = 1200) => String(value || "").trim().slice(0, limit);
+    const network = params.networkApprovalContext || {};
+    const requestedPermissions = params.permissions || params.additionalPermissions || {};
+    const fileSystem = requestedPermissions.fileSystem || {};
+    const readPaths = Array.isArray(fileSystem.read) ? fileSystem.read : [];
+    const writePaths = Array.isArray(fileSystem.write) ? fileSystem.write : [];
+    const entries = Array.isArray(fileSystem.entries) ? fileSystem.entries : [];
+    const pathLabels = entries.map((entry) => {
+      const target = entry?.path || {};
+      const value = target.path || target.pattern || target.value?.path ||
+        target.value?.kind || target.type || "";
+      return `${entry?.access || "访问"} ${value}`.trim();
+    });
+    const permissionParts = [
+      requestedPermissions.network?.enabled ? "访问网络" : "",
+      ...readPaths.map((item) => `读取 ${item}`),
+      ...writePaths.map((item) => `写入 ${item}`),
+      ...pathLabels,
+    ].filter(Boolean);
+    if (method === "item/tool/requestUserInput") {
+      const questions = (Array.isArray(params.questions) ? params.questions : [])
+        .slice(0, 3).map((question, index) => ({
+          id: String(question?.id || `question-${index + 1}`).slice(0, 120),
+          header: compact(question?.header || "连接器确认", 120),
+          question: compact(question?.question || "请选择如何继续", 500),
+          isOther: Boolean(question?.isOther),
+          isSecret: Boolean(question?.isSecret),
+          options: Array.isArray(question?.options)
+            ? question.options.slice(0, 12).map((option) => ({
+              label: compact(option?.label, 120),
+              description: compact(option?.description, 300),
+            })) : null,
+        }));
+      return {
+        approvalType: "connector",
+        title: questions[0]?.header || "允许连接器执行操作？",
+        reason: questions.length === 1 ? questions[0].question : "连接器需要你的输入才能继续。",
+        approvalQuestions: questions,
+      };
+    }
+    if (method === "mcpServer/elicitation/request") {
+      const schema = params.requestedSchema && typeof params.requestedSchema === "object"
+        ? JSON.parse(JSON.stringify(params.requestedSchema)) : null;
+      return {
+        approvalType: "mcp",
+        title: `${compact(params.serverName || "MCP", 120)} 请求确认`,
+        reason: compact(params.message || "连接器需要你的确认才能继续。", 800),
+        approvalUrl: params.mode === "url" ? compact(params.url, 1800) : "",
+        approvalForm: params.mode === "form" || params.mode === "openai/form" ? schema : null,
+        approvalMode: compact(params.mode, 30),
+      };
+    }
+    if (method === "item/commandExecution/requestApproval") {
+      const isNetwork = Boolean(network.host);
+      return {
+        approvalType: isNetwork ? "network" : "command",
+        title: isNetwork ? "允许访问网络？" : "允许执行这条命令？",
+        reason: compact(params.reason, 500),
+        command: compact(params.command, 4000),
+        cwd: compact(params.cwd, 800),
+        host: compact(network.host, 300),
+        protocol: compact(network.protocol, 30),
+        permissionSummary: compact(permissionParts.join("\n"), 1800),
+      };
+    }
+    if (method === "item/fileChange/requestApproval") {
+      return {
+        approvalType: "file",
+        title: "允许修改这些文件？",
+        reason: compact(params.reason, 500),
+        grantRoot: compact(params.grantRoot, 800),
+      };
+    }
+    return {
+      approvalType: requestedPermissions.network?.enabled ? "network" : "permissions",
+      title: requestedPermissions.network?.enabled ? "允许临时访问网络？" : "允许临时扩展权限？",
+      reason: compact(params.reason, 500),
+      cwd: compact(params.cwd, 800),
+      permissionSummary: compact(permissionParts.join("\n") || "Codex 请求额外操作权限", 1800),
+    };
+  }
+
+  handleServerRequest(conversationId, messageId, request) {
+    const current = this.active;
+    if (!current || current.conversationId !== conversationId ||
+        current.messageId !== messageId) return;
+    const supported = new Set([
+      "item/commandExecution/requestApproval",
+      "item/fileChange/requestApproval",
+      "item/permissions/requestApproval",
+      "item/tool/requestUserInput",
+      "mcpServer/elicitation/request",
+    ]);
+    if (!supported.has(request.method)) {
+      try { current.client.respond(request.id, { decision: "decline" }); } catch {}
+      return;
+    }
+    const conversation = this.readConversation(conversationId);
+    const assistant = conversation?.messages.find((message) => message.id === messageId);
+    if (!conversation || !assistant) {
+      try { current.client.respond(request.id, { decision: "decline" }); } catch {}
+      return;
+    }
+    const approvalId = crypto.randomUUID();
+    const choices = this.approvalChoices(request.method, request.params || {});
+    const supportsStructuredInput = request.method === "item/tool/requestUserInput" ||
+      request.method === "mcpServer/elicitation/request";
+    if (!choices.length && !supportsStructuredInput) {
+      try { current.client.respond(request.id, { decision: "decline" }); } catch {}
+      return;
+    }
+    current.pendingApprovals.set(approvalId, {
+      rpcId: request.id,
+      method: request.method,
+      params: request.params || {},
+      choices: new Map(choices.map((choice) => [choice.id, choice])),
+    });
+    this.upsertStream(assistant, `approval-${approvalId}`, {
+      kind: "approval",
+      approvalId,
+      status: "pending",
+      approvalOptions: choices.map(({ id, label, description, outcome }) => ({
+        id, label, description, tone: outcome,
+      })),
+      ...this.approvalPresentation(request.method, request.params || {}),
+    });
+    this.addActivity(assistant, "approval", "等待你确认权限", "running");
+    conversation.updatedAt = new Date().toISOString();
+    this.writeConversation(conversation);
+  }
+
+  resolveApproval(req, res, conversationId, approvalId) {
+    this.readJsonBody(req, 8 * 1024, (error, body) => {
+      if (error) {
+        this.sendJson(res, 400, { error: error.message });
+        return;
+      }
+      const current = this.active;
+      const pending = current?.conversationId === conversationId
+        ? current.pendingApprovals?.get(approvalId) : null;
+      if (!pending) {
+        this.sendJson(res, 409, { error: "这项权限请求已失效" });
+        return;
+      }
+      const requestedChoice = String(body?.choiceId || body?.decision || "");
+      let choice = pending.choices?.get(requestedChoice);
+      if (!choice && (requestedChoice === "accept" || requestedChoice === "decline")) {
+        choice = [...(pending.choices?.values() || [])].find((candidate) =>
+          candidate.response?.decision === requestedChoice ||
+          (requestedChoice === "accept" && candidate.id === "allow-turn") ||
+          (requestedChoice === "decline" && candidate.id === "decline"));
+      }
+      let response = choice?.response;
+      let outcome = choice?.outcome;
+      let resolutionLabel = choice?.label;
+      if (!choice && (pending.method === "item/tool/requestUserInput" ||
+          pending.method === "mcpServer/elicitation/request")) {
+        let payload;
+        try { payload = JSON.parse(requestedChoice); } catch {}
+        if (pending.method === "item/tool/requestUserInput") {
+          const answers = payload?.answers;
+          const questions = Array.isArray(pending.params?.questions) ? pending.params.questions : [];
+          const valid = answers && typeof answers === "object" && questions.every((question) => {
+            const value = answers[String(question?.id || "answer")]?.answers;
+            return Array.isArray(value) && value.length > 0 && value.every((item) =>
+              typeof item === "string" && item.length <= 2000);
+          });
+          if (valid) {
+            response = { answers };
+            outcome = "accepted";
+            resolutionLabel = "已提交连接器选择";
+          }
+        } else {
+          const action = payload?.action;
+          if (["accept", "decline", "cancel"].includes(action)) {
+            response = {
+              action,
+              content: action === "accept" && payload.content && typeof payload.content === "object"
+                ? payload.content : null,
+              _meta: null,
+            };
+            outcome = action === "accept" ? "accepted" : "declined";
+            resolutionLabel = action === "accept" ? "已提交 MCP 表单" :
+              action === "cancel" ? "已取消连接器操作" : "已拒绝连接器操作";
+          }
+        }
+      }
+      if (!response) {
+        this.sendJson(res, 400, { error: "请选择当前请求提供的操作" });
+        return;
+      }
+      const conversation = this.readConversation(conversationId);
+      const assistant = conversation?.messages.find((message) => message.id === current.messageId);
+      const entry = assistant?.stream?.find((item) =>
+        item.kind === "approval" && item.approvalId === approvalId);
+      if (!conversation || !assistant || !entry) {
+        this.sendJson(res, 409, { error: "找不到这项权限请求" });
+        return;
+      }
+      try {
+        current.client.respond(pending.rpcId, response);
+      } catch (respondError) {
+        this.sendJson(res, 500, { error: respondError.message || "权限确认发送失败" });
+        return;
+      }
+      current.pendingApprovals.delete(approvalId);
+      entry.status = outcome;
+      entry.resolutionLabel = resolutionLabel;
+      entry.resolvedAt = new Date().toISOString();
+      this.addActivity(
+        assistant, "approval", outcome === "accepted" ? resolutionLabel : "已拒绝本次操作",
+        "completed");
+      conversation.updatedAt = new Date().toISOString();
+      this.writeConversation(conversation);
+      this.sendJson(res, 200, {
+        ok: true,
+        conversation: this.publicConversation(conversation),
+      });
+    });
+  }
+
+  buildDeveloperInstructions(conversation) {
+    const workDir = this.effectiveWorkDir(conversation);
+    return [
+      "你是运行在用户私人服务器上的 Codex 助手 Witt。",
+      `固定工作目录：${workDir}`,
+      `Witt 附件目录：${this.dataDir}`,
+      "记住用户在本线程中的上下文，回答使用简洁自然的中文。",
+      "只处理用户明确要求的任务，保留现有数据和未提交修改。",
+      "不要输出、读取或回传登录凭据、Token、私钥和密码。",
+      "访问范围由本对话的权限设置决定。删除数据、对外发送消息等不可逆或对外动作仍需先向用户说明。",
+      "Witt 已经获得本机通用 Root 权限；需要完成用户要求时，可以直接使用 `sudo -n`、systemctl 和系统目录。",
+      "修改服务代码后先完成语法或构建校验，再重启对应服务并检查健康状态。",
+      "删除大量数据、覆盖数据库、修改防火墙或其他难以恢复的操作，执行前仍需向用户明确说明目标和影响。",
+      "兼容备用通道：修改 drop-vault 后端但不适合直接重启时，仍可写入 /data/drop-vault/restart-request 请求延迟校验重启。",
+      "右上角交付区是用户主动索取文件时使用的下载通道，不是每轮回复存档。",
+      "仅当用户明确要求交付、打包、下载，或要求把服务器上的某个文件放入交付区时，才在最终回复末尾逐行输出 [[deliver:/绝对/文件路径]]。普通回答或普通代码修改绝对不要输出该标记。只能交付普通文件，目录需先打包。",
+    ].join("\n");
+  }
+
+  buildPrompt(conversation, user, attachments) {
+    const attachmentText = attachments.length
+      ? [
+          "",
+          "本轮附件（用户已明确授权读取）：",
+          ...attachments.map((file) => `- ${file.name}：${file.path}（${file.mimeType}）`),
+        ].join("\n")
+      : "";
+    const userText = user.text || "请查看我附上的文件。";
+    if (conversation.codexThreadId) return `${userText}${attachmentText}`;
+    return [
+      this.buildDeveloperInstructions(conversation),
+      "",
+      `用户：${userText}${attachmentText}`,
+    ].join("\n");
+  }
+
+  buildInputs(conversation, user, attachments, firstTurn) {
+    const text = firstTurn
+      ? this.buildPrompt(conversation, user, attachments)
+      : this.buildPrompt(conversation, user, attachments);
+    const inputs = [{ type: "text", text }];
+    for (const file of attachments) {
+      if (/^image\//.test(file.mimeType)) inputs.push({ type: "localImage", path: file.path });
+    }
+    return inputs;
+  }
+
+  async runNext() {
+    if (this.active) return;
+    const queued = this.nextQueued();
+    if (!queued) return;
+    const { conversation, user, assistant } = queued;
+    if (!this.profileAllowed(conversation)) {
+      user.status = "failed";
+      assistant.status = "failed";
+      assistant.text = "该对话属于未授权的 Codex 账号，请新建玄遇对话";
+      assistant.activity = [{ type: "error", label: assistant.text, status: "failed" }];
+      conversation.updatedAt = new Date().toISOString();
+      this.writeConversation(conversation);
+      setImmediate(() => this.runNext());
+      return;
+    }
+    if (this.quotaExhausted) {
+      user.status = "failed";
+      assistant.status = "failed";
+      assistant.text = QUOTA_EXHAUSTED_MESSAGE;
+      assistant.activity = [{ type: "error", label: QUOTA_EXHAUSTED_MESSAGE, status: "failed" }];
+      conversation.updatedAt = new Date().toISOString();
+      this.writeConversation(conversation);
+      setImmediate(() => this.runNext());
+      return;
+    }
+    const attachments = (user.attachments || []).map((file) => this.readUpload(file.id)).filter(Boolean);
+    user.status = "running";
+    assistant.status = "running";
+    assistant.activity = [{ type: "thinking", label: "正在阅读并理解消息", status: "running" }];
+    assistant.stream = Array.isArray(assistant.stream) ? assistant.stream : [];
+    conversation.updatedAt = new Date().toISOString();
+    this.writeConversation(conversation);
+
+    const model = this.modelAllowed(conversation.model, this.profileFor(conversation).id)
+      ? conversation.model : this.defaultModel;
+    const reasoning = ALLOWED_REASONING.has(conversation.reasoning) ? conversation.reasoning : "medium";
+    const accessMode = ALLOWED_ACCESS.has(conversation.accessMode)
+      ? conversation.accessMode : "danger-full-access";
+    const workDir = this.effectiveWorkDir(conversation);
+    const profile = this.profileFor(conversation);
+    const client = this.clientFor(profile);
+    this.active = {
+      conversationId: conversation.id,
+      messageId: assistant.id,
+      userId: user.id,
+      client,
+      threadId: conversation.codexThreadId,
+      turnId: null,
+      turnStarted: false,
+      finalResponse: "",
+      finished: false,
+      pendingSteers: [],
+      pendingApprovals: new Map(),
+      codexHome: profile.codexHome,
+    };
+    const timeout = setTimeout(() => {
+      if (this.active?.messageId === assistant.id) {
+        this.failActive("本轮处理超过 30 分钟，已停止");
+      }
+    }, 30 * 60 * 1000);
+    timeout.unref();
+    this.active.timeout = timeout;
+    try {
+      await client.start();
+      if (!this.active || this.active.messageId !== assistant.id) return;
+      const threadOptions = {
+        cwd: workDir,
+        model,
+        sandbox: accessMode,
+        approvalPolicy: "on-request",
+        developerInstructions: this.buildDeveloperInstructions(conversation),
+      };
+      const threadResult = conversation.codexThreadId
+        ? await client.request("thread/resume", {
+            ...threadOptions, threadId: conversation.codexThreadId, excludeTurns: true,
+          })
+        : await client.request("thread/start", {
+            ...threadOptions,
+          });
+      const latestConversation = this.readConversation(conversation.id) || conversation;
+      latestConversation.codexThreadId = threadResult.thread.id;
+      this.active.threadId = threadResult.thread.id;
+      this.active.generatedImageFiles =
+        this.generatedImageFiles(threadResult.thread.id, profile.codexHome);
+      this.writeConversation(latestConversation);
+      const turnResult = await client.request("turn/start", {
+        threadId: threadResult.thread.id,
+        input: this.buildInputs(latestConversation, user, attachments, false),
+        model,
+        effort: reasoning,
+        cwd: workDir,
+        approvalPolicy: "on-request",
+      });
+      this.active.turnId = turnResult.turn.id;
+      this.requestActiveInterrupt();
+      const runningConversation = this.readConversation(conversation.id) || latestConversation;
+      const runningAssistant = runningConversation.messages.find(
+        (message) => message.id === assistant.id);
+      if (runningAssistant) {
+        this.addActivity(runningAssistant, "thinking", "正在理解并处理你的要求", "running");
+      }
+      this.writeConversation(runningConversation);
+      this.flushPendingSteers();
+    } catch (error) {
+      if (this.active?.messageId === assistant.id) {
+        this.failActive(`无法启动 Codex：${error.message}`);
+      }
+    }
+  }
+
+  handleNotification(conversationId, messageId, method, params) {
+    if (!this.active || this.active.conversationId !== conversationId ||
+        this.active.messageId !== messageId) return;
+    const conversation = this.readConversation(conversationId);
+    if (!conversation) return;
+    const assistant = conversation.messages.find((message) => message.id === messageId);
+    if (!assistant) return;
+    const item = params.item || {};
+    if (method === "thread/tokenUsage/updated") {
+      const total = params.tokenUsage?.total || {};
+      const last = params.tokenUsage?.last || {};
+      const contextWindow = Number(params.tokenUsage?.modelContextWindow || 0);
+      // `total` is the lifetime sum for this thread, not its live context footprint.
+      // The latest turn's input is the closest app-server signal for the prompt currently
+      // occupying the model window; using `total.totalTokens` makes every long thread read 0%.
+      const liveContextTokens = Number(last.inputTokens || 0);
+      conversation.contextUsage = contextWindow > 0 ? {
+        usedTokens: liveContextTokens > 0 ? Math.max(0, liveContextTokens) : null,
+        contextWindow,
+        source: "last-input",
+        updatedAt: new Date().toISOString(),
+      } : null;
+    } else if (method === "turn/started") {
+      this.active.turnId = params.turn?.id || this.active.turnId;
+      assistant.codexTurnId = this.active.turnId;
+      this.active.turnStarted = true;
+      this.addActivity(assistant, "thinking", "正在理解并处理你的要求", "running");
+      this.requestActiveInterrupt();
+      this.flushPendingSteers();
+    } else if (method === "turn/plan/updated") {
+      const steps = (params.plan || []).map((step) => ({
+        step: String(step.step || ""),
+        status: String(step.status || "pending"),
+      })).filter((step) => step.step);
+      const completed = steps.filter((step) => step.status === "completed").length;
+      this.upsertStream(assistant, `plan-${params.turnId || this.active.turnId}`, {
+        kind: "plan",
+        label: steps.length ? `计划进度 ${completed}/${steps.length}` : "正在制定计划",
+        status: completed === steps.length && steps.length ? "completed" : "running",
+        steps,
+        explanation: String(params.explanation || ""),
+      });
+    } else if (method === "model/rerouted") {
+      conversation.model = String(params.toModel || conversation.model);
+      this.addActivity(assistant, "model", `模型已切换为 ${conversation.model}`, "completed");
+    } else if (method === "model/safetyBuffering/updated") {
+      this.addActivity(assistant, "safety", params.showBufferingUi
+        ? "正在完成安全校验" : "安全校验完成", params.showBufferingUi ? "running" : "completed");
+    } else if (method === "item/agentMessage/delta") {
+      const entry = this.upsertStream(assistant, params.itemId, {
+        kind: "message",
+        phase: "unknown",
+        status: "running",
+      });
+      entry.text = `${entry.text || ""}${String(params.delta || "")}`;
+    } else if (method === "item/started" || method === "item/completed") {
+      const status = method === "item/completed" ? "completed" : "running";
+      if (item.type === "commandExecution") {
+        const label = String(item.command || "执行命令").replace(/\s+/g, " ").slice(0, 120);
+        this.addActivity(
+          assistant, "command", label.slice(0, 90), status);
+        this.upsertStream(assistant, item.id, {
+          kind: "command", label, status,
+          details: {
+            command: String(item.command || ""),
+            cwd: String(item.cwd || ""),
+            exitCode: Number.isInteger(item.exitCode) ? item.exitCode : null,
+            durationMs: Number.isInteger(item.durationMs) ? item.durationMs : null,
+            output: String(item.aggregatedOutput || "").slice(-64 * 1024),
+          },
+        });
+      } else if (item.type === "fileChange") {
+        const count = Array.isArray(item.changes) ? item.changes.length : 0;
+        const label = status === "completed"
+          ? (count ? `已修改 ${count} 个文件` : "文件修改已完成")
+          : "正在修改项目文件";
+        this.addActivity(assistant, "file", label, status);
+        this.upsertStream(assistant, item.id, {
+          kind: "file", label, status, count,
+          details: {
+            changes: (item.changes || []).slice(0, 100).map((change) => ({
+              path: String(change.path || ""),
+              kind: String(change.kind?.type || "update"),
+              movePath: change.kind?.move_path ? String(change.kind.move_path) : null,
+              diff: String(change.diff || "").slice(0, 64 * 1024),
+            })),
+          },
+        });
+      } else if (item.type === "mcpToolCall") {
+        const label = item.tool ? `调用工具：${item.tool}` : "正在调用已连接的工具";
+        this.addActivity(assistant, "tool", label, status);
+        this.upsertStream(assistant, item.id, {
+          kind: "tool", label, status,
+        });
+        if (method === "item/completed") {
+          this.captureToolImages(assistant, item).forEach((image, index) => {
+            this.upsertStream(assistant, `${item.id}-image-${index}`, {
+              kind: "image",
+              imageId: image.id,
+              name: image.name,
+              mimeType: image.mimeType,
+              status: "completed",
+            });
+          });
+        }
+      } else if (item.type === "dynamicToolCall") {
+        const label = item.tool ? `调用工具：${item.tool}` : "正在调用工具";
+        this.addActivity(assistant, "tool", label, status);
+        this.upsertStream(assistant, item.id, {
+          kind: "tool", label, status,
+        });
+        if (method === "item/completed") {
+          this.captureToolImages(assistant, item).forEach((image, index) => {
+            this.upsertStream(assistant, `${item.id}-image-${index}`, {
+              kind: "image",
+              imageId: image.id,
+              name: image.name,
+              mimeType: image.mimeType,
+              status: "completed",
+            });
+          });
+        }
+      } else if (item.type === "collabToolCall") {
+        const label = item.tool === "spawn_agent" ? "正在委派子任务"
+          : item.tool === "wait" ? "正在等待并行任务" : "正在协调并行任务";
+        this.addActivity(assistant, "collab", label, status);
+        this.upsertStream(assistant, item.id, {
+          kind: "collab", label, status,
+          agentStatus: String(item.agentStatus || ""),
+        });
+      } else if (item.type === "contextCompaction") {
+        this.upsertStream(assistant, item.id, {
+          kind: "compact", label: status === "completed" ? "上下文压缩完成" : "正在压缩上下文",
+          status,
+        });
+        conversation.contextCompaction = {
+          status, updatedAt: new Date().toISOString(),
+        };
+      } else if (item.type === "enteredReviewMode") {
+        this.upsertStream(assistant, item.id, {
+          kind: "review", label: "正在进行代码审查", status,
+        });
+      } else if (item.type === "exitedReviewMode") {
+        const review = String(item.review || "");
+        this.upsertStream(assistant, item.id, {
+          kind: "message", phase: "final_answer", text: review, status,
+        });
+        if (review) this.active.finalResponse = review;
+      } else if (item.type === "webSearch") {
+        const label = item.query ? `搜索：${String(item.query).slice(0, 100)}` : "正在查找最新资料";
+        this.addActivity(assistant, "web", label, status);
+        this.upsertStream(assistant, item.id, {
+          kind: "web", label, status,
+        });
+      } else if (item.type === "imageView") {
+        if (method === "item/completed") {
+          const image = this.attachImage(
+            assistant, this.storeImagePath(item.path, "execution"));
+          if (image) {
+            this.upsertStream(assistant, item.id, {
+              kind: "image",
+              imageId: image.id,
+              name: image.name,
+              mimeType: image.mimeType,
+              status: "completed",
+            });
+          }
+        }
+      } else if (["imageGeneration", "image_generation", "image_generation_end"].includes(item.type)) {
+        if (method === "item/completed") {
+          const image = this.captureGeneratedImage(assistant, item);
+          if (image) {
+            this.upsertStream(assistant, item.id, {
+              kind: "image",
+              imageId: image.id,
+              name: image.name,
+              mimeType: image.mimeType,
+              status: "completed",
+            });
+          }
+        }
+      } else if (item.type === "agentMessage") {
+        const entry = this.upsertStream(assistant, item.id, {
+          kind: "message",
+          phase: item.phase || "unknown",
+          status,
+        });
+        if (item.text) entry.text = item.text;
+        if (item.phase === "final_answer" && item.text) {
+          this.active.finalResponse = item.text;
+        }
+      }
+    } else if (method === "turn/completed") {
+      const messageEntries = (assistant.stream || []).filter(
+        (entry) => entry.kind === "message" && String(entry.text || "").trim());
+      const finalEntry = messageEntries.filter((entry) => entry.phase === "final_answer").at(-1)
+        || messageEntries.at(-1);
+      const response = String(finalEntry?.text || this.active.finalResponse || "");
+      const interrupted = params.turn?.status === "interrupted";
+      const success = params.turn?.status === "completed" && Boolean(response.trim());
+      const detail = params.turn?.error?.message || "Codex 未返回有效结果";
+      this.finishActive(success, response, interrupted ? "已暂停" : detail, interrupted);
+      return;
+    } else {
+      return;
+    }
+    conversation.updatedAt = new Date().toISOString();
+    this.writeConversation(conversation);
+  }
+
+  failActive(error) {
+    this.finishActive(false, "", error);
+  }
+
+  finishActive(success, response, error, interrupted = false) {
+    const current = this.active;
+    if (!current || current.finished) return;
+    current.finished = true;
+    clearTimeout(current.timeout);
+    const conversation = this.readConversation(current.conversationId);
+    if (!conversation) {
+      this.active = null;
+      return;
+    }
+    const user = conversation.messages.find((message) => message.id === current.userId);
+    const assistant = conversation.messages.find((message) => message.id === current.messageId);
+    if (!assistant) {
+      this.active = null;
+      setImmediate(() => this.runNext());
+      return;
+    }
+    for (const entry of assistant.stream || []) {
+      if (entry.kind === "approval" && entry.status === "pending") {
+        entry.status = "expired";
+        entry.resolvedAt = new Date().toISOString();
+      }
+    }
+    current.pendingApprovals?.clear();
+    this.finishRun(conversation, user, assistant, success, response, error, interrupted);
+  }
+
+  finishRun(conversation, user, assistant, success, response, error, interrupted = false) {
+    if (user) user.status = success || interrupted ? "completed" : "failed";
+    const assistantIndex = conversation.messages.findIndex((message) => message.id === assistant.id);
+    for (let index = 0; index < conversation.messages.length; index += 1) {
+      const message = conversation.messages[index];
+      if (message.role === "user" && message.status === "running") {
+        message.status = success || interrupted ? "completed" : "failed";
+      } else if (message.role === "user" &&
+          (message.status === "queued" || message.status === "running") &&
+          message.steeredInto === assistant.id) {
+        message.status = success || interrupted ? "completed" : "failed";
+      } else if (message.role === "user" && message.status === "queued" &&
+          index < assistantIndex &&
+          !conversation.messages.some((candidate) =>
+            candidate.role === "assistant" && candidate.replyTo === message.id)) {
+        message.status = success || interrupted ? "completed" : "failed";
+      }
+    }
+    assistant.status = interrupted ? "interrupted" : success ? "completed" : "failed";
+    const delivery = success ? this.extractDeliveries(response) : { text: response, artifacts: [] };
+    assistant.text = interrupted
+      ? "已暂停本轮执行。已完成的修改和命令结果会保留。"
+      : success ? delivery.text : `本轮没有完成：${error}`;
+    assistant.artifacts = delivery.artifacts;
+    for (const artifact of delivery.artifacts) {
+      if (!String(artifact.mimeType || "").startsWith("image/")) continue;
+      this.attachImage(
+        assistant,
+        this.storeImagePath(artifact.sourcePath, "delivery", artifact.id),
+      );
+    }
+    if (success && this.active?.threadId === conversation.codexThreadId) {
+      this.captureNewGeneratedImages(assistant, this.active.threadId,
+        this.active.generatedImageFiles, this.active.codexHome).forEach((image, index) => {
+        this.upsertStream(assistant, `generated-image-${image.id}-${index}`, {
+          kind: "image", imageId: image.id, name: image.name,
+          mimeType: image.mimeType, status: "completed",
+        });
+      });
+    }
+    assistant.stream = Array.isArray(assistant.stream) ? assistant.stream : [];
+    for (const entry of assistant.stream) {
+      if (entry.status === "running") entry.status = success || interrupted ? "completed" : "failed";
+    }
+    if (success) {
+      const messageEntries = assistant.stream.filter((entry) => entry.kind === "message");
+      const finalEntry = messageEntries.filter((entry) => entry.phase === "final_answer").at(-1)
+        || messageEntries.at(-1);
+      if (finalEntry) {
+        finalEntry.text = delivery.text;
+        finalEntry.phase = "final_answer";
+        finalEntry.status = "completed";
+      } else if (delivery.text) {
+        assistant.stream.push({
+          id: crypto.randomUUID(),
+          kind: "message",
+          phase: "final_answer",
+          text: delivery.text,
+          status: "completed",
+          createdAt: new Date().toISOString(),
+        });
+      }
+    } else {
+      assistant.stream.push({
+        id: crypto.randomUUID(),
+        kind: "message",
+        phase: "final_answer",
+        text: assistant.text,
+        status: interrupted ? "interrupted" : "failed",
+        createdAt: new Date().toISOString(),
+      });
+    }
+    for (const activity of assistant.activity || []) {
+      if (activity.status === "running") {
+        activity.status = success || interrupted ? "completed" : "failed";
+      }
+    }
+    this.addActivity(
+      assistant,
+      interrupted ? "pause" : success ? "done" : "error",
+      interrupted ? "已暂停" : success ? "处理完成" : "处理未完成",
+      interrupted || success ? "completed" : "failed");
+    conversation.updatedAt = new Date().toISOString();
+    this.writeConversation(conversation);
+    this.active = null;
+    setImmediate(() => this.runNext());
+  }
+
+  extractDeliveries(response) {
+    const lines = String(response || "").split("\n");
+    const artifacts = [];
+    const visible = [];
+    for (const line of lines) {
+      const match = line.trim().match(/^\[\[deliver:(\/.+)\]\]$/);
+      if (!match) {
+        visible.push(line);
+        continue;
+      }
+      const artifact = this.deliveryArtifact(match[1].trim());
+      if (artifact && !artifacts.some((item) => item.sourcePath === artifact.sourcePath)) {
+        artifacts.push(artifact);
+      }
+    }
+    return { text: visible.join("\n").trim(), artifacts };
+  }
+
+  deliveryArtifact(requestedPath) {
+    try {
+      const sourcePath = fs.realpathSync(requestedPath);
+      if (!this.deliveryRoots.some((root) =>
+        sourcePath === root || sourcePath.startsWith(`${root}${path.sep}`))) return null;
+      const lower = sourcePath.toLowerCase();
+      if (/(^|\/)(\.ssh|\.gnupg|\.aws|\.codex)(\/|$)/.test(lower) ||
+          /(^|\/)(\.env($|\.)|[^/]*(token|credential|secret|private[_-]?key)[^/]*)$/.test(lower) ||
+          /\.(pem|key|p12|pfx)$/i.test(lower)) return null;
+      const stat = fs.statSync(sourcePath);
+      if (!stat.isFile() || stat.size > MAX_ARTIFACT_BYTES) return null;
+      return {
+        id: crypto.randomUUID(),
+        name: path.basename(sourcePath),
+        size: stat.size,
+        mimeType: this.mimeType(sourcePath),
+        sourcePath,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  mimeType(filePath) {
+    const extension = path.extname(filePath).toLowerCase();
+    return ({
+      ".apk": "application/vnd.android.package-archive",
+      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ".xlsb": "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+      ".zip": "application/zip",
+      ".pdf": "application/pdf",
+      ".csv": "text/csv",
+      ".txt": "text/plain",
+      ".json": "application/json",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".webp": "image/webp",
+      ".gif": "image/gif",
+    })[extension] || "application/octet-stream";
+  }
+
+  downloadArtifact(res, conversationId, messageId, artifactId) {
+    const conversation = this.readConversation(conversationId);
+    const message = conversation?.messages.find((item) => item.id === messageId);
+    const artifact = message?.artifacts?.find((item) => item.id === artifactId);
+    if (!artifact?.sourcePath) {
+      this.sendJson(res, 404, { error: "交付文件不存在" });
+      return;
+    }
+    const verified = this.deliveryArtifact(artifact.sourcePath);
+    if (!verified) {
+      this.sendJson(res, 410, { error: "交付文件已移动或不可下载" });
+      return;
+    }
+    const encoded = encodeURIComponent(artifact.name).replace(/['()]/g, escape);
+    res.writeHead(200, {
+      "Cache-Control": "no-store",
+      "Content-Type": artifact.mimeType || verified.mimeType,
+      "Content-Length": verified.size,
+      "Content-Disposition": `attachment; filename*=UTF-8''${encoded}`,
+      "X-Content-Type-Options": "nosniff",
+    });
+    const stream = fs.createReadStream(verified.sourcePath);
+    stream.on("error", () => res.destroy());
+    stream.pipe(res);
+  }
+
+  streamDetails(res, conversationId, messageId, entryId) {
+    const conversation = this.readConversation(conversationId);
+    const message = conversation?.messages.find((item) => item.id === messageId);
+    const entry = message?.stream?.find((item) => item.id === entryId);
+    if (!entry?.details || !["command", "file"].includes(entry.kind)) {
+      this.sendJson(res, 404, { error: "这条过程记录没有可查看的详情" });
+      return;
+    }
+    const { details, ...summary } = entry;
+    this.sendJson(res, 200, { entry: { ...summary, details } });
+  }
+}
+
+module.exports = {
+  ChatService,
+  ADMIN_MODELS,
+  NON_ADMIN_MODELS,
+  ALL_MODELS,
+  QUOTA_EXHAUSTED_MESSAGE,
+};

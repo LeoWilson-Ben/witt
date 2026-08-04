@@ -1,0 +1,2 @@
+/* Keep the established two-part status in the conversation header. */
+.quota-button{width:76px;grid-template-columns:1fr 1fr;padding-left:7px;padding-right:7px}.quota-button [data-quota-weekly]{display:grid}@media(max-width:380px){.quota-button{width:61px;padding-left:4px;padding-right:4px}}

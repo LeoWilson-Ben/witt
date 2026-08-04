@@ -1,0 +1,5 @@
+body.power-paused *,
+body.power-paused *::before,
+body.power-paused *::after {
+  animation-play-state: paused !important;
+}

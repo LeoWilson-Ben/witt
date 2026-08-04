@@ -1,0 +1,302 @@
+/* Lumora-inspired nature cinema theme. Original day and night modes stay untouched. */
+.lumora-video-stage,
+.lumora-foreground {
+  display: none;
+}
+
+:root[data-theme-mode="colorful"] {
+  --lumora-ink: #fff;
+  --lumora-deep-ink: #182c41;
+  color-scheme: dark;
+}
+
+:root[data-theme-mode="colorful"] body {
+  background: #000;
+}
+
+:root[data-theme-mode="colorful"] .lumora-video-stage {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  background: #000;
+  pointer-events: none;
+  contain: strict;
+}
+
+:root[data-theme-mode="colorful"] .lumora-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 1000ms ease-in-out;
+}
+
+:root[data-theme-mode="colorful"] .lumora-video.active {
+  opacity: 1;
+  transform: translateZ(0);
+}
+
+:root[data-theme-mode="colorful"] .lumora-foreground {
+  position: fixed;
+  z-index: 1;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  transform: translateY(0) scale(1.03);
+  animation: train-bob 3s ease-in-out infinite;
+}
+
+:root[data-theme-mode="colorful"] .cinematic-bottom-blur {
+  z-index: 1;
+  display: block;
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  -webkit-mask-image: linear-gradient(to top, black 0%, transparent 38%);
+  mask-image: linear-gradient(to top, black 0%, transparent 38%);
+}
+
+:root[data-theme-mode="colorful"] .app-shell {
+  z-index: 2;
+}
+
+:root[data-theme-mode="colorful"] .topbar {
+  border: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+:root[data-theme-mode="colorful"] .identity {
+  max-width: min(58vw, 480px);
+  padding: 5px 10px 5px 5px;
+  border-radius: 16px;
+  background: rgba(8, 8, 12, .14);
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, .1);
+}
+
+:root[data-theme-mode="colorful"] .identity-copy strong,
+:root[data-theme-mode="colorful"] .welcome h1,
+:root[data-theme-mode="colorful"] .drawer-head h2,
+:root[data-theme-mode="colorful"] .sheet-head h2 {
+  font-family: "Instrument Serif", serif;
+}
+
+:root[data-theme-mode="colorful"] .identity-copy strong {
+  font-size: 17px;
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: .015em;
+}
+
+:root[data-theme-mode="colorful"] .welcome {
+  justify-content: center;
+  align-items: center;
+  padding-top: 30px;
+  color: #fff;
+  text-align: center;
+  transition: color 700ms ease;
+}
+
+:root[data-theme-mode="colorful"] .welcome-mark {
+  display: none;
+}
+
+:root[data-theme-mode="colorful"] .lumora-badge {
+  display: inline-flex;
+  min-height: 31px;
+  padding: 7px 13px;
+  align-items: center;
+  border-radius: 999px;
+  color: inherit;
+  font: 500 9px/1.2 system-ui, sans-serif;
+  letter-spacing: .02em;
+  transition: color 700ms ease, background 700ms ease;
+}
+
+:root[data-theme-mode="colorful"] .welcome h1 {
+  max-width: 760px;
+  margin: 18px auto 13px;
+  color: inherit;
+  font-size: clamp(42px, 10vw, 78px);
+  font-weight: 400;
+  line-height: .98;
+  letter-spacing: -.045em;
+  text-wrap: balance;
+  transition: color 700ms ease;
+}
+
+:root[data-theme-mode="colorful"] .welcome h1 em {
+  font-weight: 400;
+}
+
+:root[data-theme-mode="colorful"] .welcome > p {
+  max-width: 540px;
+  color: rgba(255, 255, 255, .78);
+  font: 400 12px/1.75 system-ui, sans-serif;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, .28);
+  transition: color 700ms ease;
+}
+
+:root[data-theme-mode="colorful"] .suggestions {
+  margin-top: 18px;
+}
+
+:root[data-theme-mode="colorful"] .suggestions button {
+  font-family: system-ui, sans-serif;
+}
+
+:root[data-theme-mode="colorful"][data-scene-tone="dark"] .welcome,
+:root[data-theme-mode="colorful"][data-scene-tone="dark"] .lumora-badge {
+  color: var(--lumora-deep-ink);
+  text-shadow: none;
+}
+
+:root[data-theme-mode="colorful"][data-scene-tone="dark"] .welcome > p {
+  color: rgba(24, 44, 65, .82);
+  text-shadow: none;
+}
+
+:root[data-theme-mode="colorful"][data-scene-tone="dark"] .lumora-badge {
+  background: rgba(255, 255, 255, .08);
+  box-shadow: inset 0 1px 1px rgba(24, 44, 65, .16);
+}
+
+:root[data-theme-mode="colorful"] .theme-options {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+:root[data-theme-mode="colorful"] .theme-options button.active,
+:root[data-theme-mode="colorful"] .theme-options button[aria-pressed="true"] {
+  color: #111;
+  background: #fff;
+}
+
+@keyframes train-bob {
+  0%, 100% { transform: translateY(0) scale(1.03); }
+  50% { transform: translateY(-6px) scale(1.03); }
+}
+
+@media (max-width: 639px) {
+  :root[data-theme-mode="colorful"] .cinematic-bottom-blur {
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+
+  :root[data-theme-mode="colorful"] .welcome {
+    justify-content: flex-end;
+    padding: 32px 4px 150px;
+  }
+
+  :root[data-theme-mode="colorful"] .welcome h1 {
+    margin-top: 14px;
+    font-size: clamp(39px, 12vw, 54px);
+    line-height: 1.03;
+  }
+
+  :root[data-theme-mode="colorful"] .welcome > p {
+    max-width: 360px;
+    font-size: 10.5px;
+  }
+
+}
+
+@media (hover: none) and (pointer: coarse) {
+  :root[data-theme-mode="colorful"] .lumora-foreground {
+    animation: none;
+    transform: scale(1.01);
+  }
+}
+
+@media (orientation: landscape) and (max-height: 600px) {
+  :root[data-theme-mode="colorful"] .cinematic-bottom-blur {
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+  }
+
+  :root[data-theme-mode="colorful"] .topbar {
+    min-height: 40px;
+    margin-bottom: -5px;
+    padding-top: calc(2px + env(safe-area-inset-top));
+    padding-bottom: 2px;
+    transform: translateY(-5px);
+  }
+
+  :root[data-theme-mode="colorful"] body.native .topbar {
+    padding-top: 3px;
+    transform: none;
+  }
+
+  :root[data-theme-mode="colorful"] .topbar .icon-button {
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+  }
+
+  :root[data-theme-mode="colorful"] .identity {
+    max-width: min(42vw, 420px);
+    padding: 3px 8px 3px 3px;
+    gap: 6px;
+    border-radius: 12px;
+  }
+
+  :root[data-theme-mode="colorful"] .avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+  }
+
+  :root[data-theme-mode="colorful"] .identity-copy strong {
+    max-width: 34vw;
+    font-size: 13px;
+  }
+
+  :root[data-theme-mode="colorful"] .identity-copy small {
+    display: none;
+  }
+
+  :root[data-theme-mode="colorful"] .welcome {
+    justify-content: center;
+    padding-top: 10px;
+    padding-bottom: 70px;
+  }
+
+  :root[data-theme-mode="colorful"] .welcome h1 {
+    margin: 7px auto 5px;
+    font-size: clamp(30px, 6vw, 48px);
+  }
+
+  :root[data-theme-mode="colorful"] .welcome > p {
+    font-size: 9px;
+    line-height: 1.5;
+  }
+
+  :root[data-theme-mode="colorful"] .lumora-badge {
+    min-height: 25px;
+    padding: 5px 10px;
+    font-size: 7px;
+  }
+
+  :root[data-theme-mode="colorful"] .suggestions {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme-mode="colorful"] .lumora-foreground {
+    animation: none;
+  }
+
+  :root[data-theme-mode="colorful"] .lumora-video {
+    transition: none;
+  }
+}

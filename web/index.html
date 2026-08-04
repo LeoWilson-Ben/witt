@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" id="themeColor" content="#f7f8fc">
+  <script>
+    (() => {
+      const stored = localStorage.getItem("wit_theme");
+      const mode = ["light", "colorful", "dark"].includes(stored) ? stored : "colorful";
+      document.documentElement.dataset.theme = mode;
+      document.documentElement.dataset.themeMode = mode;
+    })();
+  </script>
+  <title>Witt · 私人服务器助手</title>
+  <link rel="icon" href="/vault/icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/vault/styles.css?v=2.2.4-boot1">
+  <link rel="stylesheet" href="/vault/quota.css?v=2.1.12-quota1">
+  <link rel="stylesheet" href="/vault/quota-fix.css?v=2.1.12-quota1">
+  <link rel="stylesheet" href="/vault/reset-glow.css?v=2.1.12-quota1">
+  <link rel="stylesheet" href="/vault/composer-aura.css?v=2.1.12-composer1">
+  <link rel="stylesheet" href="/vault/composer-refine.css?v=2.1.12-composer2">
+  <link rel="stylesheet" href="/vault/composer-transparency.css?v=2.1.12-composer3">
+  <link rel="stylesheet" href="/vault/composer-overlay.css?v=2.1.12-composer4">
+  <link rel="stylesheet" href="/vault/composer-spectra.css?v=2.2.0-composer5">
+  <link rel="stylesheet" href="/vault/quota-layout.css?v=2.1.12-quota2">
+  <link rel="stylesheet" href="/vault/quota-header-restore.css?v=2.1.12-quota3">
+  <link rel="stylesheet" href="/vault/quota-confirm.css?v=2.1.12-quota4">
+  <link rel="stylesheet" href="/vault/quota-compact.css?v=2.1.12-quota5">
+  <link rel="stylesheet" href="/vault/drawer-motion.css?v=2.1.12-drawer1">
+  <link rel="stylesheet" href="/vault/quota-profile-motion.css?v=2.1.12-quota6">
+  <link rel="stylesheet" href="/vault/usage-insight.css?v=2.1.12-usage1">
+  <link rel="stylesheet" href="/vault/quota-spacing.css?v=2.1.12-quota7">
+  <link rel="stylesheet" href="/vault/usage-ring-fit.css?v=2.1.12-usage2">
+  <link rel="stylesheet" href="/vault/auth-gate.css?v=2.2.7-admin-hide1">
+  <link rel="stylesheet" href="/vault/approval-card.css?v=2.2.9-connector1">
+  <link rel="stylesheet" href="/vault/conversation-type.css?v=2.2.0-type1">
+  <link rel="stylesheet" href="/vault/night-theme.css?v=2.2.0-night1">
+  <link rel="stylesheet" href="/vault/message-collapse.css?v=2.2.0-collapse1">
+  <link rel="stylesheet" href="/vault/chat-overflow-fix.css?v=2.2.0-overflow1">
+  <link rel="stylesheet" href="/vault/vendor/katex/katex.min.css?v=0.16.22">
+  <link rel="stylesheet" href="/vault/formula-code.css?v=2.2.8-rich1">
+  <link rel="stylesheet" href="/vault/codex-accounts.css?v=2.2.9-layout2">
+  <link rel="stylesheet" href="/vault/performance.css?v=2.2.8-power1">
+  <link rel="stylesheet" id="cinematicStylesheet" href="/vault/cinematic-global.css?v=2.2.0-cinema1">
+  <link rel="stylesheet" href="/vault/landscape.css?v=2.2.5-landscape3">
+  <link rel="stylesheet" href="/vault/lumora-global.css?v=2.2.6-perf1">
+  <link rel="stylesheet" href="/vault/codex-model-picker.css?v=2.2.9-liquid1">
+  <script>
+    document.querySelector("#cinematicStylesheet").disabled =
+      document.documentElement.dataset.themeMode !== "colorful";
+  </script>
+</head>
+<body>
+  <div class="lumora-video-stage" aria-hidden="true">
+    <video class="lumora-video active" data-scene-video="0" autoplay muted playsinline preload="auto">
+      <source data-local-src="https://appassets.androidplatform.net/assets/lumora/golden-hour.mp4" data-remote-src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260702_081127_0992a171-d3c6-4978-8213-0ec5df8b6d63.mp4" type="video/mp4">
+    </video>
+    <video class="lumora-video" data-scene-video="1" muted playsinline preload="metadata">
+      <source data-local-src="https://appassets.androidplatform.net/assets/lumora/still-water.mp4" data-remote-src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260702_092026_dd05b805-ea0f-40b2-8c52-332b88502592.mp4" type="video/mp4">
+    </video>
+    <video class="lumora-video" data-scene-video="2" muted playsinline preload="metadata">
+      <source data-local-src="https://appassets.androidplatform.net/assets/lumora/deep-woods.mp4" data-remote-src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260702_081042_df7202bf-bd80-4b2b-bbc6-1f09ba2870e9.mp4" type="video/mp4">
+    </video>
+  </div>
+  <img class="lumora-foreground" data-local-src="https://appassets.androidplatform.net/assets/lumora/foreground.png" data-remote-src="https://soft-zoom-63098134.figma.site/_assets/v11/0b4a435b2df2747593c43d7a1c9b4578f7d8d90c.png" alt="" aria-hidden="true">
+  <script>
+    (() => {
+      const bundled = new URLSearchParams(location.search).has("app");
+      document.querySelectorAll(".lumora-video source").forEach((source) => {
+        source.src = bundled ? source.dataset.localSrc : source.dataset.remoteSrc;
+      });
+      const foreground = document.querySelector(".lumora-foreground");
+      foreground.src = bundled ? foreground.dataset.localSrc : foreground.dataset.remoteSrc;
+    })();
+  </script>
+  <div class="cinematic-bottom-blur" aria-hidden="true"></div>
+  <div class="boot-screen" id="bootScreen" aria-label="Witt 正在启动">
+    <div class="boot-wordmark">Witt<span>.</span></div>
+    <p>PRIVATE SERVER CODEX</p>
+    <div class="boot-track"><i></i></div>
+    <small id="bootLabel">正在连接你的服务器</small>
+  </div>
+  <script>window.WittNative?.postMessage('{"method":"launchSurfaceReady","args":[]}');</script>
+  <section class="auth-gate" id="authGate" aria-hidden="true" aria-labelledby="authGateTitle">
+    <div class="auth-gate-halo" aria-hidden="true"></div>
+    <div class="auth-gate-card">
+      <span class="auth-gate-mark">W</span>
+      <span class="eyebrow">PRIVATE DEVICE ACCESS</span>
+      <h1 id="authGateTitle">激活这台设备</h1>
+      <p>输入管理员提供的邀请码。激活后，这台设备只会访问所属账号的数据。</p>
+      <label for="inviteCode">邀请码</label>
+      <input id="inviteCode" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="粘贴邀请码">
+      <button id="activateInviteButton" type="button"><span>激活设备</span><i>→</i></button>
+      <small id="authGateHint">邀请码不会保存到网页中。</small>
+    </div>
+  </section>
+  <div class="app-shell">
+    <header class="topbar animate-blur-fade-up" style="animation-delay:0ms">
+      <button class="icon-button liquid-glass" id="menuButton" aria-label="打开对话列表">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h11"/></svg>
+      </button>
+      <button class="identity" id="identityButton">
+        <span class="avatar" aria-hidden="true">W</span>
+        <span class="identity-copy"><strong id="chatTitle">Witt</strong><small><i></i><span id="connectionLabel">连接服务器中</span></small></span>
+      </button>
+      <div class="topbar-actions">
+        <button class="quota-button liquid-glass" id="quotaButton" aria-label="查看 Codex 额度" hidden>
+          <span data-quota-weekly><small>周</small><b id="weeklyQuotaLabel">—</b><i><em id="weeklyQuotaMeter"></em></i></span>
+          <span><small>CTX</small><b id="contextQuotaLabel">—</b><i><em id="contextQuotaMeter"></em></i></span>
+        </button>
+        <button class="icon-button delivery-button liquid-glass" id="deliveryButton" aria-label="查看交付文件">
+          <svg viewBox="0 0 24 24"><path d="M4 8.5h6l2-2h8v11H4v-9Z"/><path d="M12 10v5m0 0-2-2m2 2 2-2"/></svg>
+          <b id="deliveryBadge">0</b>
+        </button>
+      </div>
+    </header>
+
+    <main class="chat-stage" id="chatStage">
+      <section class="welcome" id="welcome">
+        <div class="welcome-mark animate-blur-fade-up" style="animation-delay:100ms" aria-hidden="true"><span>W</span><i></i><b>PRIVATE</b></div>
+        <span class="lumora-badge liquid-glass animate-blur-fade-up" style="animation-delay:200ms">你的专注，只属于这一刻</span>
+        <h1 class="animate-blur-fade-up" style="animation-delay:300ms">在无尽喧嚣中<br><em>保持清醒</em></h1>
+        <p class="animate-blur-fade-up" style="animation-delay:400ms">Witt 在你的私人服务器上，为你隔开杂音、处理复杂任务，并守住每一次专注。</p>
+        <div class="suggestions">
+          <button data-prompt="我有一个新任务，先帮我梳理目标和下一步。"><b>开始一个新任务</b><small>梳理目标并安排下一步</small></button>
+          <button data-prompt="查看我接下来发送的文件，先分析内容，不要修改任何数据。"><b>分析一个文件</b><small>支持表格、图片和文档</small></button>
+          <button data-prompt="检查服务器当前状态，先告诉我是否有异常。"><b>检查服务器状态</b><small>查看服务、资源和异常</small></button>
+        </div>
+      </section>
+      <section class="messages" id="messageList" aria-live="polite"></section>
+      <div class="bottom-spacer"></div>
+    </main>
+
+    <section class="composer-wrap animate-blur-fade-up" style="animation-delay:500ms">
+      <div class="attachment-strip" id="attachmentStrip"></div>
+      <div class="composer liquid-glass">
+        <button class="attach-button liquid-glass" id="attachButton" aria-label="添加附件">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <textarea id="messageInput" rows="1" maxlength="48000" placeholder="发消息"></textarea>
+        <button class="send-button" id="sendButton" aria-label="发送">
+          <svg viewBox="0 0 24 24"><path d="M12 19V5m0 0L6.5 10.5M12 5l5.5 5.5"/></svg>
+        </button>
+      </div>
+      <div class="composer-meta">
+        <div class="composer-meta-left">
+          <button id="projectButton" aria-label="选择项目">
+            <svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17v-11Z"/></svg>
+            <b id="projectLabel">空白</b>
+            <svg class="meta-chevron" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4"/></svg>
+          </button>
+          <button id="modelButton"><span class="model-spark">✦</span><b id="modelLabel">Sol</b><i></i><span id="reasoningLabel">均衡</span><i></i><span id="accessLabel">完全访问</span><svg viewBox="0 0 24 24"><path d="m8 10 4 4 4-4"/></svg></button>
+        </div>
+        <p id="composerHint">重要操作会先确认</p>
+      </div>
+    </section>
+  </div>
+
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-backdrop" id="drawerBackdrop"></div>
+    <div class="drawer-panel">
+      <div class="drawer-head">
+        <div><span class="eyebrow">CONVERSATIONS</span><h2>对话</h2></div>
+        <button class="icon-button" id="closeDrawer" aria-label="关闭">
+          <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <button class="drawer-new" id="drawerNewChat">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        <span><strong>新建对话</strong><small>开启一个独立上下文</small></span>
+      </button>
+      <div class="conversation-list" id="conversationList"></div>
+      <button class="drawer-profile" id="profileButton">
+        <span class="profile-monogram">W</span>
+        <span><strong>我的</strong><small>Token 用量与使用记录</small></span>
+        <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+      </button>
+      <button class="drawer-profile drawer-admin-entry" id="adminSettingsButton" hidden>
+        <span class="profile-monogram">⌁</span>
+        <span><strong>设备管理</strong><small>邀请码与设备访问控制</small></span>
+        <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+      </button>
+      <button class="drawer-profile drawer-admin-entry" id="codexAccountsButton" hidden>
+        <span class="profile-monogram">◎</span>
+        <span><strong>Codex 账号</strong><small>默认账号与子账号</small></span>
+        <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+      </button>
+      <section class="drawer-theme" aria-labelledby="themeTitle">
+        <span>
+          <i aria-hidden="true">◐</i>
+          <b id="themeTitle">外观</b>
+        </span>
+        <div class="theme-options" role="group" aria-label="选择界面主题">
+          <button type="button" data-theme-choice="light">原始白天</button>
+          <button type="button" data-theme-choice="colorful">炫彩</button>
+          <button type="button" data-theme-choice="dark">夜间</button>
+        </div>
+      </section>
+      <div class="drawer-footer">
+        <span>Witt <b id="appVersion">v—</b></span>
+        <button id="updateButton">检查更新</button>
+      </div>
+    </div>
+  </aside>
+
+  <aside class="project-sheet" id="projectSheet" aria-hidden="true">
+    <div class="sheet-backdrop" id="projectBackdrop"></div>
+    <div class="sheet-panel project-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <div><span class="eyebrow">WORKING DIRECTORY</span><h2>选择当前项目</h2></div>
+        <button class="icon-button" id="closeProject" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      </div>
+      <p class="project-intro">项目仅决定当前对话的工作目录；选择“空白”时从服务器主目录开始。</p>
+      <div class="project-options">
+        <button data-project-path=""><span class="project-code">—</span><span><strong>空白</strong><small>不绑定项目</small></span><i></i></button>
+        <button data-project-path="/home/ubuntu/Documents/Codex/2026-07-20-skill/upload-app"><span class="project-code">WI</span><span><strong>维特</strong><small>Witt 客户端与服务</small></span><i></i></button>
+        <button data-project-path="/home/ubuntu/Documents/Codex/2026-07-26-xlsb"><span class="project-code">年</span><span><strong>年报</strong><small>道路桥梁协同工作台</small></span><i></i></button>
+        <button data-project-path="/data/xuanyu-build-console/repo"><span class="project-code">玄</span><span><strong>玄遇</strong><small>玄遇项目工作区</small></span><i></i></button>
+      </div>
+    </div>
+  </aside>
+
+  <aside class="profile-sheet" id="profileSheet" aria-hidden="true">
+    <div class="sheet-backdrop" id="profileBackdrop"></div>
+    <div class="sheet-panel profile-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <div><span class="eyebrow">MY CODEX</span><h2>我的</h2></div>
+        <button class="icon-button" id="closeProfile" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      </div>
+      <section class="profile-hero">
+        <div class="profile-letter">W</div>
+        <div><strong>Witt on your server</strong><small>你的 Codex 使用概览</small></div>
+        <span>在线</span>
+      </section>
+      <div id="usageContent">
+        <div class="usage-loading"><i></i><span>正在读取 Token 用量</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <aside class="settings-sheet" id="adminSettingsSheet" aria-hidden="true">
+    <div class="sheet-backdrop" id="adminSettingsBackdrop"></div>
+    <div class="sheet-panel admin-settings-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head"><div><span class="eyebrow">ACCESS CONTROL</span><h2>设备管理</h2></div><button class="icon-button" id="closeAdminSettings" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+      <section class="device-admin" id="deviceAdmin">
+        <header><span class="eyebrow">ADMINISTRATOR</span><h3>授权新设备</h3><i>●</i></header>
+        <p>每个邀请码只会创建一个独立账号。停止设备后，它将立刻失去访问权限。</p>
+        <div class="device-invite"><input id="inviteLabel" maxlength="24" placeholder="设备名称，例如：李明的手机"><button id="createInviteButton">生成邀请码</button></div>
+        <div id="latestInvite"></div>
+        <div id="deviceList" class="device-list"></div>
+      </section>
+    </div>
+  </aside>
+
+  <aside class="settings-sheet codex-account-sheet" id="codexAccountSheet" aria-hidden="true">
+    <div class="sheet-backdrop" id="codexAccountBackdrop"></div>
+    <div class="sheet-panel codex-account-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <div><span class="eyebrow">CODEX ACCOUNTS</span><h2>账号与项目</h2></div>
+        <button class="icon-button" id="closeCodexAccounts" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      </div>
+      <p class="codex-account-intro">两个账号的登录状态、会话与额度相互独立。</p>
+      <div class="codex-account-list" id="codexAccountList">
+        <article class="codex-account-card loading"><span class="codex-account-avatar"></span><div class="codex-account-identity"><strong>正在读取账号</strong><small>请稍候…</small></div></article>
+      </div>
+      <section class="codex-login-flow" id="codexLoginFlow" hidden>
+        <span class="codex-login-kicker">子账号登录</span>
+        <strong>在浏览器中登录新 Codex 账号</strong>
+        <p>打开登录页面后输入下面的一次性代码。Witt 默认账号不会退出。</p>
+        <button class="codex-device-code" id="copyCodexDeviceCode" type="button"><code id="codexDeviceCode"></code><small>点击复制</small></button>
+        <div><button id="openCodexLogin" class="codex-login-primary">打开登录页面</button><button id="cancelCodexLogin">取消</button></div>
+        <small id="codexLoginHint">等待你完成授权…</small>
+      </section>
+    </div>
+  </aside>
+
+  <div class="dialog-layer" id="dialogLayer" aria-hidden="true">
+    <div class="dialog-backdrop"></div>
+    <div class="dialog-card">
+      <span class="dialog-icon"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5"/></svg></span>
+      <h3>移除这条对话？</h3>
+      <p>对话会从列表中归档，服务器上的项目文件不会受到影响。</p>
+      <div><button id="cancelArchive">取消</button><button class="danger" id="confirmArchive">移除</button></div>
+    </div>
+  </div>
+
+  <div class="quota-confirm" id="quotaConfirm" aria-hidden="true">
+    <button class="quota-confirm-backdrop" id="quotaConfirmBackdrop" aria-label="取消重置"></button>
+    <section class="quota-confirm-card" role="dialog" aria-modal="true" aria-labelledby="quotaConfirmTitle">
+      <span class="quota-confirm-mark">✦</span>
+      <div><span>CODEX 额度</span><h3 id="quotaConfirmTitle">确认重置本周额度？</h3><p>将使用 1 次已授予的重置额度。此操作不可撤销。</p></div>
+      <footer><button id="cancelQuotaReset">暂不重置</button><button id="confirmQuotaReset">确认重置</button></footer>
+    </section>
+  </div>
+
+  <aside class="settings-sheet" id="settingsSheet" aria-hidden="true">
+    <div class="sheet-backdrop" id="sheetBackdrop"></div>
+    <div class="sheet-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head"><div><span class="eyebrow">MODEL & REASONING</span><h2>模型与智能程度</h2></div><button class="icon-button" id="closeSettings"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+      <section class="model-picker-section">
+        <div class="settings-section-head"><h3>选择模型</h3><small>由 App Server 实时提供</small></div>
+        <div class="model-options" role="radiogroup" aria-label="选择模型">
+          <button data-model="gpt-5.6-sol"><span class="model-glyph sol">S</span><span><strong>Sol</strong><small>复杂、开放和高价值任务</small></span><i></i></button>
+          <button data-model="gpt-5.6-terra"><span class="model-glyph terra">T</span><span><strong>Terra</strong><small>日常工作的均衡全能选择</small></span><i></i></button>
+          <button data-model="gpt-5.6-luna"><span class="model-glyph luna">L</span><span><strong>Luna</strong><small>清晰、重复和快速的任务</small></span><i></i></button>
+        </div>
+      </section>
+      <section class="reasoning-picker-section">
+        <div class="settings-section-head"><h3>智能程度</h3><small id="reasoningSupportLabel">4 档可用</small></div>
+        <div class="reasoning-console" id="reasoningControl" data-level="medium" data-intensity="1">
+          <div class="reasoning-readout">
+            <span><i aria-hidden="true"></i><strong id="reasoningCurrentLabel">均衡</strong></span>
+            <code id="reasoningCurrentCode">MEDIUM</code>
+          </div>
+          <div class="reasoning-liquid" id="reasoningSegments"></div>
+          <div class="reasoning-stops" id="reasoningStops" role="radiogroup" aria-label="选择智能程度"></div>
+          <p class="reasoning-description" id="reasoningDescription">适合大多数任务，在速度与分析深度之间取得平衡。</p>
+        </div>
+        <p class="reasoning-note">智能程度越高，复杂任务的分析会更深入，但用时和会员额度消耗也会增加。</p>
+      </section>
+      <section>
+        <h3>访问权限</h3>
+        <div class="access-options">
+          <button data-access="danger-full-access"><span>完全访问</span><small>可读写服务器任务范围，默认</small><i></i></button>
+          <button data-access="workspace-write"><span>项目读写</span><small>只允许写入当前项目目录</small><i></i></button>
+          <button data-access="read-only"><span>只读</span><small>只能检查和分析，不修改文件</small><i></i></button>
+        </div>
+        <p class="reasoning-note">权限应用于当前对话；删除数据、对外发送等重要动作仍会谨慎处理。</p>
+      </section>
+      <section class="app-server-capabilities">
+        <div class="app-server-heading">
+          <div><span>CODEX RUNTIME</span><h3>APP SERVER</h3></div>
+          <span class="app-server-live" id="appServerLive"><i></i>ONLINE</span>
+        </div>
+        <div class="app-server-status" id="appServerStatus">正在读取模型、Skills 与 MCP…</div>
+        <div class="app-server-actions">
+          <button id="forkConversationButton"><span class="app-server-action-icon"><svg viewBox="0 0 24 24"><path d="M7 4v7a4 4 0 0 0 4 4h6M13 7l4-3 4 3M17 4v16"/></svg></span><span><strong>创建分支</strong><small>保留当前上下文，探索另一条路线</small></span><i>›</i></button>
+          <button id="compactConversationButton"><span class="app-server-action-icon"><svg viewBox="0 0 24 24"><path d="m8 3 4 4 4-4M12 7V2m4 19-4-4-4 4m4-4v5M4 12h16"/></svg></span><span><strong>压缩上下文</strong><small>整理历史信息，释放上下文空间</small></span><i>›</i></button>
+          <button id="reviewConversationButton"><span class="app-server-action-icon"><svg viewBox="0 0 24 24"><path d="M9 5H5v14h14v-4M13 5h6v6M19 5l-8 8-3 1 1-3 8-8"/></svg></span><span><strong>代码审查</strong><small>检查当前项目的未提交修改</small></span><i>›</i></button>
+        </div>
+      </section>
+      <button class="save-settings" id="saveSettings">应用到当前对话</button>
+    </div>
+  </aside>
+
+  <aside class="delivery-sheet" id="deliverySheet" aria-hidden="true">
+    <div class="sheet-backdrop" id="deliveryBackdrop"></div>
+    <div class="sheet-panel delivery-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <div><span class="eyebrow">DELIVERABLES</span><h2>交付文件</h2></div>
+        <button class="icon-button" id="closeDelivery" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      </div>
+      <p class="delivery-intro">只有你明确要求交付或下载的文件才会出现在这里。</p>
+      <div class="delivery-list" id="deliveryList"></div>
+    </div>
+  </aside>
+
+  <aside class="action-detail-sheet" id="actionDetailSheet" aria-hidden="true">
+    <div class="sheet-backdrop" id="actionDetailBackdrop"></div>
+    <div class="sheet-panel action-detail-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <div><span class="eyebrow">EXECUTION DETAIL</span><h2 id="actionDetailTitle">执行详情</h2></div>
+        <button class="icon-button" id="closeActionDetail" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="action-detail-content" id="actionDetailContent"></div>
+    </div>
+  </aside>
+
+  <aside class="image-viewer" id="imageViewer" aria-hidden="true">
+    <button class="image-viewer-backdrop" id="imageViewerBackdrop" aria-label="关闭图片"></button>
+    <div class="image-viewer-panel">
+      <img id="imageViewerImage" alt="">
+      <footer>
+        <strong id="imageViewerName">Witt 图片</strong>
+        <button class="icon-button" id="downloadImageViewer" aria-label="下载图片">
+          <svg viewBox="0 0 24 24"><path d="M12 4v10m0 0-4-4m4 4 4-4M5 19h14"/></svg>
+        </button>
+        <button class="icon-button" id="closeImageViewer" aria-label="关闭">
+          <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </footer>
+    </div>
+  </aside>
+
+  <div class="toast" id="toast"></div>
+  <script src="/vault/vendor/katex/katex.min.js?v=0.16.22"></script>
+  <script src="/vault/app.js?v=2.2.9-account2"></script>
+</body>
+</html>

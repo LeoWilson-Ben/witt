@@ -1,0 +1,2 @@
+/* Keep the seven-day ring fully inside the card at every phone width. */
+.usage-board{grid-template-columns:17px max-content minmax(58px,1fr)!important;overflow:visible!important}.usage-insight{min-width:58px;min-height:94px;margin-left:4px;padding-left:6px;justify-content:center;gap:0}.usage-insight>span{display:none}.usage-insight>i{width:46px;height:46px}
