@@ -1,0 +1,53 @@
+.chat-link {
+  position: relative;
+  display: inline;
+  margin: 0 1px;
+  padding: 2px 1px;
+  border-radius: 4px;
+  color: #176fc0;
+  font-weight: 650;
+  line-height: inherit;
+  text-decoration-line: underline;
+  text-decoration-color: rgba(23, 111, 192, .34);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+  -webkit-tap-highlight-color: rgba(30, 133, 190, .14);
+  touch-action: manipulation;
+  transition: color .16s ease, background-color .16s ease, text-decoration-color .16s ease;
+}
+
+.chat-link > span {
+  display: inline-block;
+  margin-left: 3px;
+  font-size: .72em;
+  font-weight: 800;
+  text-decoration: none;
+  transform: translateY(-.12em);
+}
+
+.chat-link:active,
+.chat-link:focus-visible {
+  color: #0b5c9f;
+  background: rgba(30, 133, 190, .1);
+  text-decoration-color: currentColor;
+  outline: none;
+}
+
+:root[data-theme="dark"] .chat-link,
+:root[data-theme-mode="colorful"] .chat-link {
+  color: #72d4ef;
+  text-decoration-color: rgba(114, 212, 239, .42);
+}
+
+:root[data-theme="dark"] .chat-link:active,
+:root[data-theme="dark"] .chat-link:focus-visible,
+:root[data-theme-mode="colorful"] .chat-link:active,
+:root[data-theme-mode="colorful"] .chat-link:focus-visible {
+  color: #a5ecff;
+  background: rgba(83, 203, 235, .12);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-link { transition: none; }
+}

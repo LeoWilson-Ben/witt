@@ -30,7 +30,7 @@ const conversation = {
       attachments: [], createdAt: now, status: "completed",
     },
     {
-      id: "a1", role: "assistant", text: "项目运行正常。我已经检查了后端服务和最新版本。",
+      id: "a1", role: "assistant", text: "项目运行正常。查看 [Witt 项目](https://github.com/LeoWilson-Ben/witt)，或访问 https://example.com/docs。",
       attachments: [], createdAt: now, status: "completed",
       activity: [{ type: "done", label: "处理完成", status: "completed" }],
       stream: [
@@ -61,7 +61,7 @@ const conversation = {
             { id: "choice-4", label: "拒绝并停止本轮", description: "立即停止当前任务", tone: "declined" },
           ],
         },
-        { id: "s4", kind: "message", phase: "final_answer", text: "项目运行正常。行内公式 $E=mc^2$。\n\n$$\\int_0^1 x^2 dx = \\frac{1}{3}$$\n\n```javascript\nconst answer = 42;\n```", status: "completed" },
+        { id: "s4", kind: "message", phase: "final_answer", text: "项目运行正常。查看 [Witt 项目](https://github.com/LeoWilson-Ben/witt)，或访问 https://example.com/docs。行内公式 $E=mc^2$。\n\n$$\\int_0^1 x^2 dx = \\frac{1}{3}$$\n\n```javascript\nconst answer = 42;\n```", status: "completed" },
       ],
       images: [
         {
@@ -328,7 +328,7 @@ const installBridge = ({ conversation, now }) => {
 };
 
 const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
-const cssNames = ["styles.css", "quota.css", "quota-fix.css", "reset-glow.css", "composer-aura.css", "composer-refine.css", "composer-transparency.css", "composer-overlay.css", "composer-spectra.css", "quota-layout.css", "quota-header-restore.css", "quota-confirm.css", "quota-compact.css", "drawer-motion.css", "quota-profile-motion.css", "usage-insight.css", "quota-spacing.css", "usage-ring-fit.css", "auth-gate.css", "approval-card.css", "conversation-type.css", "night-theme.css", "message-collapse.css", "chat-overflow-fix.css", "codex-accounts.css", "formula-code.css", "performance.css", "cinematic-global.css", "landscape.css", "lumora-global.css", "codex-model-picker.css"];
+const cssNames = ["styles.css", "quota.css", "quota-fix.css", "reset-glow.css", "composer-aura.css", "composer-refine.css", "composer-transparency.css", "composer-overlay.css", "composer-spectra.css", "quota-layout.css", "quota-header-restore.css", "quota-confirm.css", "quota-compact.css", "drawer-motion.css", "quota-profile-motion.css", "usage-insight.css", "quota-spacing.css", "usage-ring-fit.css", "auth-gate.css", "approval-card.css", "conversation-type.css", "night-theme.css", "message-collapse.css", "chat-overflow-fix.css", "codex-accounts.css", "formula-code.css", "performance.css", "cinematic-global.css", "landscape.css", "lumora-global.css", "codex-model-picker.css", "chat-links.css"];
 const cssFiles = new Map(cssNames.map((name) => [
   name, readFileSync(new URL(`../web/${name}`, import.meta.url), "utf8"),
 ]));
@@ -397,6 +397,31 @@ if ((await page.locator(".message.assistant .katex").count()) < 2) {
 if ((await page.locator(".message.assistant .chat-code-block code").textContent()) !== "const answer = 42;") {
   throw new Error("Assistant fenced code block did not render");
 }
+const chatLinks = page.locator(".message.assistant .chat-link");
+if ((await chatLinks.count()) < 2) {
+  throw new Error("Assistant Markdown and bare URL links did not render");
+}
+const linkState = await chatLinks.evaluateAll((links) => links.map((link) => ({
+  href: link.href,
+  rel: link.rel,
+  pointerEvents: getComputedStyle(link).pointerEvents,
+})));
+if (!linkState.some(({ href }) => href.includes("github.com/LeoWilson-Ben/witt")) ||
+    !linkState.some(({ href }) => href.includes("example.com/docs")) ||
+    linkState.some(({ rel, pointerEvents }) => !rel.includes("noopener") || pointerEvents === "none")) {
+  throw new Error(`Assistant links were not safe and tappable: ${JSON.stringify(linkState)}`);
+}
+await page.evaluate(() => {
+  window.__clickedChatLink = "";
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest(".chat-link");
+    if (!link) return;
+    event.preventDefault();
+    window.__clickedChatLink = link.href;
+  }, { capture: true, once: true });
+});
+await chatLinks.first().click();
+await page.waitForFunction(() => window.__clickedChatLink.includes("github.com/LeoWilson-Ben/witt"));
 await page.locator(".message.assistant [data-copy-code]").click();
 await page.waitForFunction(() =>
   document.querySelector(".message.assistant [data-copy-code]")?.textContent === "已复制");

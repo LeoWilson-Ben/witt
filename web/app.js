@@ -271,6 +271,21 @@
     }
   }
 
+  function safeWebUrl(value) {
+    try {
+      const url = new URL(String(value || "").trim());
+      return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function chatLinkHtml(label, target) {
+    const url = safeWebUrl(target);
+    if (!url) return escapeHtml(label || target);
+    return `<a class="chat-link" href="${escapeHtml(url)}" rel="noopener noreferrer" aria-label="${escapeHtml(label || url)}，打开链接">${escapeHtml(label || url)}<span aria-hidden="true">↗</span></a>`;
+  }
+
   function inlineRichHtml(value) {
     const fragments = [];
     const hold = (html) => {
@@ -289,6 +304,18 @@
       hold(formulaHtml(formula, false)));
     source = source.replace(/(^|[^\\$])\$([^$\n]+?)\$/g, (_, prefix, formula) =>
       `${prefix}${hold(formulaHtml(formula, false))}`);
+    source = source.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi, (_, label, url) =>
+      hold(chatLinkHtml(label, url)));
+    source = source.replace(/(^|[\s（(])((?:https?:\/\/)[^\s<>"'）)]+)/gi,
+      (_, prefix, rawUrl) => {
+        let url = rawUrl;
+        let suffix = "";
+        while (/[.,!?;:，。！？；：]$/.test(url)) {
+          suffix = url.slice(-1) + suffix;
+          url = url.slice(0, -1);
+        }
+        return `${prefix}${hold(chatLinkHtml(url, url))}${suffix}`;
+      });
     let html = escapeHtml(source)
       .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
       .replace(/\n/g, "<br>");
