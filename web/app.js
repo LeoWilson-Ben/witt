@@ -47,6 +47,7 @@
     codexLoginUrl: "",
     codexLoginTimer: null,
     appVisible: !document.hidden,
+    supportsSse: false,
     capabilities: null,
   };
   let pollTimer;
@@ -127,6 +128,29 @@
       return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
     }
     return date.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
+  }
+
+  function taskDurationMs(message) {
+    const start = Date.parse(message.startedAt || message.createdAt || "");
+    let end = Date.parse(message.completedAt || "");
+    if (!Number.isFinite(end)) {
+      end = Math.max(...(message.stream || [])
+        .map((entry) => Date.parse(entry.createdAt || ""))
+        .filter(Number.isFinite), start);
+    }
+    return Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : null;
+  }
+
+  function formatTaskDuration(durationMs) {
+    if (!Number.isFinite(durationMs)) return "用时未知";
+    const seconds = Math.max(1, Math.round(durationMs / 1000));
+    if (seconds < 60) return `用时 ${seconds} 秒`;
+    const minutes = Math.floor(seconds / 60);
+    const remainder = seconds % 60;
+    if (minutes < 60) return `用时 ${minutes} 分${remainder ? ` ${remainder} 秒` : ""}`;
+    const hours = Math.floor(minutes / 60);
+    const minuteRemainder = minutes % 60;
+    return `用时 ${hours} 小时${minuteRemainder ? ` ${minuteRemainder} 分` : ""}`;
   }
 
   const cacheDatabase = (() => {
@@ -1125,9 +1149,12 @@
     return parts.join(" · ") || `处理 ${entries.length} 项操作`;
   }
 
-  function streamHtml(message) {
-    const stream = Array.isArray(message.stream) ? message.stream : [];
+  function streamHtml(message, streamOverride) {
+    const hasOverride = Array.isArray(streamOverride);
+    const stream = hasOverride ? streamOverride
+      : Array.isArray(message.stream) ? message.stream : [];
     if (!stream.length) {
+      if (hasOverride) return "";
       const typing = !message.text &&
         (message.status === "queued" || message.status === "running");
       return `${typing
@@ -1185,6 +1212,30 @@
     return `${entries}${showTyping ? `<div class="typing"><i></i><i></i><i></i></div>` : ""}`;
   }
 
+  function completedMessageHtml(message) {
+    const stream = Array.isArray(message.stream) ? message.stream : [];
+    const finalEntries = stream.filter((entry) =>
+      entry.kind === "message" && entry.phase === "final_answer" && String(entry.text || "").trim());
+    const finalEntry = finalEntries.at(-1);
+    const processEntries = stream.filter((entry) => entry !== finalEntry);
+    const processHtml = streamHtml(message, processEntries) || activityHtml(message);
+    const processCount = processEntries.length || (message.activity || []).length;
+    const duration = formatTaskDuration(taskDurationMs(message));
+    const failed = message.status === "failed";
+    const interrupted = message.status === "interrupted";
+    const stateLabel = failed ? "执行未完成" : interrupted ? "执行已暂停" : "执行过程";
+    const resultText = finalEntry?.text || message.text || (failed ? "任务未完成。" : "任务已完成。");
+    const processSummary = processHtml ? `<details class="completed-process ${message.status || "completed"}">
+      <summary>
+        <span class="completed-process-mark" aria-hidden="true">${failed ? "!" : interrupted ? "Ⅱ" : "✓"}</span>
+        <span class="completed-process-copy"><strong>${stateLabel}</strong><small>${processCount ? `${processCount} 项 · ` : ""}${duration}</small></span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+      </summary>
+      <div class="completed-process-body">${processHtml}</div>
+    </details>` : `<div class="completed-runtime ${message.status || "completed"}"><span>${failed ? "!" : interrupted ? "Ⅱ" : "✓"}</span>${stateLabel} · ${duration}</div>`;
+    return `${processSummary}<div class="completed-result"><div class="stream-message final ${message.status || "completed"}">${textHtml(resultText)}</div></div>`;
+  }
+
   function messageInnerHtml(message) {
     const files = (message.attachments || []).map(attachmentHtml).join("");
     if (message.role === "user") {
@@ -1203,7 +1254,8 @@
       .map((image) => inlineImageHtml(image, "delivery-image"))
       .join("");
     return `<div class="assistant-body">
-      ${streamHtml(message)}
+      ${["completed", "failed", "interrupted"].includes(message.status)
+        ? completedMessageHtml(message) : streamHtml(message)}
       ${deliveredImages ? `<div class="message-image-gallery">${deliveredImages}</div>` : ""}
       <time>${formatDate(message.createdAt)}</time>
     </div>`;
@@ -1213,6 +1265,7 @@
     const source = JSON.stringify([
       message.role, message.status, message.text, message.attachments,
       message.activity, message.stream, message.images, message.steeredInto,
+      message.startedAt, message.completedAt,
       message.sourceMessageId, message.segmentIndex, message.steerAtStreamIndex,
     ]);
     let hash = 2166136261;
@@ -1456,13 +1509,13 @@
     setBusy(busy);
     renderDeliveries();
     clearTimeout(pollTimer);
-    if (busy && state.activeId && state.appVisible) {
+    if (!state.supportsSse && busy && state.activeId && state.appVisible) {
       pollTimer = setTimeout(requestActiveConversationSync, 1200);
     }
   }
 
   function requestActiveConversationSync() {
-    if (!state.appVisible || !state.activeId) return;
+    if (!state.appVisible || !state.activeId || state.supportsSse) return;
     const nativeBridge = bridge();
     if (typeof nativeBridge?.requestConversationDelta === "function") {
       nativeBridge.requestConversationDelta(state.activeId);
@@ -1476,11 +1529,16 @@
     document.body.classList.toggle("power-paused", !state.appVisible);
     clearTimeout(pollTimer);
     if (!state.appVisible) {
+      if (state.supportsSse) bridge()?.unsubscribeConversationEvents?.();
       document.querySelectorAll("[data-scene-video]").forEach((video) => video.pause());
       return;
     }
     applyTheme(document.documentElement.dataset.themeMode || "light");
-    if (state.busy && state.activeId) pollTimer = setTimeout(requestActiveConversationSync, 120);
+    if (state.supportsSse && state.activeId) {
+      bridge()?.subscribeConversationEvents?.(state.activeId);
+    } else if (state.busy && state.activeId) {
+      pollTimer = setTimeout(requestActiveConversationSync, 120);
+    }
   }
 
   function setBusy(busy) {
@@ -1531,6 +1589,9 @@
     renderConversations();
     setConnected(true, "读取对话中");
     bridge()?.requestConversation?.(id);
+    if (state.supportsSse && state.appVisible) {
+      bridge()?.subscribeConversationEvents?.(id);
+    }
   }
 
   function applyConversation(conversation) {
@@ -1666,6 +1727,7 @@
       document.body.classList.add("native");
       const version = String(info.version || window.DropVaultAndroid?.getVersion?.() || "");
       const cacheScope = String(info.cacheScope || window.DropVaultAndroid?.getCacheScope?.() || "");
+      state.supportsSse = Boolean(info.supportsSse);
       if (/^[a-f0-9]{24,64}$/.test(cacheScope)) {
         state.cacheScope = cacheScope;
       }
@@ -1780,6 +1842,9 @@
       updateModelControls();
       localStorage.setItem("wit_active_conversation", conversation.id);
       persistConversation(conversation);
+      if (state.supportsSse && state.appVisible) {
+        bridge()?.subscribeConversationEvents?.(conversation.id);
+      }
       bridge()?.requestConversations?.();
       renderMessages();
       const next = state.afterCreate;
@@ -1798,6 +1863,9 @@
       state.active = conversation;
       localStorage.setItem("wit_active_conversation", conversation.id);
       persistConversation(conversation);
+      if (state.supportsSse && state.appVisible) {
+        bridge()?.subscribeConversationEvents?.(conversation.id);
+      }
       closeSettings();
       bridge()?.requestConversations?.();
       renderMessages();

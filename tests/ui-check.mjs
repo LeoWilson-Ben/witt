@@ -12,6 +12,7 @@ page.on("console", (message) => {
 });
 
 const now = new Date().toISOString();
+const startedAt = new Date(Date.now() - 83_000).toISOString();
 const conversation = {
   id: "00000000-0000-4000-8000-000000000001",
   title: "年报项目检查",
@@ -27,11 +28,11 @@ const conversation = {
     {
       id: "u1", role: "user",
       text: "帮我检查年报项目目前的状态，并逐项说明服务、构建、测试、交付、日志和风险。".repeat(32),
-      attachments: [], createdAt: now, status: "completed",
+      attachments: [], createdAt: startedAt, startedAt, completedAt: now, status: "completed",
     },
     {
       id: "a1", role: "assistant", text: "项目运行正常。查看 [Witt 项目](https://github.com/LeoWilson-Ben/witt)，或访问 https://example.com/docs。",
-      attachments: [], createdAt: now, status: "completed",
+      attachments: [], createdAt: startedAt, startedAt, completedAt: now, status: "completed",
       activity: [{ type: "done", label: "处理完成", status: "completed" }],
       stream: [
         { id: "s1", kind: "message", phase: "commentary", text: "我先检查服务状态和项目文件。", status: "completed" },
@@ -328,7 +329,7 @@ const installBridge = ({ conversation, now }) => {
 };
 
 const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
-const cssNames = ["styles.css", "quota.css", "quota-fix.css", "reset-glow.css", "composer-aura.css", "composer-refine.css", "composer-transparency.css", "composer-overlay.css", "composer-spectra.css", "quota-layout.css", "quota-header-restore.css", "quota-confirm.css", "quota-compact.css", "drawer-motion.css", "quota-profile-motion.css", "usage-insight.css", "quota-spacing.css", "usage-ring-fit.css", "auth-gate.css", "approval-card.css", "conversation-type.css", "night-theme.css", "message-collapse.css", "chat-overflow-fix.css", "codex-accounts.css", "formula-code.css", "performance.css", "cinematic-global.css", "landscape.css", "lumora-global.css", "codex-model-picker.css", "chat-links.css"];
+const cssNames = ["styles.css", "quota.css", "quota-fix.css", "reset-glow.css", "composer-aura.css", "composer-refine.css", "composer-transparency.css", "composer-overlay.css", "composer-spectra.css", "quota-layout.css", "quota-header-restore.css", "quota-confirm.css", "quota-compact.css", "drawer-motion.css", "quota-profile-motion.css", "usage-insight.css", "quota-spacing.css", "usage-ring-fit.css", "auth-gate.css", "approval-card.css", "conversation-type.css", "night-theme.css", "message-collapse.css", "chat-overflow-fix.css", "codex-accounts.css", "formula-code.css", "performance.css", "cinematic-global.css", "landscape.css", "lumora-global.css", "codex-model-picker.css", "chat-links.css", "completed-turn.css"];
 const cssFiles = new Map(cssNames.map((name) => [
   name, readFileSync(new URL(`../web/${name}`, import.meta.url), "utf8"),
 ]));
@@ -391,6 +392,18 @@ if ((await page.locator(".message.assistant").count()) === 0) {
   }));
   throw new Error(`Initial conversation did not render: ${JSON.stringify(status)} | ${errors.join(" | ")}`);
 }
+const completedProcess = page.locator(".message.assistant .completed-process");
+if ((await completedProcess.count()) !== 1 || await completedProcess.evaluate((node) => node.open)) {
+  throw new Error("Completed task process did not collapse by default");
+}
+if (!(await completedProcess.locator(":scope > summary").textContent()).includes("用时 1 分 23 秒")) {
+  throw new Error("Completed task runtime did not render");
+}
+if ((await page.locator(".message.assistant .completed-result .stream-message.final").count()) !== 1) {
+  throw new Error("Completed task did not keep only the final result visible");
+}
+await page.locator(".message.assistant").screenshot({ path: "tests/ui-completed-result-mobile.png" });
+await completedProcess.locator(":scope > summary").click();
 if ((await page.locator(".message.assistant .katex").count()) < 2) {
   throw new Error("Assistant formulas did not render with KaTeX");
 }
@@ -671,6 +684,7 @@ await page.evaluate(({ conversation }) => {
 if (await page.locator(".stream-action-group").evaluate((node) => node.open)) {
   throw new Error("Action group did not collapse after completion");
 }
+await page.locator(".completed-process > summary").click();
 await page.locator(".stream-action-group summary").click();
 await page.locator(".stream-action.command").click();
 await page.locator(".detail-block.command").waitFor();

@@ -62,6 +62,8 @@ class ChatService {
     this.store = new ConversationStore(this.chatDir);
     this.store.importJsonFiles();
     this.jsonCheckpoints = new Map();
+    this.eventSubscribers = new Map();
+    this.eventBroadcasts = new Map();
     this.recover();
   }
 
@@ -123,6 +125,7 @@ class ChatService {
 
   writeConversation(conversation) {
     this.store.save(conversation);
+    this.scheduleConversationEvent(conversation.id);
     const existing = this.jsonCheckpoints.get(conversation.id);
     if (existing) {
       existing.conversation = conversation;
@@ -135,6 +138,88 @@ class ChatService {
     }, 2_000);
     checkpoint.timer.unref();
     this.jsonCheckpoints.set(conversation.id, checkpoint);
+  }
+
+  scheduleConversationEvent(conversationId) {
+    if (!this.eventSubscribers.get(conversationId)?.size ||
+        this.eventBroadcasts.has(conversationId)) return;
+    const timer = setTimeout(() => {
+      this.eventBroadcasts.delete(conversationId);
+      const conversation = this.readConversation(conversationId);
+      if (!conversation || conversation.archived) return;
+      this.broadcastConversationEvent(
+        conversationId, "delta", this.publicConversationDelta(conversation));
+    }, 180);
+    timer.unref();
+    this.eventBroadcasts.set(conversationId, timer);
+  }
+
+  writeConversationEvent(res, event, payload) {
+    if (res.destroyed || res.writableEnded) return false;
+    if (res.writableLength > 1024 * 1024) {
+      res.destroy();
+      return false;
+    }
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  broadcastConversationEvent(conversationId, event, payload) {
+    const subscribers = this.eventSubscribers.get(conversationId);
+    if (!subscribers) return;
+    for (const subscriber of [...subscribers]) {
+      if (!this.writeConversationEvent(subscriber.res, event, payload)) {
+        subscriber.close();
+      }
+    }
+  }
+
+  subscribeConversation(req, res, conversationId) {
+    const conversation = this.readConversation(conversationId);
+    if (!conversation || conversation.archived) {
+      this.sendJson(res, 404, { error: "对话不存在" });
+      return;
+    }
+    res.writeHead(200, {
+      "Cache-Control": "no-store, no-transform",
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.flushHeaders?.();
+    res.write("retry: 1500\n\n");
+
+    const subscribers = this.eventSubscribers.get(conversationId) || new Set();
+    this.eventSubscribers.set(conversationId, subscribers);
+    let closed = false;
+    const subscriber = {
+      res,
+      close: () => {
+        if (closed) return;
+        closed = true;
+        clearInterval(subscriber.heartbeat);
+        subscribers.delete(subscriber);
+        if (!subscribers.size) this.eventSubscribers.delete(conversationId);
+        if (!res.writableEnded) res.end();
+      },
+    };
+    subscriber.heartbeat = setInterval(() => {
+      if (res.destroyed || res.writableEnded) subscriber.close();
+      else res.write(": keep-alive\n\n");
+    }, 25_000);
+    subscriber.heartbeat.unref();
+    subscribers.add(subscriber);
+    req.on("aborted", subscriber.close);
+    req.on("close", subscriber.close);
+    res.on("close", subscriber.close);
+    this.writeConversationEvent(res, "snapshot", {
+      conversation: this.publicConversation(conversation),
+    });
   }
 
   writeJsonCheckpoint(conversation) {
@@ -649,6 +734,13 @@ class ChatService {
       return true;
     }
 
+    const eventsMatch = url.pathname.match(
+      /^\/chat\/conversations\/([a-f0-9-]{36})\/events$/);
+    if (req.method === "GET" && eventsMatch) {
+      this.subscribeConversation(req, res, eventsMatch[1]);
+      return true;
+    }
+
     const artifactMatch = url.pathname.match(
       /^\/chat\/conversations\/([a-f0-9-]{36})\/messages\/([a-f0-9-]{36})\/artifacts\/([a-f0-9-]{36})$/);
     if (req.method === "GET" && artifactMatch) {
@@ -835,7 +927,7 @@ class ChatService {
           const now = new Date().toISOString();
           const assistant = {
             id: crypto.randomUUID(), role: "assistant", text: "", attachments: [],
-            createdAt: now, status: "running",
+            createdAt: now, startedAt: now, status: "running",
             activity: [{ type: "review", label: "正在审查代码", status: "running" }],
             stream: [], review: true,
           };
@@ -1742,8 +1834,10 @@ class ChatService {
     if (!queued) return;
     const { conversation, user, assistant } = queued;
     if (!this.profileAllowed(conversation)) {
+      const completedAt = new Date().toISOString();
       user.status = "failed";
       assistant.status = "failed";
+      assistant.completedAt = completedAt;
       assistant.text = "该对话属于未授权的 Codex 账号，请新建玄遇对话";
       assistant.activity = [{ type: "error", label: assistant.text, status: "failed" }];
       conversation.updatedAt = new Date().toISOString();
@@ -1752,8 +1846,10 @@ class ChatService {
       return;
     }
     if (this.quotaExhausted) {
+      const completedAt = new Date().toISOString();
       user.status = "failed";
       assistant.status = "failed";
+      assistant.completedAt = completedAt;
       assistant.text = QUOTA_EXHAUSTED_MESSAGE;
       assistant.activity = [{ type: "error", label: QUOTA_EXHAUSTED_MESSAGE, status: "failed" }];
       conversation.updatedAt = new Date().toISOString();
@@ -1764,6 +1860,7 @@ class ChatService {
     const attachments = (user.attachments || []).map((file) => this.readUpload(file.id)).filter(Boolean);
     user.status = "running";
     assistant.status = "running";
+    assistant.startedAt = new Date().toISOString();
     assistant.activity = [{ type: "thinking", label: "正在阅读并理解消息", status: "running" }];
     assistant.stream = Array.isArray(assistant.stream) ? assistant.stream : [];
     conversation.updatedAt = new Date().toISOString();
@@ -2106,6 +2203,7 @@ class ChatService {
       }
     }
     assistant.status = interrupted ? "interrupted" : success ? "completed" : "failed";
+    assistant.completedAt = new Date().toISOString();
     const delivery = success ? this.extractDeliveries(response) : { text: response, artifacts: [] };
     assistant.text = interrupted
       ? "已暂停本轮执行。已完成的修改和命令结果会保留。"
@@ -2169,7 +2267,7 @@ class ChatService {
       interrupted ? "pause" : success ? "done" : "error",
       interrupted ? "已暂停" : success ? "处理完成" : "处理未完成",
       interrupted || success ? "completed" : "failed");
-    conversation.updatedAt = new Date().toISOString();
+    conversation.updatedAt = assistant.completedAt;
     this.writeConversation(conversation);
     this.active = null;
     setImmediate(() => this.runNext());

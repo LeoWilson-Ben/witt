@@ -44,9 +44,11 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
+import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -61,6 +63,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -90,6 +93,10 @@ public class MainActivity extends Activity {
     private FrameLayout rootView;
     private WittLaunchView launchView;
     private boolean receiverRegistered;
+    private volatile boolean appForeground = true;
+    private volatile String eventConversationId = "";
+    private volatile HttpURLConnection eventConnection;
+    private final AtomicInteger eventGeneration = new AtomicInteger();
     private final WebBridge webBridge = new WebBridge();
     private static final String AUTH_KEY_ALIAS = "witt-device-auth-v2";
 
@@ -251,6 +258,7 @@ public class MainActivity extends Activity {
                     JSONObject info = new JSONObject()
                         .put("version", BuildConfig.VERSION_NAME)
                         .put("cacheScope", cacheScope())
+                        .put("supportsSse", true)
                         .put("bundledLumoraMedia", true);
                     callJs("window.DropVault&&window.DropVault.nativeReady(" + info + ")");
                 } catch (Exception ignored) {}
@@ -345,6 +353,9 @@ public class MainActivity extends Activity {
                 case "requestCapabilities": webBridge.requestCapabilities(); break;
                 case "requestConversation": webBridge.requestConversation(args.optString(0)); break;
                 case "requestConversationDelta": webBridge.requestConversationDelta(args.optString(0)); break;
+                case "subscribeConversationEvents":
+                    webBridge.subscribeConversationEvents(args.optString(0)); break;
+                case "unsubscribeConversationEvents": webBridge.unsubscribeConversationEvents(); break;
                 case "requestUsage": webBridge.requestUsage(args.optString(0)); break;
                 case "consumeRateLimitReset": webBridge.consumeRateLimitReset(); break;
                 case "requestStreamDetail": webBridge.requestStreamDetail(
@@ -736,6 +747,99 @@ public class MainActivity extends Activity {
             "window.DropVault.onConversationDelta", "window.DropVault.onChatError");
     }
 
+    private void subscribeConversationEvents(String id) {
+        if (id == null || !id.matches("[a-f0-9-]{36}")) return;
+        eventConversationId = id;
+        restartConversationEvents();
+    }
+
+    private void restartConversationEvents() {
+        int generation = eventGeneration.incrementAndGet();
+        HttpURLConnection current = eventConnection;
+        eventConnection = null;
+        if (current != null) current.disconnect();
+        String conversationId = eventConversationId;
+        if (!appForeground || conversationId.isEmpty() || apiToken().isEmpty()) return;
+        network.execute(() -> runConversationEvents(conversationId, generation));
+    }
+
+    private void unsubscribeConversationEvents() {
+        eventConversationId = "";
+        eventGeneration.incrementAndGet();
+        HttpURLConnection current = eventConnection;
+        eventConnection = null;
+        if (current != null) current.disconnect();
+    }
+
+    private void runConversationEvents(String conversationId, int generation) {
+        long retryDelayMs = 1_000L;
+        while (appForeground && generation == eventGeneration.get() &&
+                conversationId.equals(eventConversationId)) {
+            HttpURLConnection connection = null;
+            try {
+                connection = openApiConnection(
+                    "chat/conversations/" + conversationId + "/events", "GET");
+                connection.setReadTimeout(0);
+                connection.setRequestProperty("Accept", "text/event-stream");
+                connection.setRequestProperty("Cache-Control", "no-cache");
+                eventConnection = connection;
+                int status = connection.getResponseCode();
+                if (status != 200) {
+                    if (status == 401 || status == 403 || status == 404) return;
+                    throw new IllegalStateException("SSE status " + status);
+                }
+                retryDelayMs = 1_000L;
+                readConversationEvents(
+                    connection.getInputStream(), conversationId, generation);
+            } catch (Exception ignored) {
+                // A foreground reconnect immediately receives a fresh snapshot, so no event is lost.
+            } finally {
+                if (eventConnection == connection) eventConnection = null;
+                if (connection != null) connection.disconnect();
+            }
+            if (!appForeground || generation != eventGeneration.get() ||
+                    !conversationId.equals(eventConversationId)) return;
+            try { Thread.sleep(retryDelayMs); }
+            catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            retryDelayMs = Math.min(15_000L, retryDelayMs * 2L);
+        }
+    }
+
+    private void readConversationEvents(
+            InputStream stream, String conversationId, int generation) throws Exception {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+            String event = "message";
+            StringBuilder data = new StringBuilder();
+            String line;
+            while (appForeground && generation == eventGeneration.get() &&
+                    conversationId.equals(eventConversationId) &&
+                    (line = reader.readLine()) != null) {
+                if (line.isEmpty()) {
+                    if (data.length() > 0) dispatchConversationEvent(event, data.toString());
+                    event = "message";
+                    data.setLength(0);
+                } else if (line.startsWith("event:")) {
+                    event = line.substring(6).trim();
+                } else if (line.startsWith("data:")) {
+                    if (data.length() > 0) data.append('\n');
+                    data.append(line.substring(5).trim());
+                }
+            }
+        }
+    }
+
+    private void dispatchConversationEvent(String event, String data) {
+        if ("snapshot".equals(event)) {
+            callJs("window.DropVault.onConversation(" + JSONObject.quote(data) + ")");
+        } else if ("delta".equals(event)) {
+            callJs("window.DropVault.onConversationDelta(" + JSONObject.quote(data) + ")");
+        }
+    }
+
     private void resolveApproval(String conversationId, String approvalId, String choiceId) {
         if (!String.valueOf(conversationId).matches("[a-f0-9-]{36}") ||
             !String.valueOf(approvalId).matches("[a-f0-9-]{36}")) return;
@@ -1107,6 +1211,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        appForeground = true;
         if (webView != null) {
             webView.resumeTimers();
             webView.onResume();
@@ -1117,11 +1222,17 @@ public class MainActivity extends Activity {
         UpdateManager.tryInstallPending(this);
         updateHandler.removeCallbacks(foregroundUpdateCheck);
         updateHandler.postDelayed(foregroundUpdateCheck, 1200L);
+        if (!eventConversationId.isEmpty()) restartConversationEvents();
     }
 
     @Override
     protected void onPause() {
         updateHandler.removeCallbacks(foregroundUpdateCheck);
+        appForeground = false;
+        eventGeneration.incrementAndGet();
+        HttpURLConnection currentEvents = eventConnection;
+        eventConnection = null;
+        if (currentEvents != null) currentEvents.disconnect();
         if (webView != null) {
             webView.evaluateJavascript(
                 "window.DropVault&&window.DropVault.onAppVisibility&&window.DropVault.onAppVisibility(false)",
@@ -1151,6 +1262,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         updateHandler.removeCallbacks(foregroundUpdateCheck);
         if (receiverRegistered) unregisterReceiver(downloadReceiver);
+        unsubscribeConversationEvents();
         network.shutdownNow();
         if (webView != null) {
             webView.destroy();
@@ -1194,6 +1306,12 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void requestCapabilities() { MainActivity.this.requestCapabilities(); }
         @JavascriptInterface public void requestConversation(String id) { MainActivity.this.requestConversation(id); }
         @JavascriptInterface public void requestConversationDelta(String id) { MainActivity.this.requestConversationDelta(id); }
+        @JavascriptInterface public void subscribeConversationEvents(String id) {
+            MainActivity.this.subscribeConversationEvents(id);
+        }
+        @JavascriptInterface public void unsubscribeConversationEvents() {
+            MainActivity.this.unsubscribeConversationEvents();
+        }
         @JavascriptInterface public void requestUsage(String conversationId) { MainActivity.this.requestUsage(conversationId); }
         @JavascriptInterface public void consumeRateLimitReset() { MainActivity.this.consumeRateLimitReset(); }
         @JavascriptInterface public void requestStreamDetail(
