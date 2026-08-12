@@ -62,7 +62,7 @@ const conversation = {
             { id: "choice-4", label: "拒绝并停止本轮", description: "立即停止当前任务", tone: "declined" },
           ],
         },
-        { id: "s4", kind: "message", phase: "final_answer", text: "项目运行正常。查看 [Witt 项目](https://github.com/LeoWilson-Ben/witt)，或访问 https://example.com/docs。行内公式 $E=mc^2$。\n\n$$\\int_0^1 x^2 dx = \\frac{1}{3}$$\n\n```javascript\nconst answer = 42;\n```", status: "completed" },
+        { id: "s4", kind: "message", phase: "final_answer", text: "项目运行正常。查看 [Witt 项目](https://github.com/LeoWilson-Ben/witt)，或访问 https://example.com/docs。\n\n| 项目 | 状态 | 数量 |\n| :--- | :---: | ---: |\n| API | 正常 | 3 |\n| 构建 | `通过` | 12 |\n\n行内公式 $E=mc^2$。\n\n$$\\int_0^1 x^2 dx = \\frac{1}{3}$$\n\n```javascript\nconst answer = 42;\n```", status: "completed" },
       ],
       images: [
         {
@@ -401,6 +401,24 @@ if (!(await completedProcess.locator(":scope > summary").textContent()).includes
 }
 if ((await page.locator(".message.assistant .completed-result .stream-message.final").count()) !== 1) {
   throw new Error("Completed task did not keep only the final result visible");
+}
+const renderedTable = page.locator(".completed-result .chat-table");
+if ((await renderedTable.count()) !== 1 ||
+    (await renderedTable.locator("thead th").allTextContents()).join("|") !== "项目|状态|数量" ||
+    (await renderedTable.locator("tbody tr").count()) !== 2) {
+  throw new Error("Markdown table did not render as a semantic table");
+}
+if ((await renderedTable.locator("th").nth(1).getAttribute("class")) !== "align-center" ||
+    (await renderedTable.locator("th").nth(2).getAttribute("class")) !== "align-right") {
+  throw new Error("Markdown table column alignment was not preserved");
+}
+const tableOverflow = await page.evaluate(() => ({
+  page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  table: document.querySelector(".chat-table-scroll").scrollWidth -
+    document.querySelector(".chat-table-scroll").clientWidth,
+}));
+if (tableOverflow.page > 1) {
+  throw new Error(`Markdown table expanded the page: ${JSON.stringify(tableOverflow)}`);
 }
 await page.locator(".message.assistant").screenshot({ path: "tests/ui-completed-result-mobile.png" });
 await completedProcess.locator(":scope > summary").click();

@@ -364,6 +364,92 @@
     </section>`;
   }
 
+  function markdownTableCells(line) {
+    let source = String(line || "").trim();
+    if (source.startsWith("|")) source = source.slice(1);
+    if (source.endsWith("|") && !source.endsWith("\\|")) source = source.slice(0, -1);
+    const cells = [];
+    let cell = "";
+    let inCode = false;
+    for (let index = 0; index < source.length; index += 1) {
+      const character = source[index];
+      if (character === "\\" && source[index + 1] === "|") {
+        cell += "|";
+        index += 1;
+      } else if (character === "`") {
+        inCode = !inCode;
+        cell += character;
+      } else if (character === "|" && !inCode) {
+        cells.push(cell.trim());
+        cell = "";
+      } else {
+        cell += character;
+      }
+    }
+    cells.push(cell.trim());
+    return cells;
+  }
+
+  function markdownTableAlignment(delimiter) {
+    const value = String(delimiter || "").replace(/\s/g, "");
+    if (/^:-{3,}:$/.test(value)) return "center";
+    if (/^-{3,}:$/.test(value)) return "right";
+    return "left";
+  }
+
+  function isMarkdownTableDelimiter(line) {
+    const cells = markdownTableCells(line);
+    return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s/g, "")));
+  }
+
+  function markdownTableHtml(headerLine, delimiterLine, bodyLines) {
+    const headers = markdownTableCells(headerLine);
+    const delimiters = markdownTableCells(delimiterLine);
+    const alignments = headers.map((_, index) =>
+      markdownTableAlignment(delimiters[index] || delimiters.at(-1)));
+    const cellHtml = (tag, value, index) =>
+      `<${tag} class="align-${alignments[index]}">${inlineRichHtml(value)}</${tag}>`;
+    const head = headers.map((value, index) => cellHtml("th", value, index)).join("");
+    const body = bodyLines.map((line) => {
+      const cells = markdownTableCells(line);
+      return `<tr>${headers.map((_, index) => cellHtml("td", cells[index] || "", index)).join("")}</tr>`;
+    }).join("");
+    return `<div class="chat-table-scroll" role="region" aria-label="表格，可横向滚动" tabindex="0">
+      <table class="chat-table"><thead><tr>${head}</tr></thead>${body ? `<tbody>${body}</tbody>` : ""}</table>
+    </div>`;
+  }
+
+  function richBlockHtml(value) {
+    const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n");
+    const rendered = [];
+    let plain = [];
+    const flushPlain = () => {
+      if (!plain.length) return;
+      rendered.push(inlineRichHtml(plain.join("\n")));
+      plain = [];
+    };
+    for (let index = 0; index < lines.length; index += 1) {
+      const hasTableHeader = lines[index].includes("|") &&
+        index + 1 < lines.length && isMarkdownTableDelimiter(lines[index + 1]);
+      if (!hasTableHeader) {
+        plain.push(lines[index]);
+        continue;
+      }
+      flushPlain();
+      const bodyLines = [];
+      index += 2;
+      while (index < lines.length && lines[index].trim() && lines[index].includes("|")) {
+        bodyLines.push(lines[index]);
+        index += 1;
+      }
+      rendered.push(markdownTableHtml(lines[index - bodyLines.length - 2],
+        lines[index - bodyLines.length - 1], bodyLines));
+      index -= 1;
+    }
+    flushPlain();
+    return rendered.join("");
+  }
+
   function textHtml(text) {
     const source = String(text || "");
     const pattern = /```([^`\n]*)\n?([\s\S]*?)```/g;
@@ -371,11 +457,11 @@
     let cursor = 0;
     let match;
     while ((match = pattern.exec(source))) {
-      if (match.index > cursor) rendered.push(inlineRichHtml(source.slice(cursor, match.index)));
+      if (match.index > cursor) rendered.push(richBlockHtml(source.slice(cursor, match.index)));
       rendered.push(codeBlockHtml(match[2], match[1]));
       cursor = pattern.lastIndex;
     }
-    if (cursor < source.length) rendered.push(inlineRichHtml(source.slice(cursor)));
+    if (cursor < source.length) rendered.push(richBlockHtml(source.slice(cursor)));
     return rendered.join("");
   }
 
