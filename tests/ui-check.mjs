@@ -128,7 +128,13 @@ const installBridge = ({ conversation, now }) => {
           busy: conversation.messages.some((message) =>
             message.role === "assistant" &&
             (message.status === "queued" || message.status === "running")),
-        }],
+        }, ...Array.from({ length: 18 }, (_, index) => ({
+          id: `00000000-0000-4000-9000-${String(index + 10).padStart(12, "0")}`,
+          title: `历史对话 ${index + 1}`,
+          updatedAt: new Date(Date.parse(now) - (index + 1) * 3600000).toISOString(),
+          lastMessage: `这是第 ${index + 1} 条历史记录的摘要`,
+          busy: false,
+        }))],
       })), 30);
     },
     requestCapabilities() {
@@ -329,7 +335,7 @@ const installBridge = ({ conversation, now }) => {
 };
 
 const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
-const cssNames = ["styles.css", "quota.css", "quota-fix.css", "reset-glow.css", "composer-aura.css", "composer-refine.css", "composer-transparency.css", "composer-overlay.css", "composer-spectra.css", "quota-layout.css", "quota-header-restore.css", "quota-confirm.css", "quota-compact.css", "drawer-motion.css", "quota-profile-motion.css", "usage-insight.css", "quota-spacing.css", "usage-ring-fit.css", "auth-gate.css", "approval-card.css", "conversation-type.css", "night-theme.css", "message-collapse.css", "chat-overflow-fix.css", "codex-accounts.css", "formula-code.css", "performance.css", "cinematic-global.css", "landscape.css", "lumora-global.css", "codex-model-picker.css", "chat-links.css", "completed-turn.css"];
+const cssNames = ["styles.css", "quota.css", "quota-fix.css", "reset-glow.css", "composer-aura.css", "composer-refine.css", "composer-transparency.css", "composer-overlay.css", "composer-spectra.css", "quota-layout.css", "quota-header-restore.css", "quota-confirm.css", "quota-compact.css", "drawer-motion.css", "quota-profile-motion.css", "usage-insight.css", "quota-spacing.css", "usage-ring-fit.css", "auth-gate.css", "approval-card.css", "conversation-type.css", "night-theme.css", "message-collapse.css", "chat-overflow-fix.css", "codex-accounts.css", "formula-code.css", "performance.css", "cinematic-global.css", "landscape.css", "lumora-global.css", "codex-model-picker.css", "chat-links.css", "completed-turn.css", "drawer-layout.css"];
 const cssFiles = new Map(cssNames.map((name) => [
   name, readFileSync(new URL(`../web/${name}`, import.meta.url), "utf8"),
 ]));
@@ -717,6 +723,46 @@ await page.evaluate(({ conversation }) => {
 if ((await page.locator('[data-stability-probe="kept"]').count()) !== 1) {
   throw new Error("Conversation refresh replaced stable message DOM");
 }
+const scrollAnchorBefore = await page.evaluate(() => {
+  const stage = document.querySelector("#chatStage");
+  const assistant = document.querySelector('.message.assistant[data-message="a1"]');
+  stage.scrollTop = Math.min(
+    assistant.offsetTop + 150,
+    Math.max(0, stage.scrollHeight - stage.clientHeight - 240));
+  const stageTop = stage.getBoundingClientRect().top;
+  const visible = [...document.querySelector("#messageList").children].find((message) =>
+    message.getBoundingClientRect().bottom > stageTop + 1);
+  return {
+    scrollTop: stage.scrollTop,
+    messageId: visible?.dataset.message,
+    offset: visible?.getBoundingClientRect().top - stageTop,
+    bottomGap: stage.scrollHeight - stage.scrollTop - stage.clientHeight,
+  };
+});
+if (scrollAnchorBefore.scrollTop < 100 || scrollAnchorBefore.bottomGap < 180) {
+  throw new Error(`Scroll stability fixture was not away from either edge: ${JSON.stringify(scrollAnchorBefore)}`);
+}
+await page.evaluate(({ conversation }) => {
+  conversation.messages[1].stream[0].text += " 输出状态刚刚更新。";
+  window.DropVault.onConversation(JSON.stringify({ conversation }));
+}, { conversation });
+await page.waitForTimeout(80);
+const scrollAnchorAfter = await page.evaluate(() => {
+  const stage = document.querySelector("#chatStage");
+  const stageTop = stage.getBoundingClientRect().top;
+  const visible = [...document.querySelector("#messageList").children].find((message) =>
+    message.getBoundingClientRect().bottom > stageTop + 1);
+  return {
+    scrollTop: stage.scrollTop,
+    messageId: visible?.dataset.message,
+    offset: visible?.getBoundingClientRect().top - stageTop,
+  };
+});
+if (scrollAnchorAfter.scrollTop < 100 ||
+    scrollAnchorAfter.messageId !== scrollAnchorBefore.messageId ||
+    Math.abs(scrollAnchorAfter.offset - scrollAnchorBefore.offset) > 3) {
+  throw new Error(`Output refresh moved the visible conversation anchor: ${JSON.stringify({ scrollAnchorBefore, scrollAnchorAfter })}`);
+}
 await page.locator("#modelButton").click();
 await page.locator('[data-model="gpt-5.6-terra"]').click();
 if ((await page.locator("#reasoningStops [data-reasoning]").count()) !== 6) {
@@ -770,6 +816,30 @@ if ((await page.locator("#projectLabel").textContent()) !== "玄遇") {
   throw new Error("Conversation project selector did not update");
 }
 await page.locator("#menuButton").click();
+await page.waitForTimeout(360);
+const drawerLayout = await page.evaluate(() => {
+  const panel = document.querySelector(".drawer-panel");
+  const history = document.querySelector(".drawer-history");
+  const list = document.querySelector("#conversationList");
+  const tools = document.querySelector(".drawer-tools");
+  return {
+    count: document.querySelector("#conversationCount")?.textContent,
+    rowCount: list.children.length,
+    listHeight: list.clientHeight,
+    listScrollHeight: list.scrollHeight,
+    listScrollable: list.scrollHeight > list.clientHeight,
+    historyBottom: history.getBoundingClientRect().bottom,
+    toolsTop: tools.getBoundingClientRect().top,
+    toolsBottom: tools.getBoundingClientRect().bottom,
+    panelBottom: panel.getBoundingClientRect().bottom,
+  };
+});
+if (drawerLayout.count !== "19" || !drawerLayout.listScrollable ||
+    drawerLayout.historyBottom > drawerLayout.toolsTop + 1 ||
+    drawerLayout.toolsBottom > drawerLayout.panelBottom + 1) {
+  throw new Error(`Conversation drawer did not keep an independent history rail: ${JSON.stringify(drawerLayout)}`);
+}
+await page.screenshot({ path: "tests/ui-drawer-history-mobile.png", fullPage: false });
 await page.locator('[data-theme-choice="dark"]').click();
 if ((await page.locator("html").getAttribute("data-theme")) !== "dark") {
   throw new Error("Night theme did not activate");

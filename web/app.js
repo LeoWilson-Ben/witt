@@ -1018,6 +1018,7 @@
   }
 
   function renderConversations() {
+    $("#conversationCount").textContent = String(state.conversations.length);
     $("#conversationList").innerHTML = state.conversations.length
       ? state.conversations.map((conversation) => `
         <article class="conversation-row ${conversation.id === state.activeId ? "active" : ""}" data-id="${conversation.id}">
@@ -1373,10 +1374,48 @@
   let rotationAnchor = null;
   let latestPinned = true;
   let lastLandscape = matchMedia("(orientation: landscape)").matches;
+  let messageRenderEpoch = 0;
 
   function distanceFromBottom() {
     const stage = $("#chatStage");
     return Math.max(0, stage.scrollHeight - stage.scrollTop - stage.clientHeight);
+  }
+
+  function captureMessageScrollAnchor() {
+    const stage = $("#chatStage");
+    const stageTop = stage.getBoundingClientRect().top;
+    const visible = [...$("#messageList").children].find((message) =>
+      message.getBoundingClientRect().bottom > stageTop + 1);
+    return {
+      stickToLatest: latestPinned || distanceFromBottom() < 180,
+      bottomGap: distanceFromBottom(),
+      scrollTop: stage.scrollTop,
+      messageId: visible?.dataset.message || "",
+      offset: visible ? visible.getBoundingClientRect().top - stageTop : 0,
+    };
+  }
+
+  function restoreMessageScrollAnchor(anchor, epoch) {
+    if (!anchor || epoch !== messageRenderEpoch) return;
+    const stage = $("#chatStage");
+    if (anchor.stickToLatest) {
+      scrollToBottom();
+      latestPinned = true;
+      return;
+    }
+    const message = anchor.messageId
+      ? $("#messageList").querySelector(`[data-message="${CSS.escape(anchor.messageId)}"]`)
+      : null;
+    if (message) {
+      const stageTop = stage.getBoundingClientRect().top;
+      stage.scrollTop += message.getBoundingClientRect().top - stageTop - anchor.offset;
+    } else if (Number.isFinite(anchor.bottomGap)) {
+      stage.scrollTop = Math.max(
+        0, stage.scrollHeight - stage.clientHeight - anchor.bottomGap);
+    } else {
+      stage.scrollTop = anchor.scrollTop;
+    }
+    latestPinned = distanceFromBottom() < 180;
   }
 
   function captureRotationAnchor() {
@@ -1522,7 +1561,8 @@
 
   function renderMessages(keepPosition = false) {
     const list = $("#messageList");
-    const nearBottom = $("#chatStage").scrollHeight - $("#chatStage").scrollTop - $("#chatStage").clientHeight < 180;
+    const scrollAnchor = keepPosition ? captureMessageScrollAnchor() : null;
+    const renderEpoch = ++messageRenderEpoch;
     const messages = [...(state.active?.messages || [])];
     if (state.optimisticMessage) {
       const runningIndex = messages.findLastIndex((message) =>
@@ -1586,8 +1626,15 @@
       }
       syncUserMessageCollapse(article, message);
     });
-    if (changed && (!keepPosition || nearBottom)) {
-      requestAnimationFrame(scrollToBottom);
+    if (changed) {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (renderEpoch !== messageRenderEpoch) return;
+        if (keepPosition) restoreMessageScrollAnchor(scrollAnchor, renderEpoch);
+        else {
+          scrollToBottom();
+          latestPinned = true;
+        }
+      }));
     }
     const busy = messages.some((message) =>
       message.role === "assistant" &&
@@ -1670,6 +1717,7 @@
   function selectConversation(id) {
     if (!id) return;
     state.activeId = id;
+    latestPinned = true;
     localStorage.setItem("wit_active_conversation", id);
     closeDrawer();
     renderConversations();

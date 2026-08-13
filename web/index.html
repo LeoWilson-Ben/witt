@@ -52,6 +52,7 @@
   <link rel="stylesheet" href="/vault/codex-model-picker.css?v=2.2.9-liquid1">
   <link rel="stylesheet" href="/vault/chat-links.css?v=2.2.9-links1">
   <link rel="stylesheet" href="/vault/completed-turn.css?v=2.2.10-result1">
+  <link rel="stylesheet" href="/vault/drawer-layout.css?v=2.2.11-drawer2">
   <script>
     document.querySelector("#cinematicStylesheet").disabled =
       document.documentElement.dataset.themeMode !== "colorful";
@@ -176,36 +177,46 @@
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
         <span><strong>新建对话</strong><small>开启一个独立上下文</small></span>
       </button>
-      <div class="conversation-list" id="conversationList"></div>
-      <button class="drawer-profile" id="profileButton">
-        <span class="profile-monogram">W</span>
-        <span><strong>我的</strong><small>Token 用量与使用记录</small></span>
-        <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
-      </button>
-      <button class="drawer-profile drawer-admin-entry" id="adminSettingsButton" hidden>
-        <span class="profile-monogram">⌁</span>
-        <span><strong>设备管理</strong><small>邀请码与设备访问控制</small></span>
-        <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
-      </button>
-      <button class="drawer-profile drawer-admin-entry" id="codexAccountsButton" hidden>
-        <span class="profile-monogram">◎</span>
-        <span><strong>Codex 账号</strong><small>默认账号与子账号</small></span>
-        <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
-      </button>
-      <section class="drawer-theme" aria-labelledby="themeTitle">
-        <span>
-          <i aria-hidden="true">◐</i>
-          <b id="themeTitle">外观</b>
-        </span>
-        <div class="theme-options" role="group" aria-label="选择界面主题">
-          <button type="button" data-theme-choice="light">原始白天</button>
-          <button type="button" data-theme-choice="colorful">炫彩</button>
-          <button type="button" data-theme-choice="dark">夜间</button>
+      <section class="drawer-history" aria-labelledby="drawerHistoryTitle">
+        <div class="drawer-history-head">
+          <span id="drawerHistoryTitle">最近对话</span>
+          <b id="conversationCount">0</b>
         </div>
+        <div class="conversation-list" id="conversationList"></div>
       </section>
-      <div class="drawer-footer">
-        <span>Witt <b id="appVersion">v—</b></span>
-        <button id="updateButton">检查更新</button>
+      <div class="drawer-tools">
+        <div class="drawer-utilities">
+          <button class="drawer-profile" id="profileButton">
+            <span class="profile-monogram">W</span>
+            <span><strong>我的</strong><small>用量记录</small></span>
+            <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+          <button class="drawer-profile drawer-admin-entry" id="adminSettingsButton" hidden>
+            <span class="profile-monogram">⌁</span>
+            <span><strong>设备</strong><small>访问控制</small></span>
+            <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+          <button class="drawer-profile drawer-admin-entry" id="codexAccountsButton" hidden>
+            <span class="profile-monogram">◎</span>
+            <span><strong>账号</strong><small>Codex</small></span>
+            <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+        </div>
+        <section class="drawer-theme" aria-labelledby="themeTitle">
+          <span>
+            <i aria-hidden="true">◐</i>
+            <b id="themeTitle">外观</b>
+          </span>
+          <div class="theme-options" role="group" aria-label="选择界面主题">
+            <button type="button" data-theme-choice="light">原始白天</button>
+            <button type="button" data-theme-choice="colorful">炫彩</button>
+            <button type="button" data-theme-choice="dark">夜间</button>
+          </div>
+        </section>
+        <div class="drawer-footer">
+          <span>Witt <b id="appVersion">v—</b></span>
+          <button id="updateButton">检查更新</button>
+        </div>
       </div>
     </div>
   </aside>
@@ -398,6 +409,6 @@
 
   <div class="toast" id="toast"></div>
   <script src="/vault/vendor/katex/katex.min.js?v=0.16.22"></script>
-  <script src="/vault/app.js?v=2.2.10-table1"></script>
+  <script src="/vault/app.js?v=2.2.11-scroll1"></script>
 </body>
 </html>
