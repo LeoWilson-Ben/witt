@@ -50,6 +50,23 @@
   let pollTimer;
   let toastTimer;
   let collapseResizeTimer;
+  let composerResizeObserver;
+
+  function syncComposerInset() {
+    const shell = $(".app-shell");
+    const composer = $(".composer-wrap");
+    if (!shell || !composer) return;
+    const height = Math.ceil(composer.getBoundingClientRect().height);
+    if (height > 0) shell.style.setProperty("--composer-inset", `${height}px`);
+  }
+
+  function watchComposerInset() {
+    syncComposerInset();
+    if (typeof ResizeObserver !== "function") return;
+    composerResizeObserver?.disconnect();
+    composerResizeObserver = new ResizeObserver(syncComposerInset);
+    composerResizeObserver.observe($(".composer-wrap"));
+  }
   function applyTheme(mode, persist = false) {
     const selected = ["light", "colorful", "dark"].includes(mode) ? mode : "colorful";
     const commit = () => {
@@ -73,6 +90,7 @@
   }
 
   applyTheme(localStorage.getItem("wit_theme") || "colorful");
+  requestAnimationFrame(watchComposerInset);
   function escapeHtml(value) {
     const node = document.createElement("span");
     node.textContent = String(value ?? "");

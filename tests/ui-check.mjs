@@ -398,6 +398,32 @@ if ((await page.locator(".message.assistant").count()) === 0) {
   }));
   throw new Error(`Initial conversation did not render: ${JSON.stringify(status)} | ${errors.join(" | ")}`);
 }
+const surfaceMotion = await page.evaluate(() => {
+  const sheetIds = [
+    "projectSheet", "profileSheet", "adminSettingsSheet", "codexAccountSheet",
+    "settingsSheet", "deliverySheet", "actionDetailSheet",
+  ];
+  const sheetDurations = sheetIds.map((id) => {
+    const panel = document.querySelector(`#${id} .sheet-panel`);
+    return { id, duration: Number.parseFloat(getComputedStyle(panel).transitionDuration) };
+  });
+  const overlays = [
+    ["dialog", ".dialog-card"],
+    ["quota", ".quota-confirm-card"],
+    ["image", ".image-viewer-panel"],
+    ["activation", ".auth-gate-card"],
+  ].map(([id, selector]) => {
+    const node = document.querySelector(selector);
+    const style = getComputedStyle(node);
+    return { id, duration: Number.parseFloat(style.transitionDuration), willChange: style.willChange };
+  });
+  return { sheetDurations, overlays };
+});
+if (surfaceMotion.sheetDurations.some(({ duration }) => duration < .4) ||
+    surfaceMotion.overlays.some(({ duration, willChange }) =>
+      duration < .34 || !willChange.includes("transform"))) {
+  throw new Error(`Not every surface uses the smooth motion system: ${JSON.stringify(surfaceMotion)}`);
+}
 const completedProcess = page.locator(".message.assistant .completed-process");
 if ((await completedProcess.count()) !== 1 || await completedProcess.evaluate((node) => node.open)) {
   throw new Error("Completed task process did not collapse by default");
@@ -557,6 +583,37 @@ await page.screenshot({ path: "tests/ui-long-message-mobile.png", fullPage: fals
 await page.locator("#quotaButton").waitFor();
 if (!(await page.locator("#quotaButton").textContent()).includes("96%")) {
   throw new Error("Weekly quota did not render in the conversation header");
+}
+await page.evaluate(() => {
+  const stage = document.querySelector("#chatStage");
+  stage.scrollTop = stage.scrollHeight;
+});
+await page.waitForTimeout(80);
+const bottomSafeArea = await page.evaluate(() => {
+  const shell = document.querySelector(".app-shell");
+  const stage = document.querySelector("#chatStage");
+  const composer = document.querySelector(".composer-wrap");
+  const lastMessage = document.querySelector("#messageList > .message:last-child");
+  const quota = document.querySelector("#quotaButton");
+  const bars = [...quota.querySelectorAll("i")];
+  const quotaRect = quota.getBoundingClientRect();
+  return {
+    composerInset: Number.parseFloat(getComputedStyle(shell).getPropertyValue("--composer-inset")),
+    stagePaddingBottom: Number.parseFloat(getComputedStyle(stage).paddingBottom),
+    lastMessageBottom: lastMessage.getBoundingClientRect().bottom,
+    composerTop: composer.getBoundingClientRect().top,
+    quotaOverflow: quota.scrollWidth - quota.clientWidth,
+    barsInside: bars.every((bar) => {
+      const rect = bar.getBoundingClientRect();
+      return rect.left >= quotaRect.left && rect.right <= quotaRect.right + .5;
+    }),
+  };
+});
+if (bottomSafeArea.composerInset < 80 ||
+    bottomSafeArea.stagePaddingBottom < bottomSafeArea.composerInset + 16 ||
+    bottomSafeArea.lastMessageBottom > bottomSafeArea.composerTop - 8 ||
+    bottomSafeArea.quotaOverflow > 1 || !bottomSafeArea.barsInside) {
+  throw new Error(`Composer safe area or quota capsule overflowed: ${JSON.stringify(bottomSafeArea)}`);
 }
 if ((await page.locator(".stream-message").count()) !== 2) throw new Error("Process messages did not render");
 if (await page.locator(".stream-message").first().evaluate(
@@ -782,7 +839,7 @@ if ((await page.locator("#projectLabel").textContent()) !== "玄遇") {
   throw new Error("Conversation project selector did not update");
 }
 await page.locator("#menuButton").click();
-await page.waitForTimeout(360);
+await page.waitForTimeout(520);
 const drawerLayout = await page.evaluate(() => {
   const panel = document.querySelector(".drawer-panel");
   const history = document.querySelector(".drawer-history");
@@ -798,11 +855,16 @@ const drawerLayout = await page.evaluate(() => {
     toolsTop: tools.getBoundingClientRect().top,
     toolsBottom: tools.getBoundingClientRect().bottom,
     panelBottom: panel.getBoundingClientRect().bottom,
+    transitionDuration: Number.parseFloat(getComputedStyle(panel).transitionDuration),
+    rowAnimation: getComputedStyle(list.querySelector(".conversation-row")).animationName,
+    willChange: getComputedStyle(panel).willChange,
   };
 });
 if (drawerLayout.count !== "19" || !drawerLayout.listScrollable ||
     drawerLayout.historyBottom > drawerLayout.toolsTop + 1 ||
-    drawerLayout.toolsBottom > drawerLayout.panelBottom + 1) {
+    drawerLayout.toolsBottom > drawerLayout.panelBottom + 1 ||
+    drawerLayout.transitionDuration < .4 || drawerLayout.rowAnimation !== "none" ||
+    !drawerLayout.willChange.includes("transform")) {
   throw new Error(`Conversation drawer did not keep an independent history rail: ${JSON.stringify(drawerLayout)}`);
 }
 await page.screenshot({ path: "tests/ui-drawer-history-mobile.png", fullPage: false });

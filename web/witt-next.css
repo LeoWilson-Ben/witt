@@ -280,13 +280,19 @@ summary:focus-visible {
 }
 
 .quota-button {
+  width: 84px;
   height: 42px;
   padding: 5px 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
   border-radius: 15px;
+  overflow: hidden;
 }
 
 .quota-button span {
-  min-width: 31px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .quota-button small {
@@ -300,11 +306,15 @@ summary:focus-visible {
 }
 
 .quota-button i {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   height: 2px;
   background: color-mix(in srgb, var(--muted) 15%, transparent);
 }
 
 .quota-button em {
+  max-width: 100%;
   background: linear-gradient(90deg, var(--mint), var(--accent-2));
 }
 
@@ -331,7 +341,7 @@ summary:focus-visible {
 
 .chat-stage {
   min-height: 0;
-  padding: 0 clamp(15px, 4vw, 34px);
+  padding: 0 clamp(15px, 4vw, 34px) calc(var(--composer-inset, 118px) + 18px);
   scroll-padding: 96px 0 160px;
   scrollbar-width: none;
 }
@@ -509,6 +519,10 @@ summary:focus-visible {
   margin: 0 auto;
   padding: 28px 0 8px;
   gap: 27px;
+}
+
+.bottom-spacer {
+  height: 16px;
 }
 
 .message {
@@ -825,6 +839,28 @@ summary:focus-visible {
   -webkit-backdrop-filter: blur(8px);
 }
 
+.drawer {
+  visibility: hidden;
+  pointer-events: none;
+  transition: visibility 0s linear .48s;
+}
+
+.drawer.open {
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+.drawer .drawer-backdrop {
+  opacity: 0;
+  transition: opacity .32s ease;
+  will-change: opacity;
+}
+
+.drawer.open .drawer-backdrop {
+  opacity: 1;
+}
+
 .drawer-panel {
   width: min(91%, 410px);
   padding: calc(19px + env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom));
@@ -835,7 +871,24 @@ summary:focus-visible {
     radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent-2) 11%, transparent), transparent 29%),
     color-mix(in srgb, var(--surface-solid) 96%, transparent);
   box-shadow: var(--shadow-lg);
-  transition: transform .42s var(--ease-out);
+  transform: translate3d(-104%, 0, 0);
+  transition: transform .48s cubic-bezier(.22, 1, .36, 1);
+  will-change: transform;
+  backface-visibility: hidden;
+  contain: paint;
+}
+
+.drawer.open .drawer-panel {
+  transform: translate3d(0, 0, 0);
+}
+
+.drawer.open .drawer-head,
+.drawer.open .drawer-new,
+.drawer.open .conversation-row,
+.drawer.open .drawer-profile,
+.drawer.open .drawer-theme,
+.drawer.open .drawer-footer {
+  animation: none !important;
 }
 
 .drawer-head {
@@ -1016,8 +1069,43 @@ summary:focus-visible {
 .project-sheet,
 .profile-sheet,
 .delivery-sheet,
-.action-detail-sheet {
+.action-detail-sheet,
+.new-chat-sheet {
   z-index: 35;
+  visibility: hidden;
+  pointer-events: none;
+  transition: visibility 0s linear .46s;
+}
+
+.settings-sheet.open,
+.project-sheet.open,
+.profile-sheet.open,
+.delivery-sheet.open,
+.action-detail-sheet.open,
+.new-chat-sheet.open {
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+.settings-sheet .sheet-backdrop,
+.project-sheet .sheet-backdrop,
+.profile-sheet .sheet-backdrop,
+.delivery-sheet .sheet-backdrop,
+.action-detail-sheet .sheet-backdrop,
+.new-chat-sheet .sheet-backdrop {
+  opacity: 0;
+  transition: opacity .30s ease;
+  will-change: opacity;
+}
+
+.settings-sheet.open .sheet-backdrop,
+.project-sheet.open .sheet-backdrop,
+.profile-sheet.open .sheet-backdrop,
+.delivery-sheet.open .sheet-backdrop,
+.action-detail-sheet.open .sheet-backdrop,
+.new-chat-sheet.open .sheet-backdrop {
+  opacity: 1;
 }
 
 .sheet-panel {
@@ -1032,8 +1120,24 @@ summary:focus-visible {
     radial-gradient(circle at 88% 0%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 30%),
     color-mix(in srgb, var(--surface-solid) 97%, transparent);
   box-shadow: var(--shadow-lg);
-  transition: transform .42s var(--ease-out);
+  opacity: .985;
+  transform: translate3d(-50%, calc(100% + 28px), 0);
+  transition:
+    transform .46s cubic-bezier(.22, 1, .36, 1),
+    opacity .28s ease;
+  backface-visibility: hidden;
+  will-change: transform;
   scrollbar-width: none;
+}
+
+.settings-sheet.open .sheet-panel,
+.project-sheet.open .sheet-panel,
+.profile-sheet.open .sheet-panel,
+.delivery-sheet.open .sheet-panel,
+.action-detail-sheet.open .sheet-panel,
+.new-chat-sheet.open .sheet-panel {
+  opacity: 1;
+  transform: translate3d(-50%, 0, 0);
 }
 
 .sheet-panel::-webkit-scrollbar {
@@ -1410,6 +1514,53 @@ summary:focus-visible {
   box-shadow: var(--shadow-lg);
 }
 
+.dialog-layer,
+.quota-confirm,
+.image-viewer {
+  visibility: hidden;
+  pointer-events: none;
+  transition: visibility 0s linear .38s;
+}
+
+.dialog-layer.open,
+.quota-confirm.open,
+.image-viewer.open {
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+.dialog-layer .dialog-backdrop,
+.quota-confirm .quota-confirm-backdrop,
+.image-viewer .image-viewer-backdrop {
+  opacity: 0;
+  transition: opacity .28s ease;
+  will-change: opacity;
+}
+
+.dialog-layer.open .dialog-backdrop,
+.quota-confirm.open .quota-confirm-backdrop,
+.image-viewer.open .image-viewer-backdrop {
+  opacity: 1;
+}
+
+.dialog-card,
+.quota-confirm-card {
+  opacity: 0;
+  transform: translate3d(0, 16px, 0) scale(.965);
+  transition:
+    transform .38s cubic-bezier(.22, 1, .36, 1),
+    opacity .24s ease;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.dialog-layer.open .dialog-card,
+.quota-confirm.open .quota-confirm-card {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
 .dialog-card h3,
 .quota-confirm-card h3 {
   color: var(--ink);
@@ -1444,10 +1595,19 @@ summary:focus-visible {
 }
 
 .auth-gate {
+  visibility: hidden;
+  pointer-events: none;
   background:
     radial-gradient(circle at 12% 5%, color-mix(in srgb, var(--accent-2) 22%, transparent), transparent 36%),
     radial-gradient(circle at 88% 95%, color-mix(in srgb, var(--mint) 17%, transparent), transparent 36%),
     var(--bg);
+  transition: opacity .34s ease, visibility 0s linear .40s;
+}
+
+.auth-gate.open {
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
 }
 
 .auth-gate-card {
@@ -1457,6 +1617,18 @@ summary:focus-visible {
   background: color-mix(in srgb, var(--surface-raised) 90%, transparent);
   box-shadow: var(--shadow-lg);
   backdrop-filter: var(--glass-blur);
+  opacity: 0;
+  transform: translate3d(0, 14px, 0) scale(.97);
+  transition:
+    transform .40s cubic-bezier(.22, 1, .36, 1),
+    opacity .25s ease;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.auth-gate.open .auth-gate-card {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
 }
 
 .auth-gate-card h1 {
@@ -1521,6 +1693,18 @@ summary:focus-visible {
   border-radius: 26px;
   background: #0c101b;
   box-shadow: 0 40px 120px rgba(0, 0, 0, .64);
+  opacity: 0;
+  transform: translate3d(0, 12px, 0) scale(.955);
+  transition:
+    transform .38s cubic-bezier(.22, 1, .36, 1),
+    opacity .24s ease;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.image-viewer.open .image-viewer-panel {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
 }
 
 .image-viewer-panel footer {
@@ -1708,6 +1892,12 @@ summary:focus-visible {
 
   .identity-copy strong {
     max-width: 30vw;
+  }
+
+  .quota-button {
+    width: 70px;
+    padding-inline: 5px;
+    gap: 4px;
   }
 
   .chat-stage {
