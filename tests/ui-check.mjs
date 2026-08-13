@@ -156,7 +156,8 @@ const installBridge = ({ conversation, now }) => {
         features: [{ name: "multi_agent", enabled: true }],
       })), 10);
     },
-    requestConversation() {
+    requestConversation(id) {
+      window.__requestedConversationId = id;
       setTimeout(() => window.DropVault?.onConversation(JSON.stringify({ conversation })), 30);
     },
     requestConversationDelta() {
@@ -868,6 +869,28 @@ if (drawerLayout.count !== "19" || !drawerLayout.listScrollable ||
   throw new Error(`Conversation drawer did not keep an independent history rail: ${JSON.stringify(drawerLayout)}`);
 }
 await page.screenshot({ path: "tests/ui-drawer-history-mobile.png", fullPage: false });
+await page.evaluate(() => {
+  const stage = document.querySelector("#chatStage");
+  window.__conversationOpenScrolls = [];
+  stage.addEventListener("scroll", () => window.__conversationOpenScrolls.push(stage.scrollTop),
+    { passive: true });
+  stage.scrollTop = 0;
+});
+await page.locator('[data-open="00000000-0000-4000-8000-000000000001"]').click();
+await page.waitForTimeout(120);
+const openedConversationBottomGap = await page.locator("#chatStage").evaluate((stage) =>
+  Math.max(0, stage.scrollHeight - stage.scrollTop - stage.clientHeight));
+if (openedConversationBottomGap > 2) {
+  const openDebug = await page.evaluate(() => ({
+    requestedId: window.__requestedConversationId,
+    scrolls: window.__conversationOpenScrolls,
+    activeRow: document.querySelector(".conversation-row.active")?.dataset.id,
+  }));
+  throw new Error(`Opening a conversation did not show its latest message: ${openedConversationBottomGap} ${JSON.stringify(openDebug)}`);
+}
+await page.waitForTimeout(420);
+await page.locator("#menuButton").click();
+await page.waitForTimeout(520);
 await page.locator('[data-theme-choice="dark"]').click();
 await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
 if ((await page.locator("html").getAttribute("data-theme")) !== "dark") {

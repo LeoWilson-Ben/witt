@@ -1358,10 +1358,24 @@
   let latestPinned = true;
   let lastLandscape = matchMedia("(orientation: landscape)").matches;
   let messageRenderEpoch = 0;
+  let pendingLatestConversationId = "";
+  let conversationOpenEpoch = 0;
 
   function distanceFromBottom() {
     const stage = $("#chatStage");
     return Math.max(0, stage.scrollHeight - stage.scrollTop - stage.clientHeight);
+  }
+
+  function scrollOpenedConversationToLatest(id, clearPending = false) {
+    const epoch = ++conversationOpenEpoch;
+    setTimeout(() => {
+      if (epoch !== conversationOpenEpoch || state.activeId !== id) return;
+      scrollToBottom();
+      latestPinned = true;
+      if (clearPending && pendingLatestConversationId === id) {
+        pendingLatestConversationId = "";
+      }
+    }, 0);
   }
 
   function captureMessageScrollAnchor() {
@@ -1698,12 +1712,15 @@
 
   function selectConversation(id) {
     if (!id) return;
+    const reopeningCurrent = state.active?.id === id;
     state.activeId = id;
     latestPinned = true;
+    pendingLatestConversationId = id;
     localStorage.setItem("wit_active_conversation", id);
     closeDrawer();
     renderConversations();
     setConnected(true, "读取对话中");
+    if (reopeningCurrent) scrollOpenedConversationToLatest(id);
     bridge()?.requestConversation?.(id);
     if (state.supportsSse && state.appVisible) {
       bridge()?.subscribeConversationEvents?.(id);
@@ -1723,6 +1740,9 @@
     updateModelControls();
     setConnected(true, conversation.busy ? "Witt 正在处理" : "服务器在线");
     renderMessages(true);
+    if (pendingLatestConversationId === conversation.id) {
+      scrollOpenedConversationToLatest(conversation.id, true);
+    }
     updateQuotaStatus();
     if (!state.usage) refreshUsage();
     const summary = state.conversations.find((item) => item.id === conversation.id);
@@ -1923,7 +1943,14 @@
       dismissBoot();
       renderConversations();
       if (state.activeId && state.conversations.some((item) => item.id === state.activeId)) {
-        selectConversation(state.activeId);
+        if (!state.active || state.active.id !== state.activeId) {
+          selectConversation(state.activeId);
+        } else {
+          bridge()?.requestConversation?.(state.activeId);
+          if (state.supportsSse && state.appVisible) {
+            bridge()?.subscribeConversationEvents?.(state.activeId);
+          }
+        }
       } else if (state.conversations.length) {
         selectConversation(state.conversations[0].id);
       } else {
