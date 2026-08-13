@@ -335,7 +335,7 @@ const installBridge = ({ conversation, now }) => {
 };
 
 const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
-const cssNames = ["styles.css", "quota.css", "quota-fix.css", "reset-glow.css", "composer-aura.css", "composer-refine.css", "composer-transparency.css", "composer-overlay.css", "composer-spectra.css", "quota-layout.css", "quota-header-restore.css", "quota-confirm.css", "quota-compact.css", "drawer-motion.css", "quota-profile-motion.css", "usage-insight.css", "quota-spacing.css", "usage-ring-fit.css", "auth-gate.css", "approval-card.css", "conversation-type.css", "night-theme.css", "message-collapse.css", "chat-overflow-fix.css", "codex-accounts.css", "formula-code.css", "performance.css", "cinematic-global.css", "landscape.css", "lumora-global.css", "codex-model-picker.css", "chat-links.css", "completed-turn.css", "drawer-layout.css"];
+const cssNames = ["styles.css", "quota.css", "quota-fix.css", "reset-glow.css", "composer-aura.css", "composer-refine.css", "composer-transparency.css", "composer-overlay.css", "composer-spectra.css", "quota-layout.css", "quota-header-restore.css", "quota-confirm.css", "quota-compact.css", "drawer-motion.css", "quota-profile-motion.css", "usage-insight.css", "quota-spacing.css", "usage-ring-fit.css", "auth-gate.css", "approval-card.css", "conversation-type.css", "night-theme.css", "message-collapse.css", "chat-overflow-fix.css", "codex-accounts.css", "formula-code.css", "performance.css", "landscape.css", "lumora-global.css", "codex-model-picker.css", "chat-links.css", "completed-turn.css", "drawer-layout.css", "witt-next.css"];
 const cssFiles = new Map(cssNames.map((name) => [
   name, readFileSync(new URL(`../web/${name}`, import.meta.url), "utf8"),
 ]));
@@ -465,61 +465,28 @@ await page.waitForFunction(() =>
 if ((await page.evaluate(() => window.__contentReadyMode)) !== "colorful") {
   throw new Error("Native system bars were not released with the active theme");
 }
-const cinematicShell = await page.evaluate(() => {
-  const videos = [...document.querySelectorAll(".lumora-video")];
-  const overlay = getComputedStyle(document.querySelector(".cinematic-bottom-blur"));
-  const glass = getComputedStyle(document.querySelector("#menuButton"));
+const nextShell = await page.evaluate(() => {
+  const topbar = getComputedStyle(document.querySelector(".topbar"));
+  const composer = getComputedStyle(document.querySelector(".composer"));
   return {
-    videoCount: videos.length,
-    videosReady: videos.every((video, index) =>
-      video.autoplay === (index === 0) && !video.loop && video.muted && video.playsInline),
-    sources: videos.map((video) => video.querySelector("source")?.src || ""),
-    activeScene: document.querySelector(".lumora-video.active")?.dataset.sceneVideo,
-    mask: overlay.webkitMaskImage || overlay.maskImage,
-    blur: overlay.webkitBackdropFilter || overlay.backdropFilter,
-    glassBackground: glass.backgroundColor,
-    glassBlur: glass.webkitBackdropFilter || glass.backdropFilter,
+    videoCount: document.querySelectorAll("video").length,
+    atmosphereLayers: document.querySelectorAll(".app-atmosphere i").length,
+    topbarRadius: Number.parseFloat(topbar.borderRadius),
+    topbarBlur: topbar.webkitBackdropFilter || topbar.backdropFilter,
+    composerRadius: Number.parseFloat(composer.borderRadius),
+    composerBlur: composer.webkitBackdropFilter || composer.backdropFilter,
     font: getComputedStyle(document.body).fontFamily,
     headingFont: getComputedStyle(document.querySelector(".welcome h1")).fontFamily,
   };
 });
-if (cinematicShell.videoCount !== 3 ||
-    !cinematicShell.videosReady ||
-    cinematicShell.sources.some((source) => !source.includes("cloudfront.net")) ||
-    cinematicShell.activeScene !== "0") {
-  throw new Error(`Cinematic background video was not configured: ${JSON.stringify(cinematicShell)}`);
-}
-if ((await page.locator("[data-scene-index]").count()) !== 0 ||
-    html.includes("Quiet Dawn") ||
-    html.includes("quiet-dawn.mp4")) {
-  throw new Error("Removed nature scene controls or Quiet Dawn were still present");
-}
-if (!cinematicShell.mask.includes("38%") || !cinematicShell.blur.includes("12px")) {
-  throw new Error(`Bottom blur mask was not applied: ${JSON.stringify(cinematicShell)}`);
-}
-if (!cinematicShell.glassBackground.includes("0.01") ||
-    !cinematicShell.glassBlur.includes("4px") ||
-    !cinematicShell.font.includes("Inter") ||
-    !cinematicShell.headingFont.includes("Instrument Serif")) {
-  throw new Error(`Liquid glass system was not applied: ${JSON.stringify(cinematicShell)}`);
-}
-await page.locator('.lumora-video.active').evaluate((video) =>
-  video.dispatchEvent(new Event("ended")));
-if ((await page.locator(".lumora-video.active").getAttribute("data-scene-video")) !== "1") {
-  throw new Error("Scenes did not advance automatically after playback ended");
-}
-await page.locator('.lumora-video.active').evaluate((video) =>
-  video.dispatchEvent(new Event("ended")));
-if ((await page.locator("html").getAttribute("data-scene-tone")) !== "dark") {
-  throw new Error("Deep Woods did not activate the dark content tone");
-}
-await page.locator('.lumora-video.active').evaluate((video) =>
-  video.dispatchEvent(new Event("ended")));
-if ((await page.locator(".lumora-video.active").getAttribute("data-scene-video")) !== "0") {
-  throw new Error("Three scenes did not loop back to Golden Hour");
+if (nextShell.videoCount !== 0 || nextShell.atmosphereLayers !== 3 ||
+    nextShell.topbarRadius < 20 || nextShell.composerRadius < 22 ||
+    !nextShell.topbarBlur.includes("22px") || !nextShell.composerBlur.includes("22px") ||
+    !nextShell.font.includes("SF Pro Display") || nextShell.headingFont !== nextShell.font) {
+  throw new Error(`Witt 3.0 shell was not applied: ${JSON.stringify(nextShell)}`);
 }
 await page.waitForTimeout(80);
-await page.screenshot({ path: "tests/ui-lumora-chat-mobile.png", fullPage: false });
+await page.screenshot({ path: "tests/ui-next-chat-mobile.png", fullPage: false });
 await page.setViewportSize({ width: 844, height: 390 });
 await page.waitForTimeout(140);
 const colorfulHeader = await page.evaluate(() => {
@@ -535,15 +502,15 @@ const colorfulHeader = await page.evaluate(() => {
     menuTop: menu.getBoundingClientRect().top,
   };
 });
-if (colorfulHeader.background !== "rgba(0, 0, 0, 0)" ||
-    colorfulHeader.height > 48 ||
+if (!colorfulHeader.background.includes("0.72") ||
+    colorfulHeader.height > 52 ||
     colorfulHeader.identityWidth > 844 * .43 ||
     colorfulHeader.statusDisplay !== "none" ||
-    colorfulHeader.menuTop < 2 ||
-    colorfulHeader.menuTop > 7) {
+    colorfulHeader.menuTop < 6 ||
+    colorfulHeader.menuTop > 16) {
   throw new Error(`Colorful landscape header remained too large: ${JSON.stringify(colorfulHeader)}`);
 }
-await page.screenshot({ path: "tests/ui-lumora-header-landscape.png", fullPage: false });
+await page.screenshot({ path: "tests/ui-next-header-landscape.png", fullPage: false });
 await page.setViewportSize({ width: 390, height: 844 });
 await page.waitForTimeout(140);
 await page.waitForFunction(() => new Promise((resolve) => {
@@ -671,9 +638,8 @@ if ((await page.locator(".delivery-image").count()) !== 1) {
   throw new Error("Delivered image did not render inline");
 }
 await page.locator(".execution-image img").waitFor();
-if (!(await page.locator(".execution-image img").evaluate((image) => image.naturalWidth > 0))) {
-  throw new Error("Execution image did not load");
-}
+await page.waitForFunction(() =>
+  document.querySelector(".execution-image img")?.naturalWidth > 0);
 await page.locator(".execution-image").click();
 if (!(await page.locator("#imageViewer").evaluate((viewer) => viewer.classList.contains("open")))) {
   throw new Error("Image viewer did not open");
@@ -773,7 +739,7 @@ if ((await page.locator("#reasoningControl").getAttribute("data-level")) !== "hi
   throw new Error("Clickable reasoning rail did not update its visual intensity");
 }
 const modelRailHeight = await page.locator(".model-options").evaluate((node) => node.getBoundingClientRect().height);
-if (modelRailHeight > 90) throw new Error("Model selector is no longer compact");
+if (modelRailHeight > 118) throw new Error("Model selector is no longer compact");
 const reasoningAnimation = await page.locator(".reasoning-liquid-fill").evaluate((node) => getComputedStyle(node).animationName);
 if (!reasoningAnimation.includes("reasoning-spectrum")) {
   throw new Error("Higher reasoning level did not activate the spectrum animation");
@@ -841,6 +807,7 @@ if (drawerLayout.count !== "19" || !drawerLayout.listScrollable ||
 }
 await page.screenshot({ path: "tests/ui-drawer-history-mobile.png", fullPage: false });
 await page.locator('[data-theme-choice="dark"]').click();
+await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
 if ((await page.locator("html").getAttribute("data-theme")) !== "dark") {
   throw new Error("Night theme did not activate");
 }
@@ -858,15 +825,17 @@ await page.screenshot({ path: "tests/ui-night-profile-mobile.png", fullPage: tru
 await page.locator("#closeProfile").click();
 await page.locator("#menuButton").click();
 await page.locator('[data-theme-choice="light"]').click();
+await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
 if ((await page.locator("html").getAttribute("data-theme")) !== "light") {
   throw new Error("Day theme did not restore");
 }
 const originalDay = await page.evaluate(() => ({
-  cinematicDisabled: document.querySelector("#cinematicStylesheet")?.disabled,
-  videoDisplay: getComputedStyle(document.querySelector(".lumora-video-stage")).display,
+  videos: document.querySelectorAll("video").length,
+  cinematicStylesheet: Boolean(document.querySelector("#cinematicStylesheet")),
+  themeColor: document.querySelector("#themeColor")?.content,
 }));
-if (!originalDay.cinematicDisabled || originalDay.videoDisplay !== "none") {
-  throw new Error(`Original day theme still rendered video styling: ${JSON.stringify(originalDay)}`);
+if (originalDay.videos !== 0 || originalDay.cinematicStylesheet || originalDay.themeColor !== "#f3f5f8") {
+  throw new Error(`Day theme retained legacy cinematic resources: ${JSON.stringify(originalDay)}`);
 }
 await page.locator("#profileButton").click();
 await page.locator(".usage-grid").waitFor();
@@ -1011,7 +980,7 @@ const landscapeLayout = await page.evaluate(() => {
 if (!landscapeLayout.landscape ||
     landscapeLayout.shellWidth <= 620 ||
     landscapeLayout.topbarHeight > 52 ||
-    landscapeLayout.fontSize > 12.1 ||
+    landscapeLayout.fontSize > 14.1 ||
     landscapeLayout.overflow ||
     !landscapeLayout.composerVisible ||
     landscapeLayout.bottomGap > 2) {
@@ -1049,6 +1018,24 @@ if ((await page.locator("#projectLabel").textContent()) !== "空白") {
 if ((await page.locator("#welcome").textContent()).includes("项目")) {
   throw new Error("New conversation landing still mentioned a project");
 }
+await page.waitForFunction(() => !document.querySelector("#welcome")?.hidden);
+await page.waitForTimeout(480);
+const welcomeLayout = await page.evaluate(() => {
+  const welcome = document.querySelector("#welcome");
+  const heading = welcome.querySelector("h1");
+  const suggestions = [...welcome.querySelectorAll(".suggestions button")];
+  return {
+    headingSize: Number.parseFloat(getComputedStyle(heading).fontSize),
+    suggestionCount: suggestions.length,
+    minSuggestionHeight: Math.min(...suggestions.map((button) => button.getBoundingClientRect().height)),
+    overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  };
+});
+if (welcomeLayout.headingSize < 32 || welcomeLayout.suggestionCount !== 3 ||
+    welcomeLayout.minSuggestionHeight < 64 || welcomeLayout.overflow) {
+  throw new Error(`Witt 3.0 welcome layout failed: ${JSON.stringify(welcomeLayout)}`);
+}
+await page.screenshot({ path: "tests/ui-next-welcome-mobile.png", fullPage: false });
 await page.locator("#messageInput").fill("新对话首次发送测试");
 await page.locator("#sendButton").click();
 if ((await page.evaluate(() => window.__createdConversationArgs.accessMode)) !== "workspace-write") {

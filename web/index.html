@@ -14,10 +14,6 @@
   </script>
   <title>Witt · 私人服务器助手</title>
   <link rel="icon" href="/vault/icon.svg">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/vault/styles.css?v=2.2.4-boot1">
   <link rel="stylesheet" href="/vault/quota.css?v=2.1.12-quota1">
   <link rel="stylesheet" href="/vault/quota-fix.css?v=2.1.12-quota1">
@@ -46,42 +42,16 @@
   <link rel="stylesheet" href="/vault/formula-code.css?v=2.2.10-table1">
   <link rel="stylesheet" href="/vault/codex-accounts.css?v=2.2.9-layout2">
   <link rel="stylesheet" href="/vault/performance.css?v=2.2.8-power1">
-  <link rel="stylesheet" id="cinematicStylesheet" href="/vault/cinematic-global.css?v=2.2.0-cinema1">
   <link rel="stylesheet" href="/vault/landscape.css?v=2.2.5-landscape3">
   <link rel="stylesheet" href="/vault/lumora-global.css?v=2.2.6-perf1">
   <link rel="stylesheet" href="/vault/codex-model-picker.css?v=2.2.9-liquid1">
   <link rel="stylesheet" href="/vault/chat-links.css?v=2.2.9-links1">
   <link rel="stylesheet" href="/vault/completed-turn.css?v=2.2.10-result1">
   <link rel="stylesheet" href="/vault/drawer-layout.css?v=2.2.11-drawer2">
-  <script>
-    document.querySelector("#cinematicStylesheet").disabled =
-      document.documentElement.dataset.themeMode !== "colorful";
-  </script>
+  <link rel="stylesheet" href="/vault/witt-next.css?v=3.0.0-system1">
 </head>
 <body>
-  <div class="lumora-video-stage" aria-hidden="true">
-    <video class="lumora-video active" data-scene-video="0" autoplay muted playsinline preload="auto">
-      <source data-local-src="https://appassets.androidplatform.net/assets/lumora/golden-hour.mp4" data-remote-src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260702_081127_0992a171-d3c6-4978-8213-0ec5df8b6d63.mp4" type="video/mp4">
-    </video>
-    <video class="lumora-video" data-scene-video="1" muted playsinline preload="metadata">
-      <source data-local-src="https://appassets.androidplatform.net/assets/lumora/still-water.mp4" data-remote-src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260702_092026_dd05b805-ea0f-40b2-8c52-332b88502592.mp4" type="video/mp4">
-    </video>
-    <video class="lumora-video" data-scene-video="2" muted playsinline preload="metadata">
-      <source data-local-src="https://appassets.androidplatform.net/assets/lumora/deep-woods.mp4" data-remote-src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260702_081042_df7202bf-bd80-4b2b-bbc6-1f09ba2870e9.mp4" type="video/mp4">
-    </video>
-  </div>
-  <img class="lumora-foreground" data-local-src="https://appassets.androidplatform.net/assets/lumora/foreground.png" data-remote-src="https://soft-zoom-63098134.figma.site/_assets/v11/0b4a435b2df2747593c43d7a1c9b4578f7d8d90c.png" alt="" aria-hidden="true">
-  <script>
-    (() => {
-      const bundled = new URLSearchParams(location.search).has("app");
-      document.querySelectorAll(".lumora-video source").forEach((source) => {
-        source.src = bundled ? source.dataset.localSrc : source.dataset.remoteSrc;
-      });
-      const foreground = document.querySelector(".lumora-foreground");
-      foreground.src = bundled ? foreground.dataset.localSrc : foreground.dataset.remoteSrc;
-    })();
-  </script>
-  <div class="cinematic-bottom-blur" aria-hidden="true"></div>
+  <div class="app-atmosphere" aria-hidden="true"><i></i><i></i><i></i></div>
   <div class="boot-screen" id="bootScreen" aria-label="Witt 正在启动">
     <div class="boot-wordmark">Witt<span>.</span></div>
     <p>PRIVATE SERVER CODEX</p>
@@ -125,14 +95,14 @@
 
     <main class="chat-stage" id="chatStage">
       <section class="welcome" id="welcome">
-        <div class="welcome-mark animate-blur-fade-up" style="animation-delay:100ms" aria-hidden="true"><span>W</span><i></i><b>PRIVATE</b></div>
-        <span class="lumora-badge liquid-glass animate-blur-fade-up" style="animation-delay:200ms">你的专注，只属于这一刻</span>
-        <h1 class="animate-blur-fade-up" style="animation-delay:300ms">在无尽喧嚣中<br><em>保持清醒</em></h1>
-        <p class="animate-blur-fade-up" style="animation-delay:400ms">Witt 在你的私人服务器上，为你隔开杂音、处理复杂任务，并守住每一次专注。</p>
+        <div class="welcome-mark animate-blur-fade-up" style="animation-delay:100ms" aria-hidden="true"><span>W</span><i></i><b>SERVER NATIVE</b></div>
+        <span class="lumora-badge liquid-glass animate-blur-fade-up" style="animation-delay:160ms"><i></i>你的私人 Codex 已就绪</span>
+        <h1 class="animate-blur-fade-up" style="animation-delay:220ms">把复杂交给 Witt<br><em>你只决定方向</em></h1>
+        <p class="animate-blur-fade-up" style="animation-delay:280ms">在你的服务器上持续工作、调用工具、整理结果。上下文、文件和执行过程始终归你所有。</p>
         <div class="suggestions">
-          <button data-prompt="我有一个新任务，先帮我梳理目标和下一步。"><b>开始一个新任务</b><small>梳理目标并安排下一步</small></button>
-          <button data-prompt="查看我接下来发送的文件，先分析内容，不要修改任何数据。"><b>分析一个文件</b><small>支持表格、图片和文档</small></button>
-          <button data-prompt="检查服务器当前状态，先告诉我是否有异常。"><b>检查服务器状态</b><small>查看服务、资源和异常</small></button>
+          <button data-prompt="我有一个新任务，先帮我梳理目标和下一步。"><span>01</span><b>开始新任务</b><small>从目标到交付，完整推进</small><i>↗</i></button>
+          <button data-prompt="查看我接下来发送的文件，先分析内容，不要修改任何数据。"><span>02</span><b>分析文件</b><small>表格、图片与文档</small><i>↗</i></button>
+          <button data-prompt="检查服务器当前状态，先告诉我是否有异常。"><span>03</span><b>检查服务器</b><small>服务、资源与异常</small><i>↗</i></button>
         </div>
       </section>
       <section class="messages" id="messageList" aria-live="polite"></section>
@@ -409,6 +379,6 @@
 
   <div class="toast" id="toast"></div>
   <script src="/vault/vendor/katex/katex.min.js?v=0.16.22"></script>
-  <script src="/vault/app.js?v=2.2.11-scroll1"></script>
+  <script src="/vault/app.js?v=3.0.0-ui1"></script>
 </body>
 </html>

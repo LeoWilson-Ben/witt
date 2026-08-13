@@ -38,9 +38,6 @@
     admin: false,
     bootstrapClaiming: false,
     expandedMessages: new Set(),
-    activeScene: Math.min(2, Math.max(0,
-      Number.parseInt(localStorage.getItem("wit_scene") || "0", 10) || 0)),
-    sceneTransitioning: false,
     cacheScope: "",
     cacheHydrated: false,
     codexAccounts: [],
@@ -55,59 +52,27 @@
   let collapseResizeTimer;
   function applyTheme(mode, persist = false) {
     const selected = ["light", "colorful", "dark"].includes(mode) ? mode : "colorful";
-    const resolved = selected;
-    document.documentElement.dataset.themeMode = selected;
-    document.documentElement.dataset.theme = resolved;
-    if (persist) localStorage.setItem("wit_theme", selected);
-    const cinematicStylesheet = $("#cinematicStylesheet");
-    if (cinematicStylesheet) cinematicStylesheet.disabled = selected !== "colorful";
-    $("#themeColor")?.setAttribute("content",
-      resolved === "light" ? "#f7f8fc" : resolved === "dark" ? "#08111f" : "#000000");
-    document.querySelectorAll("[data-scene-video]").forEach((video) => {
-      const active = Number(video.dataset.sceneVideo) === state.activeScene;
-      if (state.appVisible && selected === "colorful" && active) video.play().catch(() => {});
-      else video.pause();
-    });
-    document.querySelectorAll("[data-theme-choice]").forEach((button) => {
-      const active = button.dataset.themeChoice === selected;
-      button.classList.toggle("active", active);
-      button.setAttribute("aria-pressed", String(active));
-    });
-  }
-
-  function setScene(index, force = false) {
-    const target = Number(index);
-    if (!Number.isInteger(target) || target < 0 || target > 2) return;
-    if (!force && (state.sceneTransitioning || target === state.activeScene)) return;
-    state.activeScene = target;
-    localStorage.setItem("wit_scene", String(target));
-    document.documentElement.dataset.sceneTone = target === 2 ? "dark" : "light";
-    document.querySelectorAll("[data-scene-video]").forEach((video) => {
-      const active = Number(video.dataset.sceneVideo) === target;
-      video.classList.toggle("active", active);
-      if (state.appVisible && active && document.documentElement.dataset.themeMode === "colorful") {
-        if (video.currentTime > .05 || video.ended) video.currentTime = 0;
-        video.play().catch(() => {});
-      } else {
-        video.pause();
-      }
-    });
-    if (!force) {
-      state.sceneTransitioning = true;
-      setTimeout(() => { state.sceneTransitioning = false; }, 1000);
+    const commit = () => {
+      document.documentElement.dataset.themeMode = selected;
+      document.documentElement.dataset.theme = selected;
+      if (persist) localStorage.setItem("wit_theme", selected);
+      $("#themeColor")?.setAttribute("content",
+        selected === "light" ? "#f3f5f8" : selected === "dark" ? "#090d18" : "#121225");
+      document.querySelectorAll("[data-theme-choice]").forEach((button) => {
+        const active = button.dataset.themeChoice === selected;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+    };
+    const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (persist && document.startViewTransition && !reducedMotion) {
+      document.startViewTransition(commit);
+    } else {
+      commit();
     }
   }
 
   applyTheme(localStorage.getItem("wit_theme") || "colorful");
-  setScene(state.activeScene, true);
-  document.querySelectorAll("[data-scene-video]").forEach((video) => {
-    video.addEventListener("ended", () => {
-      const index = Number(video.dataset.sceneVideo);
-      if (document.documentElement.dataset.themeMode !== "colorful" ||
-          index !== state.activeScene) return;
-      setScene((index + 1) % 3, true);
-    });
-  });
   function escapeHtml(value) {
     const node = document.createElement("span");
     node.textContent = String(value ?? "");
@@ -1663,7 +1628,6 @@
     clearTimeout(pollTimer);
     if (!state.appVisible) {
       if (state.supportsSse) bridge()?.unsubscribeConversationEvents?.();
-      document.querySelectorAll("[data-scene-video]").forEach((video) => video.pause());
       return;
     }
     applyTheme(document.documentElement.dataset.themeMode || "light");
