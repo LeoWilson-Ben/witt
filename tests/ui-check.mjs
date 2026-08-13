@@ -813,7 +813,75 @@ if (reasoningHitHeight < 40) {
 if ((await page.locator(".app-server-metrics > div").count()) !== 4) {
   throw new Error("App Server runtime dashboard did not render four live metrics");
 }
+const settingsVisual = await page.evaluate(() => {
+  const footer = document.querySelector(".settings-apply-bar").getBoundingClientRect();
+  const panel = getComputedStyle(document.querySelector(".settings-panel"));
+  const runtime = getComputedStyle(document.querySelector(".app-server-capabilities"));
+  const metric = getComputedStyle(document.querySelector(".app-server-metrics strong"));
+  const action = getComputedStyle(document.querySelector(".app-server-actions strong"));
+  return {
+    footerTop: footer.top,
+    footerBottom: footer.bottom,
+    viewportHeight: innerHeight,
+    panelOverflow: panel.overflowY,
+    runtimeBackground: runtime.backgroundImage,
+    metricColor: metric.color,
+    actionColor: action.color,
+  };
+});
+if (settingsVisual.footerTop < 0 || settingsVisual.footerBottom > settingsVisual.viewportHeight + 1) {
+  throw new Error(`Settings action bar is not fixed inside the visible sheet: ${JSON.stringify(settingsVisual)}`);
+}
+if (settingsVisual.panelOverflow !== "hidden" || !settingsVisual.runtimeBackground.includes("linear-gradient")) {
+  throw new Error(`Settings sheet did not use the new scrolling and runtime surfaces: ${JSON.stringify(settingsVisual)}`);
+}
+if (!settingsVisual.metricColor.includes("248") || !settingsVisual.actionColor.includes("248")) {
+  throw new Error(`Runtime text lost contrast: ${JSON.stringify(settingsVisual)}`);
+}
 await page.screenshot({ path: "tests/ui-settings-mobile.png", fullPage: true });
+await page.evaluate(() => {
+  document.documentElement.dataset.theme = "light";
+  document.documentElement.dataset.themeMode = "light";
+});
+await page.waitForTimeout(520);
+const lightSettingsVisual = await page.evaluate(() => ({
+  metricColor: getComputedStyle(document.querySelector(".app-server-metrics strong")).color,
+  actionColor: getComputedStyle(document.querySelector(".app-server-actions strong")).color,
+  selectedModelColor: getComputedStyle(document.querySelector(".model-options > button.selected strong")).color,
+}));
+if (!lightSettingsVisual.metricColor.includes("248") ||
+    !lightSettingsVisual.actionColor.includes("248") ||
+    lightSettingsVisual.selectedModelColor.includes("255, 255, 255")) {
+  throw new Error(`Day settings text is not readable: ${JSON.stringify(lightSettingsVisual)}`);
+}
+await page.screenshot({ path: "tests/ui-settings-light-mobile.png", fullPage: true });
+await page.locator(".settings-scroll").evaluate((node) => { node.scrollTop = node.scrollHeight; });
+await page.waitForTimeout(80);
+const settingsBottomLayout = await page.evaluate(() => {
+  const lastAction = document.querySelector(".app-server-actions button:last-child").getBoundingClientRect();
+  const footer = document.querySelector(".settings-apply-bar").getBoundingClientRect();
+  const header = document.querySelector(".settings-panel > .sheet-head").getBoundingClientRect();
+  return {
+    lastActionBottom: lastAction.bottom,
+    footerTop: footer.top,
+    footerBottom: footer.bottom,
+    headerTop: header.top,
+    viewportHeight: innerHeight,
+    label: document.querySelector(".app-server-actions button:last-child strong")?.textContent,
+    detail: document.querySelector(".app-server-actions button:last-child small")?.textContent,
+  };
+});
+if (settingsBottomLayout.lastActionBottom > settingsBottomLayout.footerTop + 1 ||
+    settingsBottomLayout.headerTop < 0 || settingsBottomLayout.footerBottom > settingsBottomLayout.viewportHeight + 1 ||
+    !settingsBottomLayout.label || !settingsBottomLayout.detail) {
+  throw new Error(`Settings content cannot scroll fully above the action bar: ${JSON.stringify(settingsBottomLayout)}`);
+}
+await page.screenshot({ path: "tests/ui-settings-bottom-light-mobile.png", fullPage: true });
+await page.locator(".settings-scroll").evaluate((node) => { node.scrollTop = 0; });
+await page.evaluate(() => {
+  document.documentElement.dataset.theme = "colorful";
+  document.documentElement.dataset.themeMode = "colorful";
+});
 await page.locator('#reasoningSegments [data-reasoning="ultra"]').click();
 if ((await page.locator("#reasoningControl").getAttribute("data-intensity")) !== "5") {
   throw new Error("Ultra reasoning did not activate maximum visual intensity");

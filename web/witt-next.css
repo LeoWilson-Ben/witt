@@ -1947,3 +1947,258 @@ summary:focus-visible {
   from { opacity: 0; transform: translateY(8px) scale(.995); }
   to { opacity: 1; transform: none; }
 }
+
+/* Settings sheet: compact controls, independent scrolling and a visible action bar. */
+.settings-panel {
+  max-height: min(94dvh, 900px);
+  padding-bottom: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.settings-panel > .sheet-handle {
+  margin-bottom: 8px;
+}
+
+.settings-panel > .sheet-head {
+  position: relative;
+  top: auto;
+  margin: 0;
+  padding: 2px 0 14px;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+.settings-panel > .sheet-head h2 {
+  margin-top: 3px;
+  font-size: clamp(22px, 6vw, 29px);
+}
+
+.settings-scroll {
+  min-height: 0;
+  padding: 0 2px 22px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.settings-scroll::-webkit-scrollbar { display: none; }
+.settings-panel .settings-scroll > section { margin-top: 18px; }
+.settings-panel .settings-scroll > section:first-child { margin-top: 8px; }
+
+.settings-panel .settings-section-head {
+  margin-bottom: 9px;
+}
+
+.settings-panel .model-options {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+
+.settings-panel .model-options > button {
+  position: relative;
+  min-width: 0;
+  min-height: 84px;
+  padding: 11px 9px;
+  display: grid;
+  grid-template-columns: 31px minmax(0, 1fr);
+  align-content: center;
+  align-items: center;
+  justify-content: stretch;
+  gap: 8px;
+  border-radius: 18px;
+  text-align: left;
+}
+
+.settings-panel .model-options .model-glyph {
+  width: 31px;
+  height: 31px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.settings-panel .model-options .model-glyph.terra {
+  background: linear-gradient(145deg, #168ca5, #1ca37f);
+}
+
+.settings-panel .model-options .model-glyph.luna {
+  background: linear-gradient(145deg, #69728b, #9299ad);
+}
+
+.settings-panel .model-options > button > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.settings-panel .model-options strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 10px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-panel .model-options small,
+.settings-panel .model-options em {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 6.5px;
+  font-style: normal;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+}
+
+.settings-panel .model-options em {
+  color: color-mix(in srgb, var(--accent-2) 70%, var(--muted));
+  font-size: 6px;
+}
+
+.settings-panel .model-options > button > i {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 12px;
+  height: 12px;
+  display: block;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.settings-panel .model-options > button.selected > i {
+  border: 4px solid var(--accent-2);
+}
+
+.settings-panel .model-options > button.selected strong {
+  color: #182033;
+}
+
+.settings-panel .model-options > button.selected small {
+  color: #68758b;
+}
+
+.settings-panel .model-options > button.selected em {
+  color: #426cc8;
+}
+
+.settings-panel .reasoning-console {
+  padding: 12px;
+  border-radius: 19px;
+}
+
+.settings-panel .reasoning-readout { margin-bottom: 8px; }
+.settings-panel .reasoning-liquid { height: 42px; }
+.settings-panel .reasoning-liquid-hitbox button { min-height: 42px; }
+.settings-panel .reasoning-stops { margin-top: 6px; }
+.settings-panel .reasoning-description { margin-top: 8px; min-height: 0; }
+.settings-panel .reasoning-note { margin-top: 7px; }
+
+.settings-panel .access-options {
+  gap: 7px;
+}
+
+.settings-panel .access-options button {
+  min-height: 76px;
+  padding: 10px 9px;
+  border-radius: 17px;
+}
+
+.settings-panel .app-server-capabilities {
+  margin-top: 18px;
+  padding: 14px;
+  border-color: rgba(255, 255, 255, .1);
+  border-radius: 21px;
+  color: #f5f7fc;
+  background:
+    radial-gradient(circle at 88% 0, rgba(77, 129, 255, .22), transparent 36%),
+    linear-gradient(145deg, #171c29, #0b1018 70%);
+  box-shadow: 0 16px 36px rgba(12, 19, 34, .18), inset 0 1px 0 rgba(255, 255, 255, .07);
+}
+
+.settings-panel .app-server-heading h3,
+.settings-panel .app-server-metrics strong,
+.settings-panel .app-server-actions strong {
+  color: #f8faff;
+}
+
+.settings-panel .app-server-actions button {
+  color: #f5f7fc;
+  background: rgba(255, 255, 255, .04);
+  border-color: rgba(255, 255, 255, .08);
+}
+
+.settings-panel .app-server-actions small,
+.settings-panel .app-server-metrics small,
+.settings-panel .app-server-sync,
+.settings-panel .app-server-sync small {
+  color: #8e9bb0;
+}
+
+.settings-apply-bar {
+  position: relative;
+  z-index: 5;
+  margin: 0 calc(-1 * clamp(16px, 4vw, 28px));
+  padding: 10px clamp(16px, 4vw, 28px) calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-solid) 94%, transparent);
+  box-shadow: 0 -12px 30px color-mix(in srgb, var(--bg-deep) 8%, transparent);
+  backdrop-filter: blur(18px) saturate(1.15);
+}
+
+.settings-apply-bar .save-settings {
+  height: 52px;
+  min-height: 52px;
+  margin: 0;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+}
+
+.settings-apply-bar .save-settings span {
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.settings-apply-bar .save-settings i {
+  color: rgba(255, 255, 255, .72);
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 550;
+}
+
+@media (max-width: 430px) {
+  .settings-panel .model-options > button {
+    min-height: 88px;
+    padding: 9px 7px;
+    grid-template-columns: 27px minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .settings-panel .model-options .model-glyph {
+    width: 27px;
+    height: 27px;
+    border-radius: 9px;
+  }
+
+  .settings-panel .model-options small { font-size: 6px; }
+}

@@ -459,6 +459,12 @@
     "gpt-5.6-luna": "Luna",
   };
 
+  const modelDescriptions = {
+    "gpt-5.6-sol": "复杂任务 · 深度推理",
+    "gpt-5.6-terra": "日常工作 · 均衡全能",
+    "gpt-5.6-luna": "快速响应 · 轻量任务",
+  };
+
   const reasoningMeta = {
     low: { label: "快速", code: "LOW", description: "轻量响应，适合明确、直接和低复杂度的任务。", intensity: 0 },
     medium: { label: "均衡", code: "MEDIUM", description: "适合大多数任务，在速度与分析深度之间取得平衡。", intensity: 1 },
@@ -543,11 +549,13 @@
       });
       $(".model-options").innerHTML = models.map((model) => {
         const name = model.displayName || model.id;
-        const glyph = name.replace(/^GPT[- ]?/i, "").slice(0, 1).toUpperCase() || "✦";
-        const efforts = (model.reasoningEfforts || []).map((effort) => effort.id).join(" · ");
+        const shortName = modelNames[model.id] || name;
+        const glyph = shortName.slice(0, 1).toUpperCase() || "✦";
+        const efforts = (model.reasoningEfforts || []).length;
+        const description = modelDescriptions[model.id] || "由 App Server 动态提供";
         const selectedClass = model.id === (state.draftModel || state.model) ? "selected" : "";
         const selected = Boolean(selectedClass);
-        return `<button type="button" class="${selectedClass}" data-model="${escapeHtml(model.id)}" role="radio" aria-checked="${selected}"><span class="model-glyph sol">${escapeHtml(glyph)}</span><span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(efforts || "App Server")}</small></span><i></i></button>`;
+        return `<button type="button" class="${selectedClass}" data-model="${escapeHtml(model.id)}" role="radio" aria-checked="${selected}"><span class="model-glyph ${escapeHtml(shortName.toLowerCase())}">${escapeHtml(glyph)}</span><span><strong>${escapeHtml(shortName)}</strong><small>${escapeHtml(description)}</small><em>${efforts || 4} 档智能程度</em></span><i></i></button>`;
       }).join("");
     }
     renderReasoningControl();
