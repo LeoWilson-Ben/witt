@@ -18,8 +18,9 @@ Witt is a self-hosted mobile client for Codex. It combines a dependency-light No
 - 连续 Codex 会话、历史记录和本地缓存
 - App Server 动态模型目录及 Low 到 Ultra 推理强度
 - 实时展示计划、命令、文件修改、MCP、审批和最终答复
+- Claude 风格 Artifact 工作区，支持完整 HTML 快照的增量预览、版本切换和源码查看
 - 对话分支、上下文压缩和代码审查
-- 图片、文档及大文件附件上传，生成图片和交付文件下载
+- 图片、文档及大文件附件上传，生成图片、交付文件下载和隔离式交互预览
 - 邀请码激活、独立设备凭据、设备停用和管理员能力
 - 默认账号与子账号隔离，会话、项目和额度互不混用
 - SQLite 持久化、WAL、定时备份及 JSON 旧数据迁移

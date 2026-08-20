@@ -87,6 +87,12 @@ const conversation = {
         name: "交付预览.png",
         size: 68,
         mimeType: "image/png",
+      }, {
+        id: "00000000-0000-4000-8000-000000000097",
+        name: "任务流程.html",
+        size: 256,
+        mimeType: "text/html",
+        previewToken: "artifact-preview-test-token-000001",
       }],
     },
   ],
@@ -336,7 +342,7 @@ const installBridge = ({ conversation, now }) => {
 };
 
 const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
-const cssNames = ["styles.css", "quota.css", "quota-fix.css", "reset-glow.css", "composer-aura.css", "composer-refine.css", "composer-transparency.css", "composer-overlay.css", "composer-spectra.css", "quota-layout.css", "quota-header-restore.css", "quota-confirm.css", "quota-compact.css", "drawer-motion.css", "quota-profile-motion.css", "usage-insight.css", "quota-spacing.css", "usage-ring-fit.css", "auth-gate.css", "approval-card.css", "conversation-type.css", "night-theme.css", "message-collapse.css", "chat-overflow-fix.css", "codex-accounts.css", "formula-code.css", "performance.css", "landscape.css", "lumora-global.css", "codex-model-picker.css", "chat-links.css", "completed-turn.css", "drawer-layout.css", "witt-next.css"];
+const cssNames = ["styles.css", "quota.css", "quota-fix.css", "reset-glow.css", "composer-aura.css", "composer-refine.css", "composer-transparency.css", "composer-overlay.css", "composer-spectra.css", "quota-layout.css", "quota-header-restore.css", "quota-confirm.css", "quota-compact.css", "drawer-motion.css", "quota-profile-motion.css", "usage-insight.css", "quota-spacing.css", "usage-ring-fit.css", "auth-gate.css", "approval-card.css", "conversation-type.css", "night-theme.css", "message-collapse.css", "chat-overflow-fix.css", "codex-accounts.css", "formula-code.css", "performance.css", "landscape.css", "lumora-global.css", "codex-model-picker.css", "chat-links.css", "completed-turn.css", "drawer-layout.css", "witt-next.css", "artifact-preview.css", "claude-app.css"];
 const cssFiles = new Map(cssNames.map((name) => [
   name, readFileSync(new URL(`../web/${name}`, import.meta.url), "utf8"),
 ]));
@@ -362,6 +368,10 @@ await page.route("**/vault-api/chat-images/**", async (route) => {
   );
   return route.fulfill({ contentType: "image/png", body: image });
 });
+await page.route("**/vault-api/chat/artifact-previews/**", (route) =>
+  route.fulfill({ contentType: "text/html", body: "<!doctype html><html><body><h1>Artifact ready</h1></body></html>" }));
+await page.route("**/vault-api/chat/artifact-sources/**", (route) =>
+  route.fulfill({ contentType: "text/html", body: "<!doctype html><html><body><h1>Artifact ready</h1></body></html>" }));
 await page.route("**/*.mp4", (route) => route.fulfill({ status: 204 }));
 await page.route("**/0b4a435b2df2747593c43d7a1c9b4578f7d8d90c.png",
   (route) => route.fulfill({ status: 204 }));
@@ -399,6 +409,19 @@ if ((await page.locator(".message.assistant").count()) === 0) {
   }));
   throw new Error(`Initial conversation did not render: ${JSON.stringify(status)} | ${errors.join(" | ")}`);
 }
+const artifactHandoff = page.locator(".message.assistant .artifact-handoff");
+if ((await artifactHandoff.count()) !== 1) {
+  throw new Error("HTML deliverable did not render as an Artifact handoff");
+}
+await artifactHandoff.click();
+await page.waitForFunction(() => document.body.classList.contains("artifact-open"));
+if (!(await page.locator("#artifactFrame").getAttribute("src"))?.includes("artifact-preview-test-token")) {
+  throw new Error("Artifact workspace did not load the isolated preview URL");
+}
+await page.locator("#artifactCodeTab").click();
+await page.waitForFunction(() => document.querySelector("#artifactCode code")?.textContent.includes("Artifact ready"));
+await page.locator("#artifactClose").click();
+await page.waitForFunction(() => !document.body.classList.contains("artifact-open"));
 const surfaceMotion = await page.evaluate(() => {
   const sheetIds = [
     "projectSheet", "profileSheet", "adminSettingsSheet", "codexAccountSheet",
@@ -489,11 +512,11 @@ await page.waitForFunction(() => window.__clickedChatLink.includes("github.com/L
 await page.locator(".message.assistant [data-copy-code]").click();
 await page.waitForFunction(() =>
   document.querySelector(".message.assistant [data-copy-code]")?.textContent === "已复制");
-if ((await page.evaluate(() => window.__contentReadyMode)) !== "colorful") {
+if ((await page.evaluate(() => window.__contentReadyMode)) !== "light") {
   throw new Error("Native system bars were not released with the active theme");
 }
 const nextShell = await page.evaluate(() => {
-  const topbar = getComputedStyle(document.querySelector(".topbar"));
+  const topbar = getComputedStyle(document.querySelector(".compact-nav-button"));
   const composer = getComputedStyle(document.querySelector(".composer"));
   return {
     videoCount: document.querySelectorAll("video").length,
@@ -507,35 +530,32 @@ const nextShell = await page.evaluate(() => {
   };
 });
 if (nextShell.videoCount !== 0 || nextShell.atmosphereLayers !== 3 ||
-    nextShell.topbarRadius < 20 || nextShell.composerRadius < 22 ||
-    !nextShell.topbarBlur.includes("22px") || !nextShell.composerBlur.includes("22px") ||
-    !nextShell.font.includes("SF Pro Display") || nextShell.headingFont !== nextShell.font) {
-  throw new Error(`Witt 3.0 shell was not applied: ${JSON.stringify(nextShell)}`);
+    nextShell.topbarRadius < 10 || nextShell.composerRadius < 16 ||
+    !nextShell.topbarBlur.includes("12px") || nextShell.composerBlur !== "none" ||
+    !nextShell.font.includes("OpenAI Sans") || !nextShell.headingFont.includes("Georgia")) {
+  throw new Error(`Claude workspace shell was not applied: ${JSON.stringify(nextShell)}`);
 }
 await page.waitForTimeout(80);
 await page.screenshot({ path: "tests/ui-next-chat-mobile.png", fullPage: false });
 await page.setViewportSize({ width: 844, height: 390 });
 await page.waitForTimeout(140);
-const colorfulHeader = await page.evaluate(() => {
-  const topbar = document.querySelector(".topbar");
-  const identity = document.querySelector(".identity");
-  const status = document.querySelector(".identity-copy small");
+const compactHeader = await page.evaluate(() => {
+  const topbar = document.querySelector(".compact-nav");
+  const actions = document.querySelector(".compact-nav-actions");
   const menu = document.querySelector("#menuButton");
   return {
     background: getComputedStyle(topbar).backgroundColor,
     height: topbar.getBoundingClientRect().height,
-    identityWidth: identity.getBoundingClientRect().width,
-    statusDisplay: getComputedStyle(status).display,
+    actionsWidth: actions.getBoundingClientRect().width,
     menuTop: menu.getBoundingClientRect().top,
   };
 });
-if (!colorfulHeader.background.includes("0.72") ||
-    colorfulHeader.height > 52 ||
-    colorfulHeader.identityWidth > 844 * .43 ||
-    colorfulHeader.statusDisplay !== "none" ||
-    colorfulHeader.menuTop < 6 ||
-    colorfulHeader.menuTop > 16) {
-  throw new Error(`Colorful landscape header remained too large: ${JSON.stringify(colorfulHeader)}`);
+if (compactHeader.background !== "rgba(0, 0, 0, 0)" ||
+    compactHeader.height > 68 ||
+    compactHeader.actionsWidth > 110 ||
+    compactHeader.menuTop < 6 ||
+    compactHeader.menuTop > 24) {
+  throw new Error(`Compact landscape header is invalid: ${JSON.stringify(compactHeader)}`);
 }
 await page.screenshot({ path: "tests/ui-next-header-landscape.png", fullPage: false });
 await page.setViewportSize({ width: 390, height: 844 });
@@ -582,8 +602,8 @@ if (await longUserMessage.evaluate((node) => node.classList.contains("expanded")
 await longUserMessage.scrollIntoViewIfNeeded();
 await page.screenshot({ path: "tests/ui-long-message-mobile.png", fullPage: false });
 await page.locator("#quotaButton").waitFor();
-if (!(await page.locator("#quotaButton").textContent()).includes("96%")) {
-  throw new Error("Weekly quota did not render in the conversation header");
+if (!(await page.locator("#quotaButton").textContent()).includes("4%")) {
+  throw new Error("Weekly quota did not render in the conversation menu");
 }
 await page.evaluate(() => {
   const stage = document.querySelector("#chatStage");
@@ -614,7 +634,7 @@ if (bottomSafeArea.composerInset < 80 ||
     bottomSafeArea.stagePaddingBottom < bottomSafeArea.composerInset + 16 ||
     bottomSafeArea.lastMessageBottom > bottomSafeArea.composerTop - 8 ||
     bottomSafeArea.quotaOverflow > 1 || !bottomSafeArea.barsInside) {
-  throw new Error(`Composer safe area or quota capsule overflowed: ${JSON.stringify(bottomSafeArea)}`);
+  throw new Error(`Composer safe area or quota menu item overflowed: ${JSON.stringify(bottomSafeArea)}`);
 }
 if ((await page.locator(".stream-message").count()) !== 2) throw new Error("Process messages did not render");
 if (await page.locator(".stream-message").first().evaluate(

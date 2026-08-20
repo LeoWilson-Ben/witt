@@ -6,7 +6,9 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { AuthService } = require("./auth-service");
-const { ChatService, NON_ADMIN_MODELS } = require("./chat-service");
+const {
+  ChatService, NON_ADMIN_MODELS, servePublicArtifactPreview, servePublicArtifactSource,
+} = require("./chat-service");
 const { CodexAccountService } = require("./codex-account-service");
 
 const host = "127.0.0.1";
@@ -604,6 +606,27 @@ http.createServer((req, res) => {
     return;
   }
   if (handleLicre(req, res, url)) return;
+  const publicPreviewMatch = url.pathname.match(/^\/chat\/artifact-previews\/([A-Za-z0-9_-]{32,128})$/);
+  if (req.method === "GET" && publicPreviewMatch) {
+    if (servePublicArtifactPreview(res, publicPreviewMatch[1])) return;
+    sendJson(res, 404, { error: "交互预览已失效，请刷新对话后重试" });
+    return;
+  }
+  const publicSourceMatch = url.pathname.match(/^\/chat\/artifact-sources\/([A-Za-z0-9_-]{32,128})$/);
+  if (req.method === "GET" && publicSourceMatch) {
+    if (servePublicArtifactSource(res, publicSourceMatch[1])) return;
+    sendJson(res, 404, { error: "Artifact 源码已失效，请刷新对话后重试" });
+    return;
+  }
+  const compatiblePreviewMatch = url.pathname.match(
+    /^\/chat\/conversations\/([a-f0-9-]{36})\/messages\/([a-f0-9-]{36})\/artifacts\/([a-f0-9-]{36})\/preview$/);
+  if (req.method === "GET" && compatiblePreviewMatch) {
+    const services = [chatService, ...userChatServices.values()];
+    if (services.some((service) => service.previewArtifactByIds(
+      res, compatiblePreviewMatch[1], compatiblePreviewMatch[2], compatiblePreviewMatch[3]))) return;
+    sendJson(res, 404, { error: "交互预览不存在或已失效" });
+    return;
+  }
   const legacyAuthorized = authorized(req);
   const imageRequest = /^\/chat-images\/[a-f0-9-]{36}$/.test(url.pathname);
   let principal = principalFor(req);

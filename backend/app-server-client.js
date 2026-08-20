@@ -11,6 +11,8 @@ class AppServerClient extends EventEmitter {
     this.cwd = options.cwd;
     this.home = options.home || "/home/ubuntu";
     this.codexHome = options.codexHome || "";
+    this.configOverrides = Array.isArray(options.configOverrides)
+      ? options.configOverrides.map(String) : [];
     this.child = null;
     this.pending = new Map();
     this.nextId = 1;
@@ -30,7 +32,11 @@ class AppServerClient extends EventEmitter {
 
   async startInternal() {
     this.closed = false;
-    this.child = spawn(this.codexBin, ["app-server", "--listen", "stdio://"], {
+    const args = [
+      ...this.configOverrides.flatMap((value) => ["-c", value]),
+      "app-server", "--listen", "stdio://",
+    ];
+    this.child = spawn(this.codexBin, args, {
       cwd: this.cwd,
       env: {
         ...process.env,
@@ -145,7 +151,7 @@ class AppServerClient extends EventEmitter {
 const sharedClients = new Map();
 
 function sharedAppServer(options) {
-  const key = `${options.codexHome || "default"}`;
+  const key = `${options.codexHome || "default"}:${JSON.stringify(options.configOverrides || [])}`;
   const current = sharedClients.get(key);
   if (current && !current.closed) return current;
   const client = new AppServerClient(options);

@@ -7,15 +7,39 @@ const { AppServerClient, sharedAppServer } = require("./app-server-client");
 const { ConversationStore } = require("./sqlite-store");
 
 const ID_PATTERN = /^[a-f0-9-]{36}$/;
-const ADMIN_MODELS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
-const NON_ADMIN_MODELS = new Set(["gpt-5.5"]);
+const DEEPSEEK_MODELS = new Set(["deepseek-v4-pro", "deepseek-v4-flash"]);
+const ADMIN_MODELS = new Set([
+  "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", ...DEEPSEEK_MODELS,
+]);
+const NON_ADMIN_MODELS = new Set(["gpt-5.5", ...DEEPSEEK_MODELS]);
 const ALL_MODELS = new Set([...ADMIN_MODELS, ...NON_ADMIN_MODELS]);
 const QUOTA_EXHAUSTED_MESSAGE = "Your quota has been exhausted. Please try again later.";
 const ALLOWED_REASONING = new Set(["low", "medium", "high", "xhigh"]);
 const ALLOWED_ACCESS = new Set(["read-only", "workspace-write", "danger-full-access"]);
 const MAX_ARTIFACT_BYTES = 500 * 1024 * 1024;
 const MAX_INLINE_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_INLINE_PREVIEW_BYTES = 5 * 1024 * 1024;
+const ARTIFACT_PREVIEW_TTL_MS = 15 * 60 * 1000;
 const IMAGE_ID_PATTERN = /^[a-f0-9-]{36}$/;
+const artifactPreviewTokens = new Map();
+
+function servePublicArtifactPreview(res, token) {
+  const entry = artifactPreviewTokens.get(String(token || ""));
+  if (!entry || entry.expiresAt <= Date.now()) {
+    if (entry) artifactPreviewTokens.delete(String(token));
+    return false;
+  }
+  return entry.service.previewArtifactForToken(res, entry);
+}
+
+function servePublicArtifactSource(res, token) {
+  const entry = artifactPreviewTokens.get(String(token || ""));
+  if (!entry || entry.expiresAt <= Date.now()) {
+    if (entry) artifactPreviewTokens.delete(String(token));
+    return false;
+  }
+  return entry.service.sourceArtifactForToken(res, entry);
+}
 
 class ChatService {
   constructor(options) {
@@ -23,6 +47,7 @@ class ChatService {
     this.dataDir = options.dataDir;
     this.codexBin = options.codexBin;
     this.codexWorkDir = options.codexWorkDir;
+    this.deepseekEnabled = options.deepseekEnabled !== false;
     this.sendJson = options.sendJson;
     this.readJsonBody = options.readJsonBody;
     this.allowedModels = Object.hasOwn(options, "allowedModels")
@@ -43,6 +68,7 @@ class ChatService {
     if (!this.allowedCodexProfiles.size) this.allowedCodexProfiles.add("default");
     this.defaultCodexProfile = [...this.allowedCodexProfiles][0];
     this.imageDir = options.imageDir || path.join(path.dirname(this.chatDir), "chat-images");
+    this.previewDir = path.join(this.dataDir, ".witt-previews");
     this.deliveryRoots = (options.deliveryRoots || [
       this.dataDir,
       this.codexWorkDir,
@@ -59,6 +85,7 @@ class ChatService {
     this.availableModels = new Map();
     fs.mkdirSync(this.chatDir, { recursive: true });
     fs.mkdirSync(this.imageDir, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(this.previewDir, { recursive: true, mode: 0o700 });
     this.store = new ConversationStore(this.chatDir);
     this.store.importJsonFiles();
     this.jsonCheckpoints = new Map();
@@ -67,12 +94,22 @@ class ChatService {
     this.recover();
   }
 
-  clientFor(profile) {
+  clientFor(profile, model = this.defaultModel) {
+    const deepseek = DEEPSEEK_MODELS.has(model);
     const client = sharedAppServer({
       codexBin: this.codexBin,
       cwd: profile.workDir,
       home: "/home/ubuntu",
       codexHome: profile.codexHome,
+      configOverrides: deepseek ? [
+        'model_provider="witt-deepseek"',
+        'model_providers.witt-deepseek.name="DeepSeek through Witt"',
+        'model_providers.witt-deepseek.base_url="http://127.0.0.1:33111/v1"',
+        'model_providers.witt-deepseek.wire_api="responses"',
+        "model_providers.witt-deepseek.request_max_retries=1",
+        "model_providers.witt-deepseek.stream_max_retries=2",
+        "model_providers.witt-deepseek.stream_idle_timeout_ms=300000",
+      ] : [],
     });
     if (!this.boundClients.has(client)) {
       this.boundClients.add(client);
@@ -102,6 +139,8 @@ class ChatService {
   }
 
   modelAllowed(model, profileId = this.defaultCodexProfile) {
+    if (DEEPSEEK_MODELS.has(model)) return this.deepseekEnabled &&
+      (this.allowedModels === null || this.allowedModels.has(model));
     const dynamic = this.availableModels.get(profileId);
     const policyAllows = this.allowedModels === null || this.allowedModels.has(model);
     const catalogAllows = !dynamic || dynamic.has(model) || ALL_MODELS.has(model);
@@ -237,7 +276,31 @@ class ChatService {
     const renderedImageIds = new Set();
     return {
       ...message,
-      artifacts: (message.artifacts || []).map(({ sourcePath: ignored, ...artifact }) => artifact),
+      artifacts: (message.artifacts || []).map((storedArtifact) => {
+        const previewToken = this.issueArtifactPreviewToken(message.id, storedArtifact);
+        const { sourcePath: ignored, ...artifact } = storedArtifact;
+        return previewToken ? { ...artifact, previewToken } : artifact;
+      }),
+      previewVersions: (message.previewVersions || []).map((storedArtifact) => {
+        const previewToken = this.issueArtifactPreviewToken(message.id, storedArtifact);
+        const {
+          sourcePath: ignored,
+          sourceFile: ignoredSource,
+          contentHash: ignoredHash,
+          ...artifact
+        } = storedArtifact;
+        return previewToken ? { ...artifact, previewToken } : artifact;
+      }),
+      livePreview: message.livePreview ? (() => {
+        const previewToken = this.issueArtifactPreviewToken(message.id, message.livePreview);
+        const {
+          sourcePath: ignored,
+          sourceFile: ignoredSource,
+          contentHash: ignoredHash,
+          ...artifact
+        } = message.livePreview;
+        return previewToken ? { ...artifact, previewToken } : artifact;
+      })() : null,
       images: (message.images || []).map(
         ({ sourcePath: ignoredPath, fileName: ignoredFile, ...image }) => image),
       stream: (message.stream || []).filter((entry) => {
@@ -250,6 +313,104 @@ class ChatService {
         hasDetails: Boolean(details),
       })),
     };
+  }
+
+  issueArtifactPreviewToken(messageId, artifact) {
+    const extension = path.extname(String(artifact?.name || "")).toLowerCase();
+    if (!artifact?.id || !artifact?.sourcePath || !['.html', '.htm'].includes(extension) ||
+        Number(artifact.size || 0) > MAX_INLINE_PREVIEW_BYTES) return "";
+    const now = Date.now();
+    for (const [token, entry] of artifactPreviewTokens) {
+      if (entry.expiresAt <= now) artifactPreviewTokens.delete(token);
+      else if (entry.service === this && entry.messageId === messageId &&
+          entry.artifactId === artifact.id) return token;
+    }
+    const token = crypto.randomBytes(24).toString("base64url");
+    artifactPreviewTokens.set(token, {
+      service: this,
+      messageId,
+      artifactId: artifact.id,
+      expiresAt: now + ARTIFACT_PREVIEW_TTL_MS,
+    });
+    return token;
+  }
+
+  parsePreviewMarkers(value) {
+    const paths = [];
+    const visible = [];
+    for (const line of String(value || "").split("\n")) {
+      const match = line.trim().match(/^\[\[preview:(\/.+)\]\]$/);
+      if (match) {
+        paths.push(match[1].trim());
+      } else if (!/^\s*\[\[preview:/.test(line)) {
+        visible.push(line);
+      }
+    }
+    return { text: visible.join("\n").trim(), paths };
+  }
+
+  publishPreviewSnapshot(assistant, requestedPath) {
+    const verified = this.deliveryArtifact(requestedPath);
+    const extension = path.extname(String(verified?.name || "")).toLowerCase();
+    if (!verified || !['.html', '.htm'].includes(extension) ||
+        verified.size > MAX_INLINE_PREVIEW_BYTES) return false;
+    let source;
+    try {
+      source = fs.readFileSync(verified.sourcePath, "utf8");
+    } catch {
+      return false;
+    }
+    if (!/<html(?:\s|>)/i.test(source) || !/<\/html>\s*$/i.test(source) ||
+        !/<body(?:\s|>)/i.test(source) || !/<\/body>/i.test(source)) return false;
+    const artifactKey = crypto.createHash("sha256")
+      .update(verified.sourcePath).digest("hex").slice(0, 24);
+    const contentHash = crypto.createHash("sha256").update(source).digest("hex");
+    let versions = Array.isArray(assistant.previewVersions)
+      ? assistant.previewVersions.slice() : [];
+    if (!versions.length && this.active?.conversationId) {
+      const conversation = this.readConversation(this.active.conversationId);
+      const previous = conversation?.messages?.slice().reverse().find((message) =>
+        message.id !== assistant.id && message.livePreview?.artifactKey === artifactKey);
+      if (previous) versions = (previous.previewVersions || []).slice(-20);
+    }
+    const latest = versions.at(-1);
+    if (latest?.contentHash === contentHash || assistant.livePreview?.contentHash === contentHash) {
+      return false;
+    }
+    const revision = Math.max(0, Number(latest?.revision || 0)) + 1;
+    const id = crypto.randomUUID();
+    const sourcePath = path.join(this.previewDir, `${id}.html`);
+    const temporary = `${sourcePath}.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(temporary, source, { mode: 0o600 });
+      fs.renameSync(temporary, sourcePath);
+    } catch {
+      try { fs.rmSync(temporary, { force: true }); } catch {}
+      return false;
+    }
+    const snapshot = {
+      id,
+      name: verified.name,
+      size: Buffer.byteLength(source),
+      mimeType: "text/html",
+      sourcePath,
+      sourceFile: verified.sourcePath,
+      artifactKey,
+      contentHash,
+      revision,
+      live: true,
+      createdAt: new Date().toISOString(),
+    };
+    versions.push(snapshot);
+    while (versions.length > 20) {
+      versions.shift();
+    }
+    assistant.previewVersions = versions;
+    assistant.livePreview = snapshot;
+    if (this.active?.messageId === assistant.id) {
+      this.active.previewSourcePath = verified.sourcePath;
+    }
+    return true;
   }
 
   publicConversation(conversation, includeMessages = true) {
@@ -623,6 +784,30 @@ class ChatService {
         supportsPersonality: Boolean(model.supportsPersonality),
         upgrade: model.upgrade ? String(model.upgrade) : null,
       })).filter((model) => model.id);
+      if (this.deepseekEnabled &&
+          (this.allowedModels === null || [...DEEPSEEK_MODELS].some((id) => this.allowedModels.has(id)))) {
+        const deepseekModels = [
+          {
+            id: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro", isDefault: false,
+            inputModalities: ["text"], defaultReasoningEffort: "high",
+            reasoningEfforts: [
+              { id: "high", description: "DeepSeek 深度思考" },
+              { id: "xhigh", description: "DeepSeek 最大思考" },
+            ],
+            supportsPersonality: false, upgrade: null, provider: "deepseek",
+          },
+          {
+            id: "deepseek-v4-flash", displayName: "DeepSeek V4 Flash", isDefault: false,
+            inputModalities: ["text"], defaultReasoningEffort: "high",
+            reasoningEfforts: [
+              { id: "high", description: "DeepSeek 深度思考" },
+              { id: "xhigh", description: "DeepSeek 最大思考" },
+            ],
+            supportsPersonality: false, upgrade: null, provider: "deepseek",
+          },
+        ].filter((model) => this.allowedModels === null || this.allowedModels.has(model.id));
+        models.push(...deepseekModels);
+      }
       this.availableModels.set(profile.id, new Set(models.map((model) => model.id)));
       const skillGroups = value(1).data || [];
       const skills = skillGroups.flatMap((group) => group.skills || []).map((skill) => ({
@@ -659,7 +844,7 @@ class ChatService {
   async resumeOnClient(conversation) {
     if (!conversation.codexThreadId) throw new Error("这个对话还没有可复用的 Codex 上下文");
     const profile = this.profileFor(conversation);
-    const client = this.clientFor(profile);
+    const client = this.clientFor(profile, conversation.model);
     await client.start();
     await client.request("thread/resume", {
       threadId: conversation.codexThreadId,
@@ -742,9 +927,13 @@ class ChatService {
     }
 
     const artifactMatch = url.pathname.match(
-      /^\/chat\/conversations\/([a-f0-9-]{36})\/messages\/([a-f0-9-]{36})\/artifacts\/([a-f0-9-]{36})$/);
+      /^\/chat\/conversations\/([a-f0-9-]{36})\/messages\/([a-f0-9-]{36})\/artifacts\/([a-f0-9-]{36})(\/preview)?$/);
     if (req.method === "GET" && artifactMatch) {
-      this.downloadArtifact(res, artifactMatch[1], artifactMatch[2], artifactMatch[3]);
+      if (artifactMatch[4]) {
+        this.previewArtifact(res, artifactMatch[1], artifactMatch[2], artifactMatch[3]);
+      } else {
+        this.downloadArtifact(res, artifactMatch[1], artifactMatch[2], artifactMatch[3]);
+      }
       return true;
     }
 
@@ -994,6 +1183,12 @@ class ChatService {
         message.status === "queued" || message.status === "running")) {
         this.sendJson(res, 409, { error: "当前对话正在处理，完成后再切换" });
         return;
+      }
+      const providerChanged = DEEPSEEK_MODELS.has(requestedModel) !==
+        DEEPSEEK_MODELS.has(conversation.model);
+      if (conversation.codexThreadId && providerChanged) {
+        conversation.codexThreadId = null;
+        conversation.replayHistoryOnNextTurn = true;
       }
       let requestedWorkDir = Object.hasOwn(conversation, "workDir")
         ? conversation.workDir : this.codexWorkDir;
@@ -1797,6 +1992,9 @@ class ChatService {
       "兼容备用通道：修改 drop-vault 后端但不适合直接重启时，仍可写入 /data/drop-vault/restart-request 请求延迟校验重启。",
       "右上角交付区是用户主动索取文件时使用的下载通道，不是每轮回复存档。",
       "仅当用户明确要求交付、打包、下载，或要求把服务器上的某个文件放入交付区时，才在最终回复末尾逐行输出 [[deliver:/绝对/文件路径]]。普通回答或普通代码修改绝对不要输出该标记。只能交付普通文件，目录需先打包。",
+      "用户明确要求制作或展示前端动画、交互网页、网页演示，或要求像 Claude Artifact 一样直接预览时，视为明确要求交付：请创建一个自包含的单文件 .html，且仅在这种情况下在最终回复末尾输出对应 [[deliver:/绝对/文件路径]]。不要使用外部 CDN、远程图片、网络请求或额外本地资源；Witt 会在独立 Artifact 工作区运行页面，桌面端位于聊天右侧、手机端使用单栏工作区。页面只实现作品内容，不要自行重复宿主的标题栏、版本、预览/源码、复制、下载或返回控件。",
+      "制作交互网页时使用 Claude Artifact 式增量预览协议：始终维护同一个自包含 .html 文件；完成第一个可独立运行且结构闭合的版本后，在 commentary 中单独输出 [[preview:/绝对/文件路径]]。此控制行不会展示给用户。之后每次完成一轮可独立运行的界面更新，再输出同一控制行。只有在 HTML、BODY 均完整闭合且当前版本可运行时才能发布；不要发布正在写入的半成品。",
+      "Artifact 页面必须响应式适配手机宽度和横竖屏，避免固定桌面画布。聊天中直接展示内容本体，不要在 HTML 内再绘制外层设备框、预览卡标题栏、下载按钮或放大按钮。",
     ].join("\n");
   }
 
@@ -1809,6 +2007,22 @@ class ChatService {
         ].join("\n")
       : "";
     const userText = user.text || "请查看我附上的文件。";
+    if (conversation.replayHistoryOnNextTurn) {
+      const history = conversation.messages
+        .filter((message) => message.id !== user.id &&
+          ["user", "assistant"].includes(message.role) && message.text)
+        .map((message) => `${message.role === "user" ? "用户" : "Witt"}：${message.text}`)
+        .join("\n\n")
+        .slice(-120_000);
+      return [
+        this.buildDeveloperInstructions(conversation),
+        "",
+        "以下是当前 Witt 会话在切换模型提供商前的历史，请继续同一会话：",
+        history || "（暂无历史）",
+        "",
+        `用户：${userText}${attachmentText}`,
+      ].join("\n");
+    }
     if (conversation.codexThreadId) return `${userText}${attachmentText}`;
     return [
       this.buildDeveloperInstructions(conversation),
@@ -1873,7 +2087,7 @@ class ChatService {
       ? conversation.accessMode : "danger-full-access";
     const workDir = this.effectiveWorkDir(conversation);
     const profile = this.profileFor(conversation);
-    const client = this.clientFor(profile);
+    const client = this.clientFor(profile, model);
     this.active = {
       conversationId: conversation.id,
       messageId: assistant.id,
@@ -1886,6 +2100,7 @@ class ChatService {
       finished: false,
       pendingSteers: [],
       pendingApprovals: new Map(),
+      previewMessageBuffers: new Map(),
       codexHome: profile.codexHome,
     };
     const timeout = setTimeout(() => {
@@ -1926,6 +2141,10 @@ class ChatService {
         cwd: workDir,
         approvalPolicy: "on-request",
       });
+      if (latestConversation.replayHistoryOnNextTurn) {
+        delete latestConversation.replayHistoryOnNextTurn;
+        this.writeConversation(latestConversation);
+      }
       this.active.turnId = turnResult.turn.id;
       this.requestActiveInterrupt();
       const runningConversation = this.readConversation(conversation.id) || latestConversation;
@@ -1997,7 +2216,11 @@ class ChatService {
         phase: "unknown",
         status: "running",
       });
-      entry.text = `${entry.text || ""}${String(params.delta || "")}`;
+      const buffers = this.active.previewMessageBuffers || new Map();
+      this.active.previewMessageBuffers = buffers;
+      const raw = `${buffers.get(params.itemId) || ""}${String(params.delta || "")}`;
+      buffers.set(params.itemId, raw);
+      entry.text = this.parsePreviewMarkers(raw).text;
     } else if (method === "item/started" || method === "item/completed") {
       const status = method === "item/completed" ? "completed" : "running";
       if (item.type === "commandExecution") {
@@ -2014,6 +2237,9 @@ class ChatService {
             output: String(item.aggregatedOutput || "").slice(-64 * 1024),
           },
         });
+        if (method === "item/completed" && this.active.previewSourcePath) {
+          this.publishPreviewSnapshot(assistant, this.active.previewSourcePath);
+        }
       } else if (item.type === "fileChange") {
         const count = Array.isArray(item.changes) ? item.changes.length : 0;
         const label = status === "completed"
@@ -2031,6 +2257,9 @@ class ChatService {
             })),
           },
         });
+        if (method === "item/completed" && this.active.previewSourcePath) {
+          this.publishPreviewSnapshot(assistant, this.active.previewSourcePath);
+        }
       } else if (item.type === "mcpToolCall") {
         const label = item.tool ? `调用工具：${item.tool}` : "正在调用已连接的工具";
         this.addActivity(assistant, "tool", label, status);
@@ -2130,9 +2359,16 @@ class ChatService {
           phase: item.phase || "unknown",
           status,
         });
-        if (item.text) entry.text = item.text;
-        if (item.phase === "final_answer" && item.text) {
-          this.active.finalResponse = item.text;
+        if (item.text) {
+          const parsed = this.parsePreviewMarkers(item.text);
+          entry.text = parsed.text;
+          for (const previewPath of parsed.paths) {
+            this.publishPreviewSnapshot(assistant, previewPath);
+          }
+          this.active.previewMessageBuffers?.delete(item.id);
+        }
+        if (item.phase === "final_answer" && entry.text) {
+          this.active.finalResponse = entry.text;
         }
       }
     } else if (method === "turn/completed") {
@@ -2204,11 +2440,20 @@ class ChatService {
     }
     assistant.status = interrupted ? "interrupted" : success ? "completed" : "failed";
     assistant.completedAt = new Date().toISOString();
-    const delivery = success ? this.extractDeliveries(response) : { text: response, artifacts: [] };
+    const parsedResponse = this.parsePreviewMarkers(response);
+    if (success) {
+      for (const previewPath of parsedResponse.paths) {
+        this.publishPreviewSnapshot(assistant, previewPath);
+      }
+    }
+    const delivery = success
+      ? this.extractDeliveries(parsedResponse.text)
+      : { text: parsedResponse.text, artifacts: [] };
     assistant.text = interrupted
       ? "已暂停本轮执行。已完成的修改和命令结果会保留。"
       : success ? delivery.text : `本轮没有完成：${error}`;
     assistant.artifacts = delivery.artifacts;
+    if (assistant.livePreview) assistant.livePreview.live = false;
     for (const artifact of delivery.artifacts) {
       if (!String(artifact.mimeType || "").startsWith("image/")) continue;
       this.attachImage(
@@ -2325,6 +2570,8 @@ class ChatService {
       ".csv": "text/csv",
       ".txt": "text/plain",
       ".json": "application/json",
+      ".html": "text/html",
+      ".htm": "text/html",
       ".png": "image/png",
       ".jpg": "image/jpeg",
       ".jpeg": "image/jpeg",
@@ -2359,6 +2606,112 @@ class ChatService {
     stream.pipe(res);
   }
 
+  previewArtifact(res, conversationId, messageId, artifactId) {
+    if (this.previewArtifactByIds(res, conversationId, messageId, artifactId)) return;
+    this.sendJson(res, 404, { error: "该交付文件不支持预览" });
+  }
+
+  previewArtifactByIds(res, conversationId, messageId, artifactId) {
+    const conversation = this.readConversation(conversationId);
+    const message = conversation?.messages.find((item) => item.id === messageId);
+    const artifact = message?.artifacts?.find((item) => item.id === artifactId);
+    if (!artifact) return false;
+    this.sendArtifactPreview(res, artifact);
+    return true;
+  }
+
+  previewArtifactForToken(res, entry) {
+    for (const conversation of this.allConversations()) {
+      const message = conversation.messages.find((item) => item.id === entry.messageId);
+      const candidates = [
+        ...(message?.artifacts || []),
+        ...(message?.previewVersions || []),
+        ...(message?.livePreview ? [message.livePreview] : []),
+      ];
+      const artifact = candidates.find((item) => item.id === entry.artifactId);
+      if (!artifact) continue;
+      this.sendArtifactPreview(res, artifact);
+      return true;
+    }
+    artifactPreviewTokens.delete([...artifactPreviewTokens.entries()]
+      .find(([, candidate]) => candidate === entry)?.[0]);
+    return false;
+  }
+
+  artifactForToken(entry) {
+    for (const conversation of this.allConversations()) {
+      const message = conversation.messages.find((item) => item.id === entry.messageId);
+      const candidates = [
+        ...(message?.artifacts || []),
+        ...(message?.previewVersions || []),
+        ...(message?.livePreview ? [message.livePreview] : []),
+      ];
+      const artifact = candidates.find((item) => item.id === entry.artifactId);
+      if (artifact) return artifact;
+    }
+    return null;
+  }
+
+  sourceArtifactForToken(res, entry) {
+    const artifact = this.artifactForToken(entry);
+    if (!artifact) return false;
+    const verified = this.deliveryArtifact(artifact.sourcePath);
+    const extension = path.extname(String(artifact.name || "")).toLowerCase();
+    if (!verified || !['.html', '.htm'].includes(extension) ||
+        verified.size > MAX_INLINE_PREVIEW_BYTES) return false;
+    let source;
+    try { source = fs.readFileSync(verified.sourcePath, "utf8"); } catch { return false; }
+    res.writeHead(200, {
+      "Cache-Control": "no-store",
+      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Length": Buffer.byteLength(source),
+      "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'",
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.end(source);
+    return true;
+  }
+
+  sendArtifactPreview(res, artifact) {
+    const extension = path.extname(String(artifact?.name || "")).toLowerCase();
+    if (!artifact?.sourcePath || !['.html', '.htm'].includes(extension)) {
+      this.sendJson(res, 404, { error: "该交付文件不支持预览" });
+      return;
+    }
+    const verified = this.deliveryArtifact(artifact.sourcePath);
+    if (!verified) {
+      this.sendJson(res, 410, { error: "交付文件已移动或不可预览" });
+      return;
+    }
+    if (verified.size > MAX_INLINE_PREVIEW_BYTES) {
+      this.sendJson(res, 413, { error: "交互预览文件不能超过 5 MB" });
+      return;
+    }
+    let source;
+    try {
+      source = fs.readFileSync(verified.sourcePath, "utf8");
+    } catch {
+      this.sendJson(res, 410, { error: "交付文件已移动或不可预览" });
+      return;
+    }
+    const bridge = `<script>(()=>{const post=(value)=>parent.postMessage(value,"*");const send=()=>{const d=document.documentElement,b=document.body;post({type:"witt-artifact-ready",height:Math.max(d.scrollHeight,d.offsetHeight,b?b.scrollHeight:0,b?b.offsetHeight:0)})};addEventListener("error",e=>post({type:"witt-artifact-error",message:e.message||"页面运行错误",line:e.lineno||0}));addEventListener("unhandledrejection",e=>post({type:"witt-artifact-error",message:String(e.reason?.message||e.reason||"页面运行错误")}));addEventListener("load",send);addEventListener("resize",send);if(typeof ResizeObserver!=="undefined")new ResizeObserver(send).observe(document.documentElement);setTimeout(send,0);setTimeout(send,250)})()<\/script>`;
+    source = /<\/body\s*>/i.test(source)
+      ? source.replace(/<\/body\s*>/i, `${bridge}</body>`)
+      : `${source}${bridge}`;
+    const payload = Buffer.from(source, "utf8");
+    const encoded = encodeURIComponent(artifact.name).replace(/['()]/g, escape);
+    res.writeHead(200, {
+      "Cache-Control": "no-store",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": payload.length,
+      "Content-Disposition": `inline; filename*=UTF-8''${encoded}`,
+      "Content-Security-Policy": "sandbox allow-scripts; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data: blob:; connect-src 'none'; child-src 'none'; object-src 'none'",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.end(payload);
+  }
+
   streamDetails(res, conversationId, messageId, entryId) {
     const conversation = this.readConversation(conversationId);
     const message = conversation?.messages.find((item) => item.id === messageId);
@@ -2374,6 +2727,8 @@ class ChatService {
 
 module.exports = {
   ChatService,
+  servePublicArtifactPreview,
+  servePublicArtifactSource,
   ADMIN_MODELS,
   NON_ADMIN_MODELS,
   ALL_MODELS,

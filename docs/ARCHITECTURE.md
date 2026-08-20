@@ -8,7 +8,7 @@ Android 应用加载受信任的 Witt Web 页面，通过 WebMessageListener 暴
 
 ### Web UI
 
-Web UI 使用原生 HTML、CSS 和 JavaScript，无需前端构建工具。它负责会话展示、设置、审批交互、附件选择、图片查看和本地 IndexedDB 缓存，不应持久化服务端凭据。
+Web UI 使用原生 HTML、CSS 和 JavaScript，无需前端构建工具。它负责会话展示、设置、审批交互、附件选择、图片查看、Artifact 预览与版本切换，以及本地 IndexedDB 缓存，不应持久化服务端凭据。Artifact HTML 在独立沙箱 iframe 中运行，作品本体不复制宿主工具栏。
 
 ### Node.js 服务
 
@@ -18,6 +18,7 @@ Web UI 使用原生 HTML、CSS 和 JavaScript，无需前端构建工具。它�
 - 用户、会话、附件和图片隔离
 - Codex App Server 生命周期与事件转换
 - 审批、分支、压缩、审查和交付文件
+- Artifact 完整快照、短期预览令牌及隔离源码读取
 - SQLite 持久化、迁移与在线备份
 
 ### Codex App Server

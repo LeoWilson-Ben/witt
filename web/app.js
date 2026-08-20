@@ -6,6 +6,9 @@
     },
   });
   const bridge = () => window.WittNative ? nativeBridge : (window.DropVaultAndroid || null);
+  const savedModel = localStorage.getItem("wit_model_preference") || localStorage.getItem("wit_model") || "gpt-5.6-sol";
+  const savedReasoning = localStorage.getItem("wit_reasoning_preference") || localStorage.getItem("wit_reasoning") || "medium";
+  const savedAccessMode = localStorage.getItem("wit_access_preference") || localStorage.getItem("wit_access") || "danger-full-access";
   const state = {
     conversations: [],
     activeId: localStorage.getItem("wit_active_conversation") || null,
@@ -15,9 +18,13 @@
     sending: false,
     archiveId: null,
     lastCompletedId: null,
-    model: localStorage.getItem("wit_model") || "gpt-5.6-sol",
-    reasoning: localStorage.getItem("wit_reasoning") || "medium",
-    accessMode: localStorage.getItem("wit_access") || "danger-full-access",
+    model: savedModel,
+    reasoning: savedReasoning,
+    accessMode: savedAccessMode,
+    preferredModel: savedModel,
+    preferredReasoning: savedReasoning,
+    preferredAccessMode: savedAccessMode,
+    restorePreferredSettingsOnLaunch: true,
     codexProfile: localStorage.getItem("wit_codex_profile") || "default",
     allowedCodexProfiles: ["default"],
     workDir: "",
@@ -46,6 +53,15 @@
     appVisible: !document.hidden,
     supportsSse: false,
     capabilities: null,
+    artifactOpen: false,
+    artifactKey: "",
+    artifactVersionIndex: -1,
+    artifactMode: "preview",
+    artifactFollowLatest: true,
+    artifactAutoOpened: "",
+    artifactDismissed: "",
+    artifactSource: "",
+    artifactSourceVersion: "",
   };
   let pollTimer;
   let toastTimer;
@@ -74,7 +90,7 @@
       document.documentElement.dataset.theme = selected;
       if (persist) localStorage.setItem("wit_theme", selected);
       $("#themeColor")?.setAttribute("content",
-        selected === "light" ? "#f3f5f8" : selected === "dark" ? "#090d18" : "#121225");
+        selected === "dark" ? "#1f1f1c" : "#f7f6f2");
       document.querySelectorAll("[data-theme-choice]").forEach((button) => {
         const active = button.dataset.themeChoice === selected;
         button.classList.toggle("active", active);
@@ -89,7 +105,7 @@
     }
   }
 
-  applyTheme(localStorage.getItem("wit_theme") || "colorful");
+  applyTheme(localStorage.getItem("wit_theme") || "light");
   requestAnimationFrame(watchComposerInset);
   function escapeHtml(value) {
     const node = document.createElement("span");
@@ -449,8 +465,8 @@
   }
 
   function setConnected(connected, label) {
-    $("#connectionLabel").textContent = label || (connected ? "服务器在线" : "等待网络");
-    $(".identity-copy small").classList.toggle("offline", !connected);
+    const connectionLabel = $("#connectionLabel");
+    if (connectionLabel) connectionLabel.textContent = label || (connected ? "服务器在线" : "等待网络");
   }
 
   const modelNames = {
@@ -472,6 +488,9 @@
     xhigh: { label: "极致", code: "EXTRA HIGH", description: "投入更多推理时间，处理高难度架构、审查与综合任务。", intensity: 3 },
     max: { label: "巅峰", code: "MAX", description: "接近模型的最大推理预算，适合非常复杂且高价值的任务。", intensity: 4 },
     ultra: { label: "超维", code: "ULTRA", description: "最高强度推理，优先追求完整性、深度与多路径验证。", intensity: 5 },
+  };
+  const quickReasoningNames = {
+    low: "轻度", medium: "中", high: "高", xhigh: "极高", max: "最高", ultra: "超维",
   };
 
   function selectedModelCapability() {
@@ -524,6 +543,35 @@
       const selected = effort === current;
       return `<button type="button" class="${selected ? "selected" : ""}" data-reasoning="${effort}" role="radio" aria-checked="${selected}" aria-label="${escapeHtml(option.label)}，${escapeHtml(option.code)}"><strong>${escapeHtml(option.label)}</strong><small>${escapeHtml(option.code)}</small></button>`;
     }).join("");
+    renderQuickModelPicker();
+  }
+
+  function availableReasoningEfforts() {
+    const selectedModel = selectedModelCapability();
+    const offered = (selectedModel?.reasoningEfforts || [])
+      .map((effort) => effort.id)
+      .filter((effort) => reasoningMeta[effort]);
+    return offered.length ? offered : ["low", "medium", "high", "xhigh"];
+  }
+
+  function renderQuickModelPicker() {
+    const menu = $("#quickModelMenu");
+    if (!menu) return;
+    const models = Array.isArray(state.capabilities?.models) && state.capabilities.models.length
+      ? state.capabilities.models
+      : Object.keys(modelNames).map((id) => ({ id, displayName: modelNames[id] }));
+    const selectedModel = state.draftModel || state.model;
+    const selectedReasoning = state.draftReasoning || state.reasoning;
+    $("#quickModelCurrent").textContent = `GPT-5.6 ${modelNames[selectedModel] || selectedModel}`;
+    $("#quickModelOptions").innerHTML = models.map((model) => {
+      const selected = model.id === selectedModel;
+      return `<button type="button" data-quick-model="${escapeHtml(model.id)}" role="radio" aria-checked="${selected}" class="${selected ? "selected" : ""}"><span>${escapeHtml(model.displayName || modelNames[model.id] || model.id)}</span><i>✓</i></button>`;
+    }).join("");
+    const efforts = availableReasoningEfforts().slice().reverse();
+    $("#quickReasoningOptions").innerHTML = efforts.map((effort) => {
+      const selected = effort === selectedReasoning;
+      return `<button type="button" data-quick-reasoning="${escapeHtml(effort)}" role="radio" aria-checked="${selected}" class="${selected ? "selected" : ""}"><span>${escapeHtml(quickReasoningNames[effort] || reasoningMeta[effort]?.label || effort)}</span><i>✓</i></button>`;
+    }).join("");
   }
 
   function renderCapabilities() {
@@ -559,6 +607,7 @@
       }).join("");
     }
     renderReasoningControl();
+    renderQuickModelPicker();
     const enabledSkills = (capabilities.skills || []).filter((skill) => skill.enabled).length;
     const connectedMcp = (capabilities.mcpServers || []).filter((server) =>
       !["failed", "error", "disabled"].includes(server.status)).length;
@@ -605,27 +654,17 @@
     return Math.round(tokens).toLocaleString("zh-CN");
   }
 
-  function quotaPercent(used, total) {
-    if (used === null || used === undefined || !Number.isFinite(Number(used)) || !Number(total) || Number(total) <= 0) return null;
-    return Math.max(0, Math.min(100, Math.round((1 - Number(used) / Number(total)) * 100)));
-  }
-
   function updateQuotaStatus() {
     const button = $("#quotaButton");
     const primary = state.usage?.rateLimits?.primary || null;
-    const context = state.active?.contextUsage || state.usage?.context || null;
-    const weekly = primary ? Math.max(0, Math.min(100, Math.round(100 - Number(primary.usedPercent || 0)))) : null;
-    const contextRemaining = context ? quotaPercent(context.usedTokens, context.contextWindow) : null;
-    if (weekly === null && contextRemaining === null) {
+    const weeklyUsed = primary ? Math.max(0, Math.min(100, Math.round(Number(primary.usedPercent || 0)))) : null;
+    if (weeklyUsed === null) {
       button.hidden = true;
       return;
     }
     button.hidden = false;
-    $("#weeklyQuotaLabel").textContent = weekly === null ? "—" : `${weekly}%`;
-    $("#contextQuotaLabel").textContent = contextRemaining === null ? "—" : `${contextRemaining}%`;
-    $("#weeklyQuotaMeter").style.width = `${weekly === null ? 0 : weekly}%`;
-    $("#contextQuotaMeter").style.width = `${contextRemaining === null ? 0 : contextRemaining}%`;
-    button.setAttribute("aria-label", `查看 Codex 额度：每周剩余 ${weekly === null ? "暂不可用" : `${weekly}%`}，上下文剩余 ${contextRemaining === null ? "暂不可用" : `${contextRemaining}%`}`);
+    $("#weeklyQuotaLabel").textContent = `已用 ${weeklyUsed}%`;
+    button.setAttribute("aria-label", `查看 Codex 额度：本周已用 ${weeklyUsed}%`);
   }
 
   function refreshUsage() {
@@ -668,11 +707,47 @@
     $("#reasoningLabel").textContent = reasoningNames[state.reasoning] || "均衡";
     $("#accessLabel").textContent = accessNames[state.accessMode] || "完全访问";
     $("#projectLabel").textContent = projectName(state.workDir);
+    $("#moreProjectLabel").textContent = projectName(state.workDir);
     document.querySelectorAll("[data-model]").forEach((button) =>
       button.classList.toggle("selected", button.dataset.model === state.draftModel));
     document.querySelectorAll("[data-access]").forEach((button) =>
       button.classList.toggle("selected", button.dataset.access === state.draftAccessMode));
     renderCapabilities();
+  }
+
+  function persistModelPreference() {
+    state.preferredModel = state.model;
+    state.preferredReasoning = state.reasoning;
+    state.preferredAccessMode = state.accessMode;
+    localStorage.setItem("wit_model", state.model);
+    localStorage.setItem("wit_reasoning", state.reasoning);
+    localStorage.setItem("wit_access", state.accessMode);
+    localStorage.setItem("wit_model_preference", state.model);
+    localStorage.setItem("wit_reasoning_preference", state.reasoning);
+    localStorage.setItem("wit_access_preference", state.accessMode);
+  }
+
+  function restorePreferredSettings(conversation) {
+    if (!state.restorePreferredSettingsOnLaunch) return false;
+    state.restorePreferredSettingsOnLaunch = false;
+    if (!conversation || conversation.busy) return false;
+    const changed = conversation.model !== state.preferredModel ||
+      conversation.reasoning !== state.preferredReasoning ||
+      conversation.accessMode !== state.preferredAccessMode;
+    state.model = state.preferredModel;
+    state.reasoning = state.preferredReasoning;
+    state.accessMode = state.preferredAccessMode;
+    state.draftModel = state.model;
+    state.draftReasoning = state.reasoning;
+    state.draftAccessMode = state.accessMode;
+    if (changed && state.nativeInitialized && state.activeId) {
+      if (state.supports21) {
+        bridge()?.updateConversationSettings?.(state.activeId, state.model, state.reasoning, state.accessMode);
+      } else {
+        bridge()?.updateConversationSettings?.(state.activeId, state.model, state.reasoning);
+      }
+    }
+    return changed;
   }
 
   function openProject() {
@@ -888,9 +963,50 @@
     $("#settingsSheet").setAttribute("aria-hidden", "false");
   }
 
+  function setQuickModelMenu(open) {
+    const menu = $("#quickModelMenu");
+    const expanded = Boolean(open);
+    menu.classList.toggle("open", expanded);
+    menu.classList.remove("models-open");
+    menu.setAttribute("aria-hidden", String(!expanded));
+    $("#modelButton").setAttribute("aria-expanded", String(expanded));
+    $("#quickModelExpand").setAttribute("aria-expanded", "false");
+  }
+
+  function applySettings({ closeSheet = true, announce = true } = {}) {
+    state.model = state.draftModel || state.model;
+    state.reasoning = state.draftReasoning || state.reasoning;
+    state.accessMode = state.draftAccessMode || state.accessMode;
+    persistModelPreference();
+    updateModelControls();
+    if (state.activeId) {
+      if (state.supports21) {
+        bridge()?.updateConversationSettings?.(
+          state.activeId, state.model, state.reasoning, state.accessMode);
+      } else {
+        bridge()?.updateConversationSettings?.(state.activeId, state.model, state.reasoning);
+      }
+    }
+    if (closeSheet) closeSettings();
+    if (announce) toast(`已切换 · ${modelNames[state.model]} · ${reasoningNames[state.reasoning]}`);
+  }
+
   function closeSettings() {
     $("#settingsSheet").classList.remove("open");
     $("#settingsSheet").setAttribute("aria-hidden", "true");
+  }
+
+  function setChatMoreMenu(open) {
+    const menu = $("#chatMoreMenu");
+    const visible = Boolean(open);
+    if (visible) {
+      $("#chatMoreTitle").textContent = state.active?.title || "当前对话";
+      const pinned = new Set(JSON.parse(localStorage.getItem("wit_pinned_conversations") || "[]"));
+      $("#morePinLabel").textContent = pinned.has(state.activeId) ? "取消置顶" : "置顶";
+    }
+    menu.classList.toggle("open", visible);
+    menu.setAttribute("aria-hidden", String(!visible));
+    $("#chatMoreButton").setAttribute("aria-expanded", String(visible));
   }
 
   function openDrawer() {
@@ -911,14 +1027,15 @@
   function renderDeliveries() {
     const artifacts = allArtifacts();
     $("#deliveryBadge").textContent = artifacts.length;
+    $("#deliverySummary").textContent = artifacts.length ? `${artifacts.length} 个可下载文件` : "当前对话暂无文件";
     $("#deliveryButton").classList.toggle("has-files", artifacts.length > 0);
     $("#deliveryBadge").hidden = !artifacts.length;
     $("#deliveryList").innerHTML = artifacts.length
       ? artifacts.slice().reverse().map((artifact) => `
         <button class="delivery-file" data-artifact="${artifact.id}" data-message="${artifact.messageId}">
           <span class="delivery-type">${extension(artifact.name)}</span>
-          <span><strong>${escapeHtml(artifact.name)}</strong><small>${formatBytes(artifact.size)} · 点击下载到手机</small></span>
-          <svg viewBox="0 0 24 24"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/></svg>
+          <span class="delivery-file-copy"><strong>${escapeHtml(artifact.name)}</strong><small>${formatBytes(artifact.size)}<i></i>来自当前对话</small></span>
+          <span class="delivery-download"><svg viewBox="0 0 24 24"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/></svg></span>
         </button>`).join("")
       : `<div class="delivery-empty"><span>↓</span><strong>暂无交付文件</strong><p>需要文件时直接告诉我“把它放到交付区”。</p></div>`;
   }
@@ -1010,12 +1127,15 @@
 
   function renderConversations() {
     $("#conversationCount").textContent = String(state.conversations.length);
-    $("#conversationList").innerHTML = state.conversations.length
-      ? state.conversations.map((conversation) => `
+    const pinned = new Set(JSON.parse(localStorage.getItem("wit_pinned_conversations") || "[]"));
+    const conversations = state.conversations.slice().sort((a, b) =>
+      Number(pinned.has(b.id)) - Number(pinned.has(a.id)));
+    $("#conversationList").innerHTML = conversations.length
+      ? conversations.map((conversation) => `
         <article class="conversation-row ${conversation.id === state.activeId ? "active" : ""}" data-id="${conversation.id}">
           <button class="conversation-open" data-open="${conversation.id}">
             <span class="conversation-mark">${conversation.busy ? '<i></i>' : '<svg viewBox="0 0 24 24"><path d="M5 6h14v10H9l-4 4V6Z"/></svg>'}</span>
-            <span><strong>${escapeHtml(conversation.title)}</strong><small>${conversation.busy ? "正在处理" : formatDate(conversation.updatedAt)} · ${escapeHtml(conversation.lastMessage || "暂无消息")}</small></span>
+            <span><strong>${pinned.has(conversation.id) ? "⌖ " : ""}${escapeHtml(conversation.title)}</strong><small>${conversation.busy ? "正在处理" : formatDate(conversation.updatedAt)} · ${escapeHtml(conversation.lastMessage || "暂无消息")}</small></span>
           </button>
           <button class="conversation-more" data-archive="${conversation.id}" aria-label="移除对话">•••</button>
         </article>`).join("")
@@ -1030,6 +1150,213 @@
     const id = String(image?.id || "");
     if (!/^[a-f0-9-]{36}$/.test(id)) return "";
     return new URL(`/vault-api/chat-images/${encodeURIComponent(id)}`, window.location.origin).toString();
+  }
+
+  function artifactUrl(messageId, artifact, preview = false) {
+    if (preview) {
+      const previewToken = String(artifact?.previewToken || "");
+      if (!/^[A-Za-z0-9_-]{32,128}$/.test(previewToken)) return "";
+      return new URL(`/vault-api/chat/artifact-previews/${encodeURIComponent(previewToken)}`,
+        window.location.origin).toString();
+    }
+    const conversationId = String(state.activeId || "");
+    const artifactId = String(artifact?.id || "");
+    if (!/^[a-f0-9-]{36}$/.test(conversationId) ||
+        !/^[a-f0-9-]{36}$/.test(String(messageId || "")) ||
+        !/^[a-f0-9-]{36}$/.test(artifactId)) return "";
+    const suffix = preview ? "/preview" : "";
+    return new URL(
+      `/vault-api/chat/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/artifacts/${encodeURIComponent(artifactId)}${suffix}`,
+      window.location.origin,
+    ).toString();
+  }
+
+  function artifactSourceUrl(artifact) {
+    const previewToken = String(artifact?.previewToken || "");
+    if (!/^[A-Za-z0-9_-]{32,128}$/.test(previewToken)) return "";
+    return new URL(`/vault-api/chat/artifact-sources/${encodeURIComponent(previewToken)}`,
+      window.location.origin).toString();
+  }
+
+  function isPreviewableArtifact(artifact) {
+    const name = String(artifact?.name || "").toLowerCase();
+    return /\.(html?|htm)$/.test(name) && Number(artifact?.size || 0) <= 5 * 1024 * 1024;
+  }
+
+  function artifactGroups() {
+    const groups = new Map();
+    for (const message of state.active?.messages || []) {
+      if (message.role !== "assistant") continue;
+      const versions = (message.previewVersions || []).filter(isPreviewableArtifact);
+      if (versions.length) {
+        const key = String(message.livePreview?.artifactKey || versions.at(-1)?.artifactKey || message.id);
+        const group = groups.get(key) || {
+          key, name: versions.at(-1)?.name || "Artifact", versions: [], updatedAt: "",
+        };
+        const seen = new Set(group.versions.map((version) => version.id));
+        for (const version of versions) {
+          if (!seen.has(version.id)) {
+            group.versions.push({ ...version, messageId: message.id });
+            seen.add(version.id);
+          }
+        }
+        group.name = message.livePreview?.name || versions.at(-1)?.name || group.name;
+        group.updatedAt = message.completedAt || message.createdAt || group.updatedAt;
+        group.running = message.status === "running" && Boolean(message.livePreview?.live);
+        groups.set(key, group);
+        continue;
+      }
+      for (const artifact of (message.artifacts || []).filter(isPreviewableArtifact)) {
+        const key = `delivery:${message.id}:${artifact.id}`;
+        groups.set(key, {
+          key, name: artifact.name || "Artifact",
+          versions: [{ ...artifact, revision: 1, messageId: message.id }],
+          updatedAt: message.completedAt || message.createdAt || "", running: false,
+        });
+      }
+    }
+    return [...groups.values()].map((group) => ({
+      ...group,
+      versions: group.versions.slice().sort((a, b) =>
+        Number(a.revision || 0) - Number(b.revision || 0)),
+    })).sort((a, b) => String(a.updatedAt).localeCompare(String(b.updatedAt)));
+  }
+
+  function selectedArtifactGroup() {
+    const groups = artifactGroups();
+    return groups.find((group) => group.key === state.artifactKey) || groups.at(-1) || null;
+  }
+
+  function artifactPreviewHtml(message) {
+    const live = isPreviewableArtifact(message.livePreview) ? message.livePreview : null;
+    const versions = (message.previewVersions || []).filter(isPreviewableArtifact);
+    const delivered = (message.artifacts || []).filter(isPreviewableArtifact);
+    const artifact = live || versions.at(-1) || delivered.at(-1);
+    if (!artifact) return "";
+    const name = String(artifact.name || "交互页面");
+    const key = String(artifact.artifactKey ||
+      (versions.length ? message.id : `delivery:${message.id}:${artifact.id}`));
+    const revisions = Math.max(1, versions.length || Number(artifact.revision || 1));
+    return `<button type="button" class="artifact-handoff" data-open-artifact="${escapeHtml(key)}">
+      <span class="artifact-handoff-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h5M10 13h5m-5 3h5"/></svg></span>
+      <span class="artifact-handoff-copy"><small>ARTIFACT</small><strong>${escapeHtml(name)}</strong><em>${message.status === "running" ? "正在更新" : `${revisions} 个版本`}</em></span>
+      <span class="artifact-handoff-open">打开<svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></span>
+    </button>`;
+  }
+
+  function setArtifactMode(mode) {
+    state.artifactMode = mode === "code" ? "code" : "preview";
+    $("#artifactPreviewTab").classList.toggle("active", state.artifactMode === "preview");
+    $("#artifactCodeTab").classList.toggle("active", state.artifactMode === "code");
+    $("#artifactPreviewTab").setAttribute("aria-selected", String(state.artifactMode === "preview"));
+    $("#artifactCodeTab").setAttribute("aria-selected", String(state.artifactMode === "code"));
+    $("#artifactCanvas").classList.toggle("show-code", state.artifactMode === "code");
+    renderArtifactWorkspace();
+  }
+
+  async function loadArtifactSource(version) {
+    if (!version) return "";
+    if (state.artifactSourceVersion === version.id) return state.artifactSource;
+    const url = artifactSourceUrl(version);
+    if (!url) throw new Error("源码链接不可用，请刷新对话");
+    const response = await fetch(url, { cache: "no-store", credentials: "omit" });
+    if (!response.ok) throw new Error("无法读取 Artifact 源码");
+    const source = await response.text();
+    state.artifactSourceVersion = version.id;
+    state.artifactSource = source;
+    return source;
+  }
+
+  function renderArtifactSwitcher(groups, selectedKey) {
+    const switcher = $("#artifactSwitcher");
+    switcher.innerHTML = groups.length > 1 ? groups.slice().reverse().map((group) => `
+      <button type="button" data-select-artifact="${escapeHtml(group.key)}" class="${group.key === selectedKey ? "active" : ""}">
+        <span>◇</span><strong>${escapeHtml(group.name)}</strong><small>${group.versions.length} 个版本</small>
+      </button>`).join("") : "";
+    $("#artifactSwitch").hidden = groups.length < 2;
+  }
+
+  function renderArtifactWorkspace(options = {}) {
+    const groups = artifactGroups();
+    const live = groups.findLast((group) => group.running);
+    if (options.autoOpen && live && state.artifactAutoOpened !== live.key &&
+        state.artifactDismissed !== live.key) {
+      state.artifactOpen = true;
+      state.artifactKey = live.key;
+      state.artifactFollowLatest = true;
+      state.artifactAutoOpened = live.key;
+    }
+    const group = groups.find((candidate) => candidate.key === state.artifactKey)
+      || groups.at(-1) || null;
+    if (state.artifactOpen && group && state.artifactKey !== group.key) {
+      state.artifactKey = group.key;
+      state.artifactFollowLatest = true;
+    }
+    document.body.classList.toggle("artifact-open", state.artifactOpen && Boolean(group));
+    $("#artifactWorkspace").setAttribute("aria-hidden", String(!(state.artifactOpen && group)));
+    if (!group) return;
+    if (state.artifactFollowLatest || state.artifactVersionIndex < 0 ||
+        state.artifactVersionIndex >= group.versions.length) {
+      state.artifactVersionIndex = group.versions.length - 1;
+    }
+    const version = group.versions[state.artifactVersionIndex];
+    if (!version) return;
+    $("#artifactTitle").textContent = group.name.replace(/\.html?$/i, "");
+    $("#artifactVersionLabel").textContent = `${state.artifactVersionIndex + 1} / ${group.versions.length}`;
+    $("#artifactPreviousVersion").disabled = state.artifactVersionIndex <= 0;
+    $("#artifactNextVersion").disabled = state.artifactVersionIndex >= group.versions.length - 1;
+    renderArtifactSwitcher(groups, group.key);
+    const frame = $("#artifactFrame");
+    const previewUrl = artifactUrl(version.messageId, version, true);
+    if (frame.dataset.version !== version.id) {
+      frame.dataset.version = version.id;
+      frame.src = previewUrl || "about:blank";
+      $("#artifactLoading").hidden = false;
+      $("#artifactRuntimeError").hidden = true;
+      state.artifactSourceVersion = "";
+      state.artifactSource = "";
+    }
+    if (state.artifactMode === "code") {
+      const code = $("#artifactCode code");
+      code.textContent = state.artifactSourceVersion === version.id
+        ? state.artifactSource : "正在读取源码…";
+      loadArtifactSource(version).then((source) => {
+        if (frame.dataset.version === version.id) code.textContent = source;
+      }).catch((error) => { code.textContent = error.message; });
+    }
+  }
+
+  function openArtifact(key) {
+    const groups = artifactGroups();
+    const group = groups.find((candidate) => candidate.key === key) || groups.at(-1);
+    if (!group) return;
+    state.artifactOpen = true;
+    state.artifactKey = group.key;
+    state.artifactVersionIndex = group.versions.length - 1;
+    state.artifactFollowLatest = true;
+    state.artifactDismissed = "";
+    renderArtifactWorkspace();
+  }
+
+  function closeArtifact() {
+    const group = selectedArtifactGroup();
+    if (group?.running) state.artifactDismissed = group.key;
+    state.artifactOpen = false;
+    document.body.classList.remove("artifact-open");
+    $("#artifactWorkspace").setAttribute("aria-hidden", "true");
+    $("#artifactSwitcher").classList.remove("open");
+    $("#artifactSwitcher").setAttribute("aria-hidden", "true");
+  }
+
+  function downloadArtifactUrl(url, name) {
+    if (!url) return;
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name || "Witt 交付文件";
+    link.rel = "noopener";
+    document.body.append(link);
+    link.click();
+    link.remove();
   }
 
   function showActivation(message = "") {
@@ -1334,6 +1661,7 @@
     return `<div class="assistant-body">
       ${["completed", "failed", "interrupted"].includes(message.status)
         ? completedMessageHtml(message) : streamHtml(message)}
+      ${artifactPreviewHtml(message)}
       ${deliveredImages ? `<div class="message-image-gallery">${deliveredImages}</div>` : ""}
       <time>${formatDate(message.createdAt)}</time>
     </div>`;
@@ -1342,7 +1670,8 @@
   function fingerprint(message) {
     const source = JSON.stringify([
       message.role, message.status, message.text, message.attachments,
-      message.activity, message.stream, message.images, message.steeredInto,
+      message.activity, message.stream, message.images, message.artifacts,
+      message.livePreview, message.previewVersions, message.steeredInto,
       message.startedAt, message.completedAt,
       message.sourceMessageId, message.segmentIndex, message.steerAtStreamIndex,
     ]);
@@ -1541,6 +1870,9 @@
         segmentIndex,
         stream: segmentStream,
         images,
+        artifacts: finalSegment ? message.artifacts : [],
+        previewVersions: finalSegment ? message.previewVersions : [],
+        livePreview: finalSegment ? message.livePreview : null,
         text: finalSegment ? message.text : "",
         activity: finalSegment
           ? message.activity
@@ -1646,6 +1978,7 @@
       (message.status === "queued" || message.status === "running"));
     setBusy(busy);
     renderDeliveries();
+    renderArtifactWorkspace({ autoOpen: true });
     clearTimeout(pollTimer);
     if (!state.supportsSse && busy && state.activeId && state.appVisible) {
       pollTimer = setTimeout(requestActiveConversationSync, 1200);
@@ -1700,7 +2033,7 @@
     button.classList.toggle("sending", state.transmitting);
     button.classList.toggle("working", state.busy && !canGuide && !state.transmitting);
     button.classList.toggle("pausing", state.pausing);
-    button.disabled = state.transmitting || state.pausing;
+    button.disabled = state.transmitting || state.pausing || (!state.busy && !canGuide);
     button.setAttribute("aria-label",
       state.busy && !canGuide ? "暂停当前执行" : state.busy ? "发送引导" : "发送");
   }
@@ -1718,9 +2051,24 @@
     refreshActionButton();
   }
 
+  function setAttachmentMenu(open) {
+    const menu = $("#attachmentMenu");
+    const expanded = Boolean(open);
+    menu.classList.toggle("open", expanded);
+    menu.setAttribute("aria-hidden", String(!expanded));
+    $(".composer-wrap").classList.toggle("menu-open", expanded);
+    $("#attachButton").setAttribute("aria-expanded", String(expanded));
+  }
+
   function selectConversation(id) {
     if (!id) return;
     const reopeningCurrent = state.active?.id === id;
+    if (!reopeningCurrent) {
+      closeArtifact();
+      state.artifactKey = "";
+      state.artifactAutoOpened = "";
+      state.artifactDismissed = "";
+    }
     state.activeId = id;
     latestPinned = true;
     pendingLatestConversationId = id;
@@ -1744,6 +2092,7 @@
     state.accessMode = conversation.accessMode || state.accessMode;
     state.codexProfile = conversation.codexProfile || "default";
     state.workDir = conversation.workDir || "";
+    restorePreferredSettings(conversation);
     persistConversation(conversation);
     updateModelControls();
     setConnected(true, conversation.busy ? "Witt 正在处理" : "服务器在线");
@@ -2136,9 +2485,7 @@
       state.codexProfile = conversation.codexProfile || "default";
       state.workDir = conversation.workDir || "";
       persistConversation(conversation);
-      localStorage.setItem("wit_model", state.model);
-      localStorage.setItem("wit_reasoning", state.reasoning);
-      localStorage.setItem("wit_access", state.accessMode);
+      persistModelPreference();
       localStorage.setItem("wit_codex_profile", state.codexProfile);
       updateModelControls();
       closeSettings();
@@ -2330,7 +2677,30 @@
   }
 
   $("#menuButton").addEventListener("click", openDrawer);
-  $("#identityButton").addEventListener("click", openDrawer);
+  $("#newChatButton").addEventListener("click", () => {
+    setChatMoreMenu(false);
+    beginNewConversation();
+  });
+  $("#chatMoreButton").addEventListener("click", () =>
+    setChatMoreMenu(!$("#chatMoreMenu").classList.contains("open")));
+  $("#moreShareButton").addEventListener("click", async () => {
+    setChatMoreMenu(false);
+    const payload = { title: state.active?.title || "Witt 对话", text: "来自 Witt 的对话" };
+    try {
+      if (navigator.share) await navigator.share(payload);
+      else { await navigator.clipboard.writeText(payload.text); toast("分享说明已复制"); }
+    } catch (error) { if (error?.name !== "AbortError") toast("暂时无法打开分享面板"); }
+  });
+  $("#morePinButton").addEventListener("click", () => {
+    if (!state.activeId) { toast("当前没有可置顶的对话"); return; }
+    const pinned = new Set(JSON.parse(localStorage.getItem("wit_pinned_conversations") || "[]"));
+    const added = !pinned.has(state.activeId);
+    if (added) pinned.add(state.activeId); else pinned.delete(state.activeId);
+    localStorage.setItem("wit_pinned_conversations", JSON.stringify([...pinned]));
+    renderConversations();
+    setChatMoreMenu(false);
+    toast(added ? "已置顶这条对话" : "已取消置顶");
+  });
   $("#closeDrawer").addEventListener("click", closeDrawer);
   $("#drawerBackdrop").addEventListener("click", closeDrawer);
   $("#profileButton").addEventListener("click", openProfile);
@@ -2341,7 +2711,6 @@
     if (!button) return;
     applyTheme(button.dataset.themeChoice, true);
   });
-  $("#quotaButton").addEventListener("click", openProfile);
   $("#closeProfile").addEventListener("click", closeProfile);
   $("#profileBackdrop").addEventListener("click", closeProfile);
   $("#closeAdminSettings").addEventListener("click", closeAdminSettings);
@@ -2396,7 +2765,45 @@
     if (!day) return;
     toast(`${day.dataset.usageDate} · ${Number(day.dataset.usageTokens || 0).toLocaleString("zh-CN")} tokens`);
   });
-  $("#deliveryButton").addEventListener("click", openDelivery);
+  $("#deliveryButton").addEventListener("click", () => {
+    setChatMoreMenu(false);
+    openDelivery();
+  });
+  $("#quotaButton").addEventListener("click", () => {
+    setChatMoreMenu(false);
+    openProfile();
+  });
+  $("#moreProjectButton").addEventListener("click", () => {
+    setChatMoreMenu(false);
+    openProject();
+  });
+  $("#moreUploadsButton").addEventListener("click", () => {
+    setChatMoreMenu(false);
+    const count = (state.active?.messages || []).reduce((total, message) =>
+      total + (Array.isArray(message.attachments) ? message.attachments.length : 0), 0);
+    toast(count ? `本对话已有 ${count} 个上传文件` : "本对话还没有上传文件");
+  });
+  $("#moreFindButton").addEventListener("click", () => {
+    setChatMoreMenu(false);
+    const term = window.prompt("查找聊天内容");
+    if (!term) return;
+    const found = window.find?.(term, false, false, true, false, true, false);
+    if (!found) toast("没有找到相关内容");
+  });
+  $("#moreHomeButton").addEventListener("click", () => {
+    setChatMoreMenu(false);
+    toast("请使用浏览器菜单中的“添加到主屏幕”");
+  });
+  $("#moreArchiveButton").addEventListener("click", () => {
+    setChatMoreMenu(false);
+    if (!state.activeId) { toast("当前没有可归档的对话"); return; }
+    openArchiveDialog(state.activeId);
+  });
+  $("#moreDeleteButton").addEventListener("click", () => {
+    setChatMoreMenu(false);
+    if (!state.activeId) { toast("当前没有可删除的对话"); return; }
+    openArchiveDialog(state.activeId);
+  });
   $("#closeDelivery").addEventListener("click", closeDelivery);
   $("#deliveryBackdrop").addEventListener("click", closeDelivery);
   $("#closeActionDetail").addEventListener("click", closeActionDetail);
@@ -2422,20 +2829,115 @@
     const artifact = allArtifacts().find((item) =>
       item.id === button.dataset.artifact && item.messageId === button.dataset.message);
     if (!artifact) return;
-    if (typeof bridge()?.downloadArtifact !== "function") {
-      toast("请先更新到新版 App 再下载交付文件");
-      bridge()?.checkForUpdates?.();
-      return;
+    if (typeof bridge()?.downloadArtifact === "function") {
+      bridge().downloadArtifact(
+        state.activeId, artifact.messageId, artifact.id, artifact.name, artifact.mimeType || "");
+    } else {
+      downloadArtifactUrl(artifactUrl(artifact.messageId, artifact), artifact.name);
     }
-    bridge()?.downloadArtifact?.(
-      state.activeId, artifact.messageId, artifact.id, artifact.name, artifact.mimeType || "");
     toast("正在下载交付文件");
+  });
+  $("#messageList").addEventListener("click", (event) => {
+    const handoff = event.target.closest("[data-open-artifact]");
+    if (handoff) openArtifact(handoff.dataset.openArtifact);
+  });
+  $("#artifactClose").addEventListener("click", closeArtifact);
+  $("#artifactPreviewTab").addEventListener("click", () => setArtifactMode("preview"));
+  $("#artifactCodeTab").addEventListener("click", () => setArtifactMode("code"));
+  $("#artifactPreviousVersion").addEventListener("click", () => {
+    const group = selectedArtifactGroup();
+    if (!group || state.artifactVersionIndex <= 0) return;
+    state.artifactVersionIndex -= 1;
+    state.artifactFollowLatest = false;
+    renderArtifactWorkspace();
+  });
+  $("#artifactNextVersion").addEventListener("click", () => {
+    const group = selectedArtifactGroup();
+    if (!group || state.artifactVersionIndex >= group.versions.length - 1) return;
+    state.artifactVersionIndex += 1;
+    state.artifactFollowLatest = state.artifactVersionIndex === group.versions.length - 1;
+    renderArtifactWorkspace();
+  });
+  $("#artifactSwitch").addEventListener("click", () => {
+    const switcher = $("#artifactSwitcher");
+    const open = !switcher.classList.contains("open");
+    switcher.classList.toggle("open", open);
+    switcher.setAttribute("aria-hidden", String(!open));
+    $("#artifactSwitch").setAttribute("aria-expanded", String(open));
+  });
+  $("#artifactSwitcher").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-select-artifact]");
+    if (!button) return;
+    openArtifact(button.dataset.selectArtifact);
+    $("#artifactSwitcher").classList.remove("open");
+    $("#artifactSwitcher").setAttribute("aria-hidden", "true");
+  });
+  $("#artifactFrame").addEventListener("load", () => {
+    $("#artifactLoading").hidden = true;
+  });
+  $("#artifactCopy").addEventListener("click", async () => {
+    const group = selectedArtifactGroup();
+    const version = group?.versions[state.artifactVersionIndex];
+    if (!version) return;
+    try {
+      const source = await loadArtifactSource(version);
+      await navigator.clipboard.writeText(source);
+      toast("Artifact 源码已复制");
+    } catch (error) { toast(error.message || "复制失败"); }
+  });
+  $("#artifactDownload").addEventListener("click", async () => {
+    const group = selectedArtifactGroup();
+    const version = group?.versions[state.artifactVersionIndex];
+    if (!version) return;
+    try {
+      const source = await loadArtifactSource(version);
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(new Blob([source], { type: "text/html;charset=utf-8" }));
+      link.download = group.name || "artifact.html";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 0);
+      toast("正在下载 Artifact");
+    } catch (error) { toast(error.message || "下载失败"); }
+  });
+  $("#artifactFixError").addEventListener("click", () => {
+    const group = selectedArtifactGroup();
+    const detail = $("#artifactErrorMessage").textContent;
+    closeArtifact();
+    $("#messageInput").value = `请修复 Artifact「${group?.name || "当前页面"}」的运行错误：${detail}`;
+    $("#messageInput").dispatchEvent(new Event("input"));
+    $("#messageInput").focus();
+  });
+  window.addEventListener("message", (event) => {
+    if (event.source !== $("#artifactFrame").contentWindow) return;
+    if (event.data?.type === "witt-artifact-ready") {
+      $("#artifactLoading").hidden = true;
+      $("#artifactRuntimeError").hidden = true;
+    } else if (event.data?.type === "witt-artifact-error") {
+      $("#artifactLoading").hidden = true;
+      $("#artifactErrorMessage").textContent = `${event.data.message || "页面脚本发生错误"}${event.data.line ? `（第 ${event.data.line} 行）` : ""}`;
+      $("#artifactRuntimeError").hidden = false;
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.artifactOpen) closeArtifact();
   });
   $("#drawerNewChat").addEventListener("click", () => {
     closeDrawer();
     beginNewConversation();
   });
-  $("#attachButton").addEventListener("click", () => bridge()?.pickFiles?.());
+  $("#attachButton").addEventListener("click", () => {
+    setAttachmentMenu(!$("#attachmentMenu").classList.contains("open"));
+  });
+  $("#attachPhotoButton").addEventListener("click", () => {
+    setAttachmentMenu(false);
+    bridge()?.pickFiles?.();
+  });
+  $("#attachFileButton").addEventListener("click", () => {
+    setAttachmentMenu(false);
+    bridge()?.pickFiles?.();
+  });
   $("#activateInviteButton").addEventListener("click", () => {
     const code = $("#inviteCode").value.trim();
     if (!code) { $("#authGateHint").textContent = "请先输入邀请码。"; return; }
@@ -2587,7 +3089,10 @@
     if (state.archiveId) bridge()?.archiveConversation?.(state.archiveId);
   });
   $("#updateButton").addEventListener("click", () => bridge()?.checkForUpdates?.());
-  $("#projectButton").addEventListener("click", openProject);
+  $("#projectButton").addEventListener("click", () => {
+    setAttachmentMenu(false);
+    openProject();
+  });
   $("#closeProject").addEventListener("click", closeProject);
   $("#projectBackdrop").addEventListener("click", closeProject);
   $(".project-options").addEventListener("click", (event) => {
@@ -2607,7 +3112,50 @@
     }
     bridge().updateConversationProject(state.activeId, workDir);
   });
-  $("#modelButton").addEventListener("click", openSettings);
+  $("#modelButton").addEventListener("click", () => {
+    if (state.busy) { toast("当前任务完成后再切换模型"); return; }
+    state.draftModel = state.model;
+    state.draftReasoning = state.reasoning;
+    state.draftAccessMode = state.accessMode;
+    updateModelControls();
+    setQuickModelMenu(!$("#quickModelMenu").classList.contains("open"));
+  });
+  $("#quickModelExpand").addEventListener("click", () => {
+    const menu = $("#quickModelMenu");
+    const open = !menu.classList.contains("models-open");
+    menu.classList.toggle("models-open", open);
+    $("#quickModelExpand").setAttribute("aria-expanded", String(open));
+  });
+  $("#quickModelOptions").addEventListener("click", (event) => {
+    const model = event.target.closest("[data-quick-model]")?.dataset.quickModel;
+    if (!model) return;
+    state.draftModel = model;
+    const offered = availableReasoningEfforts();
+    if (!offered.includes(state.draftReasoning)) state.draftReasoning = offered.includes("medium") ? "medium" : offered[0];
+    applySettings({ closeSheet: false });
+    setQuickModelMenu(false);
+  });
+  $("#quickReasoningOptions").addEventListener("click", (event) => {
+    const reasoning = event.target.closest("[data-quick-reasoning]")?.dataset.quickReasoning;
+    if (!reasoning) return;
+    state.draftReasoning = reasoning;
+    applySettings({ closeSheet: false });
+    setQuickModelMenu(false);
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!event.target.closest(".composer-wrap")) {
+      setAttachmentMenu(false);
+      setQuickModelMenu(false);
+    }
+    if (!event.target.closest(".compact-nav")) setChatMoreMenu(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      setAttachmentMenu(false);
+      setQuickModelMenu(false);
+      setChatMoreMenu(false);
+    }
+  });
   $("#closeSettings").addEventListener("click", closeSettings);
   $("#sheetBackdrop").addEventListener("click", closeSettings);
   $(".model-options").addEventListener("click", (event) => {
@@ -2630,26 +3178,7 @@
     state.draftAccessMode = accessMode;
     updateModelControls();
   });
-  $("#saveSettings").addEventListener("click", () => {
-    state.model = state.draftModel || state.model;
-    state.reasoning = state.draftReasoning || state.reasoning;
-    state.accessMode = state.draftAccessMode || state.accessMode;
-    localStorage.setItem("wit_model", state.model);
-    localStorage.setItem("wit_reasoning", state.reasoning);
-    localStorage.setItem("wit_access", state.accessMode);
-    updateModelControls();
-    if (state.activeId) {
-      if (state.supports21) {
-        bridge()?.updateConversationSettings?.(
-          state.activeId, state.model, state.reasoning, state.accessMode);
-      } else {
-        bridge()?.updateConversationSettings?.(state.activeId, state.model, state.reasoning);
-      }
-    } else {
-      closeSettings();
-      toast(`新对话将使用 ${modelNames[state.model]} · ${reasoningNames[state.reasoning]}`);
-    }
-  });
+  $("#saveSettings").addEventListener("click", () => applySettings());
   $("#forkConversationButton").addEventListener("click", () => {
     if (state.activeId) bridge()?.forkConversation?.(state.activeId);
   });
