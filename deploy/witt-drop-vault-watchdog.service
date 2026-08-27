@@ -1,0 +1,11 @@
+[Unit]
+Description=Detect and recover a stalled Witt API
+After=drop-vault.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/witt-drop-vault-watchdog
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/run

@@ -1,0 +1,12 @@
+[Unit]
+Description=Probe Witt API responsiveness every 30 seconds
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=true
+Unit=witt-drop-vault-watchdog.service
+
+[Install]
+WantedBy=timers.target

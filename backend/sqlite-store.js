@@ -50,22 +50,30 @@ class ConversationStore {
         payload_json=excluded.payload_json`);
     this.deleteMessage = this.db.prepare(
       "DELETE FROM messages WHERE conversation_id = ? AND id = ?");
+    // Chat updates arrive as a burst of fine-grained app-server notifications. Persisting the
+    // complete conversation for every notification makes long threads monopolize Node's event
+    // loop. Keep the live object in memory and coalesce disk writes per conversation instead.
+    this.cache = new Map();
+    this.pendingSaves = new Map();
+    this.saveDelayMs = 1_000;
   }
 
   load(id) {
+    if (this.cache.has(id)) return this.cache.get(id);
     const row = this.selectConversation.get(id);
     if (!row) return null;
     try {
       const conversation = JSON.parse(row.payload_json);
       conversation.messages = this.selectMessages.all(id)
         .map((message) => JSON.parse(message.payload_json));
+      this.cache.set(id, conversation);
       return conversation;
     } catch {
       return null;
     }
   }
 
-  save(conversation) {
+  persist(conversation) {
     const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
     const metadata = { ...conversation };
     delete metadata.messages;
@@ -86,8 +94,39 @@ class ConversationStore {
     }
   }
 
+  save(conversation, { immediate = false } = {}) {
+    this.cache.set(conversation.id, conversation);
+    const pending = this.pendingSaves.get(conversation.id);
+    if (pending) {
+      pending.conversation = conversation;
+      if (!immediate) return;
+      clearTimeout(pending.timer);
+      this.pendingSaves.delete(conversation.id);
+    }
+    if (immediate) {
+      this.persist(conversation);
+      return;
+    }
+    const entry = { conversation, timer: null };
+    entry.timer = setTimeout(() => {
+      this.pendingSaves.delete(conversation.id);
+      try {
+        this.persist(entry.conversation);
+      } catch (error) {
+        console.error(`Failed to persist conversation ${conversation.id}:`, error);
+        this.save(entry.conversation);
+      }
+    }, this.saveDelayMs);
+    entry.timer.unref();
+    this.pendingSaves.set(conversation.id, entry);
+  }
+
   all() {
-    return this.selectIds.all().map((row) => this.load(row.id)).filter(Boolean);
+    const ids = new Set([
+      ...this.selectIds.all().map((row) => row.id),
+      ...this.cache.keys(),
+    ]);
+    return [...ids].map((id) => this.load(id)).filter(Boolean);
   }
 
   importJsonFiles() {
@@ -96,7 +135,8 @@ class ConversationStore {
     for (const name of fs.readdirSync(this.directory)) {
       if (!/^[a-f0-9-]{36}\.json$/.test(name)) continue;
       try {
-        this.save(JSON.parse(fs.readFileSync(path.join(this.directory, name), "utf8")));
+        this.save(JSON.parse(fs.readFileSync(path.join(this.directory, name), "utf8")),
+          { immediate: true });
         imported += 1;
       } catch {}
     }

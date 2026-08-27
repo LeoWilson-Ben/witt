@@ -1,0 +1,39 @@
+#!/bin/bash
+set -euo pipefail
+
+health_url=http://127.0.0.1:3003/health
+state_file=/run/witt-drop-vault-watchdog.failures
+
+if /usr/bin/curl --fail --silent --show-error --max-time 4 "$health_url" >/dev/null; then
+  /usr/bin/printf '0\n' > "$state_file"
+  exit 0
+fi
+
+failures=0
+if [[ -r "$state_file" ]]; then
+  read -r failures < "$state_file" || failures=0
+fi
+[[ "$failures" =~ ^[0-9]+$ ]] || failures=0
+failures=$((failures + 1))
+/usr/bin/printf '%s\n' "$failures" > "$state_file"
+
+# Avoid restarting for a single transient delay. Two consecutive failed probes mean the Node
+# event loop has been unreachable for at least one full watchdog interval.
+if (( failures < 2 )); then
+  exit 0
+fi
+
+/usr/bin/logger -t witt-watchdog "Witt API failed $failures consecutive health checks; restarting"
+/usr/bin/systemctl restart drop-vault.service
+
+for _ in {1..15}; do
+  if /usr/bin/curl --fail --silent --show-error --max-time 2 "$health_url" >/dev/null; then
+    /usr/bin/printf '0\n' > "$state_file"
+    /usr/bin/logger -t witt-watchdog "Witt API recovered after automatic restart"
+    exit 0
+  fi
+  /usr/bin/sleep 1
+done
+
+/usr/bin/logger -t witt-watchdog "Witt API did not recover after automatic restart"
+exit 1
