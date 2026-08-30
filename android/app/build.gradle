@@ -10,9 +10,11 @@ def setting = { String propertyName, String environmentName, String fallback ->
 }
 def javaString = { String value -> "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\"" }
 def signingFile = file(setting("wittSigningProperties", "WITT_SIGNING_PROPERTIES", "signing.properties"))
-def webUrl = setting("wittWebUrl", "WITT_WEB_URL", "https://witt.example.com/vault/index.html")
-def apiUrl = setting("wittApiUrl", "WITT_API_URL", "https://witt.example.com/vault-api/")
-def updateUrl = setting("wittUpdateUrl", "WITT_UPDATE_URL", "https://witt.example.com/vault/update.json")
+def webUrl = setting("wittWebUrl", "WITT_WEB_URL", "https://upload.16.208.20.133.sslip.io/vault/index.html")
+def apiUrl = setting("wittApiUrl", "WITT_API_URL", "https://upload.16.208.20.133.sslip.io/vault-api/")
+def updateUrl = setting("wittUpdateUrl", "WITT_UPDATE_URL", "https://upload.16.208.20.133.sslip.io/vault/update.json")
+def fallbackWebUrl = setting("wittFallbackWebUrl", "WITT_FALLBACK_WEB_URL", "https://upload.13.208.127.58.sslip.io/vault/index.html")
+def fallbackApiUrl = setting("wittFallbackApiUrl", "WITT_FALLBACK_API_URL", "https://upload.13.208.127.58.sslip.io/vault-api/")
 def signing = new Properties()
 if (signingFile.exists()) signingFile.withInputStream { signing.load(it) }
 
@@ -24,11 +26,13 @@ android {
         applicationId "com.codevibe.dropvault"
         minSdk 26
         targetSdk 35
-        versionCode 29
-        versionName "2.2.10"
+        versionCode 37
+        versionName "2.2.18"
         buildConfigField "String", "WEB_URL", javaString(webUrl)
         buildConfigField "String", "API_URL", javaString(apiUrl)
         buildConfigField "String", "UPDATE_URL", javaString(updateUrl)
+        buildConfigField "String", "FALLBACK_WEB_URL", javaString(fallbackWebUrl)
+        buildConfigField "String", "FALLBACK_API_URL", javaString(fallbackApiUrl)
     }
 
     signingConfigs {
@@ -58,6 +62,11 @@ android {
     buildFeatures {
         buildConfig true
     }
+    packaging {
+        resources {
+            excludes += ["META-INF/versions/9/OSGI-INF/MANIFEST.MF"]
+        }
+    }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -67,4 +76,5 @@ android {
 dependencies {
     implementation "androidx.core:core:1.15.0"
     implementation "androidx.webkit:webkit:1.12.1"
+    implementation "com.github.mwiede:jsch:2.28.6"
 }

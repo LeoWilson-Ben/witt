@@ -38,6 +38,7 @@
     lastSubmittedText: "",
     supports21: false,
     nativeInitialized: false,
+    nativeVersion: "",
     detailRequest: null,
     usage: null,
     usageLoading: false,
@@ -62,11 +63,28 @@
     artifactDismissed: "",
     artifactSource: "",
     artifactSourceVersion: "",
+    localSsh: { connected: false, connecting: false },
+    localSshProfiles: [],
+    localSshAdding: false,
+    localSshLost: false,
+    localSftpOpen: false,
+    localSftpPath: ".",
   };
   let pollTimer;
   let toastTimer;
   let collapseResizeTimer;
   let composerResizeObserver;
+  let localTerminal;
+  let localTerminalFit;
+  let localTerminalResizeObserver;
+  let localTerminalControlArmed = false;
+  let localTerminalResizeTimer;
+  let localTerminalLongPressTimer;
+  let localTerminalTouchState;
+  let localTerminalSuppressLinkUntil = 0;
+  let localSshViewportBaseline = 0;
+  let localSshManualDisconnect = false;
+  const systemThemeQuery = matchMedia("(prefers-color-scheme: dark)");
 
   function syncComposerInset() {
     const shell = $(".app-shell");
@@ -84,18 +102,29 @@
     composerResizeObserver.observe($(".composer-wrap"));
   }
   function applyTheme(mode, persist = false) {
-    const selected = ["light", "colorful", "dark"].includes(mode) ? mode : "colorful";
+    const preference = ["system", "light", "colorful", "dark"].includes(mode) ? mode : "system";
+    const selected = preference === "system"
+      ? (systemThemeQuery.matches ? "dark" : "light")
+      : preference;
     const commit = () => {
       document.documentElement.dataset.themeMode = selected;
       document.documentElement.dataset.theme = selected;
-      if (persist) localStorage.setItem("wit_theme", selected);
+      document.documentElement.dataset.themePreference = preference;
+      if (persist) localStorage.setItem("wit_theme", preference);
       $("#themeColor")?.setAttribute("content",
         selected === "dark" ? "#1f1f1c" : "#f7f6f2");
       document.querySelectorAll("[data-theme-choice]").forEach((button) => {
-        const active = button.dataset.themeChoice === selected;
+        const active = button.dataset.themeChoice === preference;
         button.classList.toggle("active", active);
         button.setAttribute("aria-pressed", String(active));
       });
+      const nightButton = $("#nightModeButton");
+      if (nightButton) {
+        const dark = selected === "dark";
+        nightButton.setAttribute("aria-pressed", String(dark));
+        nightButton.setAttribute("aria-label", dark ? "关闭夜间模式" : "开启夜间模式");
+      }
+      if (state.nativeInitialized) bridge()?.contentReady?.(selected);
     };
     const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (persist && document.startViewTransition && !reducedMotion) {
@@ -105,7 +134,16 @@
     }
   }
 
-  applyTheme(localStorage.getItem("wit_theme") || "light");
+  applyTheme(localStorage.getItem("wit_theme") ||
+    document.documentElement.dataset.themePreference || "system");
+  const syncSystemTheme = () => {
+    if (document.documentElement.dataset.themePreference === "system") applyTheme("system");
+  };
+  if (typeof systemThemeQuery.addEventListener === "function") {
+    systemThemeQuery.addEventListener("change", syncSystemTheme);
+  } else {
+    systemThemeQuery.addListener(syncSystemTheme);
+  }
   requestAnimationFrame(watchComposerInset);
   function escapeHtml(value) {
     const node = document.createElement("span");
@@ -868,6 +906,460 @@
     $("#profileSheet").setAttribute("aria-hidden", "true");
   }
 
+  function syncLocalSshPanels() {
+    const connected = Boolean(state.localSsh.connected);
+    const recovering = Boolean(state.localSshLost || state.localSsh.reconnecting);
+    const hasProfiles = state.localSshProfiles.length > 0;
+    const sftpOpen = connected && state.localSftpOpen;
+    $("#localSshLibrary").hidden = connected || state.localSshAdding || state.localSshLost;
+    $("#localSshConnectForm").hidden = connected || !state.localSshAdding || state.localSshLost;
+    $("#localTerminal").hidden = sftpOpen || (!connected && !state.localSshLost);
+    $("#localSftp").hidden = !sftpOpen;
+    $("#cancelLocalSshProfile").hidden = !hasProfiles;
+    $("#disconnectLocalSsh").hidden = !connected && !recovering;
+  }
+
+  function setLocalSshAdding(adding) {
+    state.localSshAdding = Boolean(adding) || state.localSshProfiles.length === 0;
+    syncLocalSshPanels();
+  }
+
+  function renderLocalSshProfiles(payload = {}) {
+    state.localSshProfiles = Array.isArray(payload.profiles) ? payload.profiles : [];
+    if (!state.localSshProfiles.length && !state.localSsh.connected) state.localSshAdding = true;
+    const activeId = state.localSsh.profileId || "";
+    $("#localSshProfiles").innerHTML = state.localSshProfiles.length
+      ? state.localSshProfiles.map((profile) => {
+          const connecting = Boolean(state.localSsh.connecting) && profile.id === activeId;
+          const label = profile.label || profile.host || "服务器";
+          const mark = label.trim().slice(0, 2).toUpperCase();
+          return `<article class="local-ssh-profile${connecting ? " connecting" : ""}">
+            <button class="local-ssh-profile-connect" type="button" data-connect-ssh-profile="${escapeHtml(profile.id)}">
+              <i class="local-ssh-profile-mark">${escapeHtml(mark)}</i>
+              <span class="local-ssh-profile-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(profile.username || "root")}@${escapeHtml(profile.host)}:${Number(profile.port || 22)}</small></span>
+              <em class="local-ssh-profile-state">${connecting ? "连接中" : "连接"}</em>
+            </button>
+            <button class="local-ssh-profile-delete" type="button" data-delete-ssh-profile="${escapeHtml(profile.id)}" aria-label="删除 ${escapeHtml(label)}">×</button>
+          </article>`;
+        }).join("")
+      : `<p class="local-ssh-empty">添加第一台服务器，连接成功后即可一触登录。</p>`;
+    syncLocalSshPanels();
+  }
+
+  function localSftpChild(directory, name) {
+    const base = directory === "/" ? "" : String(directory || ".").replace(/\/$/, "");
+    return `${base}/${name}`;
+  }
+
+  function localSftpParent(path) {
+    const normalized = String(path || "/").replace(/\/+$/, "") || "/";
+    if (normalized === "/") return "/";
+    const slash = normalized.lastIndexOf("/");
+    return slash <= 0 ? "/" : normalized.slice(0, slash);
+  }
+
+  function renderLocalSftp(payload = {}) {
+    const path = payload.path || state.localSftpPath || ".";
+    const entries = Array.isArray(payload.entries) ? payload.entries : [];
+    state.localSftpPath = path;
+    $("#localSftpPath").textContent = path;
+    $("#localSftpParent").disabled = path === "/";
+    $("#localSftpList").innerHTML = entries.length ? entries.map((entry) => {
+      const child = localSftpChild(path, entry.name);
+      const details = entry.directory ? "文件夹" : `${formatBytes(entry.size)} · ${formatDate(entry.modifiedAt)}`;
+      return `<article class="local-sftp-entry">
+        <button class="local-sftp-open" type="button" data-sftp-${entry.directory ? "directory" : "file"}="${escapeHtml(child)}">
+          <i>${entry.directory ? "▰" : "▤"}</i><span><strong>${escapeHtml(entry.name)}</strong><small>${escapeHtml(details)}</small></span>
+        </button>
+        ${entry.directory ? "" : `<button class="local-sftp-download" type="button" data-sftp-download="${escapeHtml(child)}" data-sftp-name="${escapeHtml(entry.name)}">下载</button>`}
+      </article>`;
+    }).join("") : `<p>这个目录是空的。</p>`;
+  }
+
+  function openLocalSftp(path = state.localSftpPath || ".") {
+    if (!state.localSsh.connected) return;
+    hideLocalTerminalContext(true);
+    state.localSftpOpen = true;
+    syncLocalSshPanels();
+    $("#localSftpList").innerHTML = "<p>正在读取远程文件…</p>";
+    bridge()?.requestLocalSftp?.(path);
+  }
+
+  function closeLocalSftp() {
+    state.localSftpOpen = false;
+    syncLocalSshPanels();
+    requestAnimationFrame(() => {
+      fitLocalTerminal();
+      localTerminal?.focus();
+    });
+  }
+
+  function syncLocalSshViewport() {
+    const sheet = $("#localSshSheet");
+    if (!sheet.classList.contains("open")) return;
+    const viewport = window.visualViewport;
+    const visibleHeight = Math.round(viewport?.height || window.innerHeight);
+    const offsetTop = Math.round(viewport?.offsetTop || 0);
+    if (!localSshViewportBaseline) localSshViewportBaseline = window.innerHeight;
+    const overlayInset = Math.max(0, Math.round(window.innerHeight - visibleHeight - offsetTop));
+    const resizedInset = Math.max(0, localSshViewportBaseline - window.innerHeight);
+    const keyboardOpen = Math.max(overlayInset, resizedInset) > 72;
+    sheet.style.setProperty("--local-visible-height", `${visibleHeight}px`);
+    sheet.style.setProperty("--local-viewport-top", `${offsetTop}px`);
+    sheet.classList.toggle("keyboard-open", keyboardOpen);
+    fitLocalTerminal();
+  }
+
+  function renderLocalSsh(payload = state.localSsh) {
+    state.localSsh = { ...state.localSsh, ...payload };
+    const connected = Boolean(state.localSsh.connected);
+    const connecting = Boolean(state.localSsh.connecting);
+    const reconnecting = Boolean(state.localSsh.reconnecting);
+    if (connected) state.localSshLost = false;
+    if (reconnecting && state.localSsh.profileId) state.localSshLost = true;
+    if (!connected) state.localSftpOpen = false;
+    $("#localSshConnectButton").disabled = connecting;
+    $("#localSshConnectButton span").textContent = connecting ? "正在连接" : "保存并连接";
+    const target = `${state.localSsh.username || "root"}@${state.localSsh.host || "服务器"}`;
+    $("#localSshDrawerStatus").textContent = connected
+      ? target : reconnecting ? `${target} · 重连中` : "本地终端";
+    $("#localTerminalTarget").textContent = connected
+      ? target : state.localSshLost ? `${target} · 自动重连中` : "服务器";
+    syncLocalSshPanels();
+    if (connected) {
+      requestAnimationFrame(() => {
+        ensureLocalTerminal();
+        fitLocalTerminal();
+        localTerminal?.focus();
+      });
+    }
+    requestAnimationFrame(syncLocalSshViewport);
+  }
+
+  function setLocalTerminalControl(armed) {
+    localTerminalControlArmed = Boolean(armed);
+    $("#localTerminalControl")?.classList.toggle("active", localTerminalControlArmed);
+    $("#localTerminalControl")?.setAttribute("aria-pressed", String(localTerminalControlArmed));
+  }
+
+  function sendLocalTerminalInput(data) {
+    if (!data) return;
+    if (state.localSshLost) return;
+    let input = data;
+    if (localTerminalControlArmed && data.length === 1) {
+      const code = data.toUpperCase().charCodeAt(0);
+      if (code >= 64 && code <= 95) input = String.fromCharCode(code - 64);
+      setLocalTerminalControl(false);
+    }
+    bridge()?.sendLocalSshInput?.(input);
+  }
+
+  function fitLocalTerminal() {
+    if (!localTerminal || !localTerminalFit || $("#localTerminal").hidden) return;
+    clearTimeout(localTerminalResizeTimer);
+    localTerminalResizeTimer = setTimeout(() => {
+      try {
+        localTerminalFit.fit();
+        bridge()?.resizeLocalSsh?.(localTerminal.cols, localTerminal.rows);
+      } catch (_error) {}
+    }, 40);
+  }
+
+  function hideLocalTerminalContext(clearSelection = false) {
+    const menu = $("#localTerminalContext");
+    if (menu) menu.hidden = true;
+    if (clearSelection) localTerminal?.clearSelection();
+  }
+
+  function localTerminalCellAt(clientX, clientY) {
+    if (!localTerminal) return null;
+    const screen = $("#localTerminalOutput .xterm-screen");
+    const rect = screen?.getBoundingClientRect();
+    if (!rect?.width || !rect.height) return null;
+    const pointX = Number.isFinite(Number(clientX)) ? Number(clientX) : rect.left + rect.width / 2;
+    const pointY = Number.isFinite(Number(clientY)) ? Number(clientY) : rect.top + rect.height / 2;
+    const column = Math.max(0, Math.min(localTerminal.cols - 1,
+      Math.floor(((pointX - rect.left) / rect.width) * localTerminal.cols)));
+    const viewportRow = Math.max(0, Math.min(localTerminal.rows - 1,
+      Math.floor(((pointY - rect.top) / rect.height) * localTerminal.rows)));
+    const viewportY = Number(localTerminal.buffer.active.viewportY) || 0;
+    return { column: Math.trunc(column), row: Math.trunc(viewportY + viewportRow) };
+  }
+
+  function localTerminalAdjacentCell(position, direction) {
+    if (!localTerminal) return null;
+    const buffer = localTerminal.buffer.active;
+    if (direction < 0) {
+      if (position.column > 0) return { row: position.row, column: position.column - 1 };
+      if (position.row > 0 && buffer.getLine(position.row)?.isWrapped) {
+        return { row: position.row - 1, column: localTerminal.cols - 1 };
+      }
+      return null;
+    }
+    if (position.column < localTerminal.cols - 1) {
+      return { row: position.row, column: position.column + 1 };
+    }
+    if (position.row + 1 < buffer.length && buffer.getLine(position.row + 1)?.isWrapped) {
+      return { row: position.row + 1, column: 0 };
+    }
+    return null;
+  }
+
+  function localTerminalCellText(position) {
+    return localTerminal?.buffer.active.getLine(position.row)
+      ?.getCell(position.column)?.getChars() || " ";
+  }
+
+  function selectLocalTerminalWordAt(clientX, clientY) {
+    const touched = localTerminalCellAt(clientX, clientY);
+    if (!touched || !localTerminal) return false;
+    if (/\s/.test(localTerminalCellText(touched))) {
+      localTerminal.select(touched.column, touched.row, 1);
+      return true;
+    }
+    let start = touched;
+    let end = touched;
+    for (let previous = localTerminalAdjacentCell(start, -1);
+      previous && !/\s/.test(localTerminalCellText(previous));
+      previous = localTerminalAdjacentCell(start, -1)) start = previous;
+    for (let next = localTerminalAdjacentCell(end, 1);
+      next && !/\s/.test(localTerminalCellText(next));
+      next = localTerminalAdjacentCell(end, 1)) end = next;
+    const length = ((end.row - start.row) * localTerminal.cols) + end.column - start.column + 1;
+    localTerminal.select(Math.trunc(start.column), Math.trunc(start.row),
+      Math.max(1, Math.trunc(length)));
+    return true;
+  }
+
+  function showLocalTerminalContext(clientX, clientY) {
+    const menu = $("#localTerminalContext");
+    if (!menu) return;
+    if (menu.parentElement !== document.body) document.body.appendChild(menu);
+    menu.hidden = false;
+    const viewport = window.visualViewport;
+    const bounds = {
+      left: viewport?.offsetLeft || 0,
+      top: viewport?.offsetTop || 0,
+      width: viewport?.width || window.innerWidth,
+      height: viewport?.height || window.innerHeight,
+    };
+    const anchorX = Number.isFinite(Number(clientX)) ? Number(clientX) : bounds.left + bounds.width / 2;
+    const anchorY = Number.isFinite(Number(clientY)) ? Number(clientY) : bounds.top + bounds.height / 2;
+    const terminalTop = $("#localTerminalOutput")?.getBoundingClientRect().top;
+    const safeTop = Math.max(bounds.top + 8,
+      Number.isFinite(terminalTop) ? terminalTop + 8 : bounds.top + 8);
+    const width = menu.offsetWidth;
+    const height = menu.offsetHeight;
+    const left = Math.max(bounds.left + 8,
+      Math.min(anchorX - width / 2, bounds.left + bounds.width - width - 8));
+    let top = anchorY - height - 14;
+    if (top < safeTop) top = anchorY + 14;
+    top = Math.max(safeTop,
+      Math.min(top, bounds.top + bounds.height - height - 8));
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(top)}px`;
+  }
+
+  async function copyLocalTerminalSelection() {
+    const text = localTerminal?.getSelection() || "";
+    if (!text) {
+      toast("请先长按选择终端内容");
+      return false;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("已复制选中内容");
+      return true;
+    } catch (_error) {
+      toast("复制失败，请重试");
+      return false;
+    }
+  }
+
+  async function pasteLocalTerminalClipboard() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) {
+        toast("剪贴板里没有文字");
+        return false;
+      }
+      localTerminal?.paste(text);
+      return true;
+    } catch (_error) {
+      toast("无法读取剪贴板，请检查系统权限");
+      return false;
+    }
+  }
+
+  function installLocalTerminalContextMenu() {
+    const output = $("#localTerminalOutput");
+    if (!output || output.dataset.contextMenuReady === "true") return;
+    output.dataset.contextMenuReady = "true";
+    const cancelLongPress = () => {
+      clearTimeout(localTerminalLongPressTimer);
+      localTerminalLongPressTimer = null;
+    };
+    output.addEventListener("touchstart", (event) => {
+      if (event.touches.length !== 1) {
+        cancelLongPress();
+        return;
+      }
+      const touch = event.touches[0];
+      hideLocalTerminalContext();
+      localTerminalTouchState = {
+        x: touch.clientX,
+        y: touch.clientY,
+        longPressed: false,
+      };
+      cancelLongPress();
+      localTerminalLongPressTimer = setTimeout(() => {
+        if (!localTerminalTouchState) return;
+        localTerminalTouchState.longPressed = selectLocalTerminalWordAt(
+          localTerminalTouchState.x, localTerminalTouchState.y);
+        if (!localTerminalTouchState.longPressed) return;
+        localTerminalSuppressLinkUntil = Date.now() + 900;
+        navigator.vibrate?.(12);
+        showLocalTerminalContext(localTerminalTouchState.x, localTerminalTouchState.y);
+      }, 520);
+    }, { capture: true, passive: true });
+    output.addEventListener("touchmove", (event) => {
+      if (!localTerminalTouchState || event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      const distance = Math.hypot(
+        touch.clientX - localTerminalTouchState.x,
+        touch.clientY - localTerminalTouchState.y,
+      );
+      if (distance > 9 && !localTerminalTouchState.longPressed) cancelLongPress();
+      if (localTerminalTouchState.longPressed) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    }, { capture: true, passive: false });
+    const finishTouch = (event) => {
+      cancelLongPress();
+      if (localTerminalTouchState?.longPressed) {
+        event.preventDefault();
+        event.stopPropagation();
+        localTerminalSuppressLinkUntil = Date.now() + 900;
+      }
+      localTerminalTouchState = null;
+    };
+    output.addEventListener("touchend", finishTouch, { capture: true, passive: false });
+    output.addEventListener("touchcancel", finishTouch, { capture: true, passive: false });
+    output.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!localTerminal?.hasSelection()) selectLocalTerminalWordAt(event.clientX, event.clientY);
+      showLocalTerminalContext(event.clientX, event.clientY);
+    }, true);
+    output.addEventListener("click", (event) => {
+      if (Date.now() < localTerminalSuppressLinkUntil) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    }, true);
+  }
+
+  function openLocalTerminalLink(_event, uri) {
+    if (Date.now() < localTerminalSuppressLinkUntil || !/^https?:\/\//i.test(uri)) return;
+    hideLocalTerminalContext(true);
+    window.location.href = uri;
+  }
+
+  async function handleLocalTerminalContextAction(action) {
+    if (action === "select-all") {
+      localTerminal?.selectAll();
+      return;
+    }
+    if (action === "copy") await copyLocalTerminalSelection();
+    if (action === "paste") await pasteLocalTerminalClipboard();
+    hideLocalTerminalContext();
+    if (action === "paste") localTerminal?.focus();
+  }
+
+  function ensureLocalTerminal() {
+    if (localTerminal) return localTerminal;
+    if (typeof window.Terminal !== "function" || !window.FitAddon?.FitAddon ||
+        !window.WebLinksAddon?.WebLinksAddon) {
+      toast("终端组件加载失败，请重新打开");
+      return null;
+    }
+    localTerminal = new window.Terminal({
+      cursorBlink: true,
+      cursorStyle: "bar",
+      cursorWidth: 2,
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+      fontSize: 7,
+      lineHeight: 1.22,
+      letterSpacing: 0,
+      scrollback: 6000,
+      allowTransparency: true,
+      theme: {
+        background: "#e5eaed",
+        foreground: "#292d3d",
+        cursor: "#303444",
+        cursorAccent: "#e5eaed",
+        selectionBackground: "#9eb6c099",
+        black: "#252936",
+        red: "#a84f59",
+        green: "#36735d",
+        yellow: "#8a6e2f",
+        blue: "#365e8a",
+        magenta: "#76518c",
+        cyan: "#2f7077",
+        white: "#d5dbdf",
+        brightBlack: "#68737c",
+        brightRed: "#b76069",
+        brightGreen: "#43866e",
+        brightYellow: "#9b7e3a",
+        brightBlue: "#46709d",
+        brightMagenta: "#89649d",
+        brightCyan: "#3f8289",
+        brightWhite: "#f5f7f8",
+      },
+    });
+    localTerminalFit = new window.FitAddon.FitAddon();
+    localTerminal.loadAddon(localTerminalFit);
+    localTerminal.loadAddon(new window.WebLinksAddon.WebLinksAddon(openLocalTerminalLink));
+    localTerminal.open($("#localTerminalOutput"));
+    installLocalTerminalContextMenu();
+    localTerminal.onData(sendLocalTerminalInput);
+    if (typeof ResizeObserver === "function") {
+      localTerminalResizeObserver = new ResizeObserver(fitLocalTerminal);
+      localTerminalResizeObserver.observe($("#localTerminalOutput"));
+    }
+    return localTerminal;
+  }
+
+  function openLocalSsh() {
+    closeDrawer();
+    if (versionLessThan(state.nativeVersion, "2.2.16")) {
+      toast("请先更新 Witt 后使用本地终端");
+      bridge()?.checkForUpdates?.();
+      return;
+    }
+    $("#localSshSheet").classList.add("open");
+    $("#localSshSheet").setAttribute("aria-hidden", "false");
+    localSshViewportBaseline = window.innerHeight;
+    bridge()?.requestLocalSshStatus?.();
+    bridge()?.requestLocalSshProfiles?.();
+    requestAnimationFrame(syncLocalSshViewport);
+  }
+
+  function closeLocalSsh() {
+    hideLocalTerminalContext(true);
+    $("#localSshSheet").classList.remove("open");
+    $("#localSshSheet").classList.remove("keyboard-open");
+    $("#localSshSheet").style.removeProperty("--local-visible-height");
+    $("#localSshSheet").style.removeProperty("--local-viewport-top");
+    $("#localSshSheet").setAttribute("aria-hidden", "true");
+    localSshViewportBaseline = 0;
+  }
+
+  function appendLocalTerminal(text) {
+    ensureLocalTerminal()?.write(String(text || ""));
+  }
+
   function openAdminSettings() {
     if (!state.admin) return;
     closeDrawer();
@@ -947,7 +1439,7 @@
       bridge()?.checkForUpdates?.();
       return;
     }
-    bridge().consumeRateLimitReset();
+    bridge().consumeRateLimitReset(state.activeId || "");
   }
 
   function openSettings() {
@@ -2003,7 +2495,7 @@
       if (state.supportsSse) bridge()?.unsubscribeConversationEvents?.();
       return;
     }
-    applyTheme(document.documentElement.dataset.themeMode || "light");
+    applyTheme(document.documentElement.dataset.themePreference || "system");
     if (state.supportsSse && state.activeId) {
       bridge()?.subscribeConversationEvents?.(state.activeId);
     } else if (state.busy && state.activeId) {
@@ -2219,6 +2711,7 @@
       state.nativeInitialized = true;
       document.body.classList.add("native");
       const version = String(info.version || window.DropVaultAndroid?.getVersion?.() || "");
+      state.nativeVersion = version;
       const cacheScope = String(info.cacheScope || window.DropVaultAndroid?.getCacheScope?.() || "");
       state.supportsSse = Boolean(info.supportsSse);
       if (/^[a-f0-9]{24,64}$/.test(cacheScope)) {
@@ -2329,6 +2822,63 @@
         serverLive.innerHTML = "<i></i>OFFLINE";
       }
       $("#appServerStatus").textContent = message || "App Server 能力暂时不可用";
+    },
+    onLocalSshStatus(json) {
+      renderLocalSsh(JSON.parse(json));
+    },
+    onLocalSshProfiles(json) {
+      renderLocalSshProfiles(JSON.parse(json));
+    },
+    onLocalSshProfileError(message) {
+      toast(message || "服务器配置操作失败");
+    },
+    onLocalSshConnected(json) {
+      const payload = JSON.parse(json);
+      const reconnected = Boolean(payload.reconnected);
+      $("#localSshPassword").value = "";
+      state.localSshAdding = false;
+      state.localSshLost = false;
+      localSshManualDisconnect = false;
+      renderLocalSsh(payload);
+      if (reconnected) {
+        appendLocalTerminal("\r\n\x1b[38;2;85;214;170m[Witt] 已自动重新连接。\x1b[0m\r\n");
+        toast("服务器已自动重连");
+      } else {
+        ensureLocalTerminal()?.reset();
+        appendLocalTerminal("\x1b[38;2;85;214;170mWitt SSH\x1b[0m  手机已直连服务器\r\n");
+        toast("服务器已连接");
+      }
+    },
+    onLocalSshOutput(text) {
+      appendLocalTerminal(text);
+    },
+    onLocalSshError(message) {
+      $("#localSshPassword").value = "";
+      if (!state.localSsh.connected) renderLocalSsh({ connected: false, connecting: false });
+      toast(message || "服务器连接失败");
+    },
+    onLocalSshDisconnected() {
+      if (localSshManualDisconnect || !state.localSsh.connected) {
+        localSshManualDisconnect = false;
+        state.localSshLost = false;
+        renderLocalSsh({ connected: false, connecting: false, reconnecting: false });
+        return;
+      }
+      state.localSsh = { ...state.localSsh, connected: false, connecting: false };
+      state.localSshLost = true;
+      $("#localSshDrawerStatus").textContent = "连接已中断";
+      $("#localTerminalTarget").textContent = `${state.localSsh.username || "root"}@${state.localSsh.host} · 自动重连中`;
+      syncLocalSshPanels();
+      appendLocalTerminal("\r\n\x1b[33m[Witt] SSH 连接意外中断，正在自动重连，无需退出页面。\x1b[0m\r\n");
+    },
+    onLocalSftpList(json) {
+      renderLocalSftp(JSON.parse(json));
+    },
+    onLocalSftpError(message) {
+      toast(message || "SFTP 操作失败");
+    },
+    onLocalSftpComplete(operation) {
+      toast(operation === "upload" ? "文件已上传" : "文件已保存");
     },
     onConversationCreated(json) {
       const conversation = JSON.parse(json).conversation;
@@ -2704,6 +3254,7 @@
   $("#closeDrawer").addEventListener("click", closeDrawer);
   $("#drawerBackdrop").addEventListener("click", closeDrawer);
   $("#profileButton").addEventListener("click", openProfile);
+  $("#localSshButton").addEventListener("click", openLocalSsh);
   $("#adminSettingsButton").addEventListener("click", openAdminSettings);
   $("#codexAccountsButton").addEventListener("click", openCodexAccounts);
   $(".theme-options").addEventListener("click", (event) => {
@@ -2711,8 +3262,126 @@
     if (!button) return;
     applyTheme(button.dataset.themeChoice, true);
   });
+  $("#nightModeButton").addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    applyTheme(next, true);
+  });
   $("#closeProfile").addEventListener("click", closeProfile);
   $("#profileBackdrop").addEventListener("click", closeProfile);
+  $("#closeLocalSsh").addEventListener("click", closeLocalSsh);
+  $("#localSshBackdrop").addEventListener("click", closeLocalSsh);
+  $("#addLocalSshProfile").addEventListener("click", () => {
+    if (state.localSsh.connected || state.localSshLost || state.localSsh.reconnecting) {
+      localSshManualDisconnect = true;
+      bridge()?.disconnectLocalSsh?.();
+      state.localSshLost = false;
+      renderLocalSsh({ connected: false, connecting: false, reconnecting: false });
+    }
+    setLocalSshAdding(true);
+    requestAnimationFrame(() => $("#localSshLabel").focus());
+  });
+  $("#cancelLocalSshProfile").addEventListener("click", () => setLocalSshAdding(false));
+  $("#localSshProfiles").addEventListener("click", (event) => {
+    const deleteId = event.target.closest("[data-delete-ssh-profile]")?.dataset.deleteSshProfile;
+    if (deleteId) {
+      const profile = state.localSshProfiles.find((item) => item.id === deleteId);
+      if (confirm(`删除“${profile?.label || "这台服务器"}”及其本机加密密码？`)) {
+        bridge()?.deleteSavedLocalSsh?.(deleteId);
+      }
+      return;
+    }
+    const profileId = event.target.closest("[data-connect-ssh-profile]")?.dataset.connectSshProfile;
+    if (!profileId) return;
+    const profile = state.localSshProfiles.find((item) => item.id === profileId);
+    renderLocalSsh({
+      connected: false,
+      connecting: true,
+      profileId,
+      host: profile?.host || "",
+      username: profile?.username || "root",
+      port: profile?.port || 22,
+    });
+    bridge()?.connectSavedLocalSsh?.(profileId);
+  });
+  $("#toggleLocalSshPassword").addEventListener("click", () => {
+    const input = $("#localSshPassword");
+    input.type = input.type === "password" ? "text" : "password";
+    $("#toggleLocalSshPassword").setAttribute(
+      "aria-label", input.type === "password" ? "显示密码" : "隐藏密码");
+  });
+  $("#localSshConnectForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const password = $("#localSshPassword").value;
+    const port = Number($("#localSshPort").value || 22);
+    renderLocalSsh({ connected: false, connecting: true });
+    bridge()?.saveAndConnectLocalSsh?.(
+      $("#localSshLabel").value.trim(),
+      $("#localSshHost").value.trim(),
+      $("#localSshUsername").value.trim() || "root",
+      port,
+      password,
+    );
+    $("#localSshPassword").value = "";
+  });
+  $("#localSftpButton").addEventListener("click", () => openLocalSftp());
+  $("#localTerminalContext").addEventListener("click", (event) => {
+    const action = event.target.closest("[data-terminal-context]")?.dataset.terminalContext;
+    if (action) handleLocalTerminalContextAction(action);
+  });
+  document.addEventListener("pointerdown", (event) => {
+    const menu = $("#localTerminalContext");
+    if (!menu?.hidden && !menu.contains(event.target)) hideLocalTerminalContext(true);
+  });
+  $("#closeLocalSftp").addEventListener("click", closeLocalSftp);
+  $("#localSftpParent").addEventListener("click", () =>
+    openLocalSftp(localSftpParent(state.localSftpPath)));
+  $("#uploadLocalSftp").addEventListener("click", () =>
+    bridge()?.pickLocalSftpUpload?.(state.localSftpPath));
+  $("#localSftpList").addEventListener("click", (event) => {
+    const directory = event.target.closest("[data-sftp-directory]")?.dataset.sftpDirectory;
+    if (directory) {
+      openLocalSftp(directory);
+      return;
+    }
+    const download = event.target.closest("[data-sftp-download]");
+    if (download) {
+      bridge()?.downloadLocalSftp?.(download.dataset.sftpDownload, download.dataset.sftpName || "file");
+    }
+  });
+  $(".local-terminal-tools").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-terminal-key]");
+    if (!button) return;
+    const key = {
+      escape: "\u001b",
+      tab: "\t",
+      up: "\u001b[A",
+      down: "\u001b[B",
+      interrupt: "\u0003",
+    }[button.dataset.terminalKey];
+    sendLocalTerminalInput(key);
+    localTerminal?.focus();
+  });
+  $("#localTerminalControl").addEventListener("click", () => {
+    setLocalTerminalControl(!localTerminalControlArmed);
+    localTerminal?.focus();
+  });
+  $("#localTerminalKeyboard").addEventListener("click", () => localTerminal?.focus());
+  $("#localTerminalClear").addEventListener("click", () => {
+    localTerminal?.clear();
+    localTerminal?.focus();
+  });
+  $("#disconnectLocalSsh").addEventListener("click", () => {
+    localSshManualDisconnect = true;
+    bridge()?.disconnectLocalSsh?.();
+    state.localSshLost = false;
+    renderLocalSsh({ connected: false, connecting: false, reconnecting: false });
+  });
+  window.visualViewport?.addEventListener("resize", syncLocalSshViewport);
+  window.visualViewport?.addEventListener("scroll", syncLocalSshViewport);
+  window.addEventListener("resize", () => {
+    syncLocalSshViewport();
+    fitLocalTerminal();
+  });
   $("#closeAdminSettings").addEventListener("click", closeAdminSettings);
   $("#adminSettingsBackdrop").addEventListener("click", closeAdminSettings);
   $("#closeCodexAccounts").addEventListener("click", closeCodexAccounts);

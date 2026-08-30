@@ -79,6 +79,7 @@ class ChatService {
       try { return [fs.realpathSync(root)]; } catch { return []; }
     });
     this.active = null;
+    this.lastUsageConversationId = null;
     this.usageCache = new Map();
     this.capabilityCache = new Map();
     this.boundClients = new WeakSet();
@@ -880,7 +881,7 @@ class ChatService {
     }
 
     if (req.method === "POST" && url.pathname === "/chat/usage/reset") {
-      this.consumeRateLimitReset(res);
+      this.consumeRateLimitReset(res, url.searchParams.get("conversationId"));
       return true;
     }
 
@@ -1327,6 +1328,7 @@ class ChatService {
   }
 
   async readAccountUsage(res, conversationId = null) {
+    if (this.readConversation(conversationId)) this.lastUsageConversationId = conversationId;
     if (this.quotaExhausted) {
       this.sendJson(res, 200, this.withConversationUsage({
         summary: {
@@ -1412,19 +1414,31 @@ class ChatService {
     };
   }
 
-  async consumeRateLimitReset(res) {
+  async consumeRateLimitReset(res, conversationId = null) {
     if (this.quotaExhausted) {
       this.sendJson(res, 429, { error: QUOTA_EXHAUSTED_MESSAGE });
       return;
     }
-    const client = new AppServerClient({ codexBin: this.codexBin, cwd: this.codexWorkDir, home: "/home/ubuntu" });
+    const conversation = this.readConversation(conversationId || this.lastUsageConversationId);
+    const storedProfile = this.profileFor(conversation);
+    const profile = this.allowedCodexProfiles.has(storedProfile.id)
+      ? storedProfile : this.codexProfiles[this.defaultCodexProfile];
+    const client = new AppServerClient({
+      codexBin: this.codexBin,
+      cwd: profile.workDir,
+      home: "/home/ubuntu",
+      codexHome: profile.codexHome,
+    });
     try {
       await client.start();
       const result = await client.request("account/rateLimitResetCredit/consume", {
         idempotencyKey: crypto.randomUUID(),
       });
-      this.usageCache.clear();
-      this.sendJson(res, 200, { outcome: String(result?.outcome || "noCredit") });
+      this.usageCache.delete(profile.id);
+      this.sendJson(res, 200, {
+        outcome: String(result?.outcome || "noCredit"),
+        codexProfile: profile.id,
+      });
     } catch (error) {
       this.sendJson(res, 502, { error: `无法使用重置额度：${String(error.message || error).slice(0, 160)}` });
     } finally {

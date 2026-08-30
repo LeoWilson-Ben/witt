@@ -26,6 +26,7 @@ Witt is a self-hosted mobile client for Codex. It combines a dependency-light No
 - SQLite 持久化、WAL、定时备份及 JSON 旧数据迁移
 - 浅色、深色和动态主题，兼容横屏与移动端安全区
 - Android Keystore 凭据保存、原生下载和应用内更新
+- Android 本地 SSH 终端，支持 Keystore 加密的多服务器配置和点击直连
 
 ## 架构
 
@@ -45,6 +46,8 @@ Android App / Mobile Browser
                               │
                               ▼
                         local projects
+
+Android App ── SSH ──► 用户指定的服务器
 ```
 
 | 目录 | 用途 |
@@ -174,7 +177,7 @@ UI 测试会在 `tests/` 生成本地截图，这些截图默认不进入版本�
 
 - API 只监听 `127.0.0.1`，公网入口交给 HTTPS 反向代理。
 - 邀请码只能使用一次，设备凭据相互隔离并可单独停用。
-- Android 端使用 Keystore 保护设备凭据，不将凭据持久化到网页存储。
+- Android 端使用 Keystore 保护设备凭据和已保存的 SSH 密码，不将凭据持久化到网页存储。
 - 会话和认证数据使用 SQLite；敏感目录应限制为服务用户可读。
 - 删除数据、发送外部消息和高权限命令仍需要应用层审批策略。
 - 完全访问模式允许 Codex 操作服务器，请使用专用用户、最小 sudo 规则、备份和网络隔离。

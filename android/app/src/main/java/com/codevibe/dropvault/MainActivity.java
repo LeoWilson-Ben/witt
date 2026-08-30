@@ -26,6 +26,7 @@ import android.webkit.SafeBrowsingResponse;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -58,7 +59,9 @@ import java.security.MessageDigest;
 import java.security.KeyStore;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -76,6 +79,8 @@ import android.util.Base64;
 
 public class MainActivity extends Activity {
     private static final int PICK_FILES = 8102;
+    private static final int PICK_SFTP_UPLOAD = 8103;
+    private static final int CREATE_SFTP_DOWNLOAD = 8104;
     private static final long MAX_FILE_BYTES = 500L * 1024L * 1024L;
     private final Map<String, PickedFile> pickedFiles = new ConcurrentHashMap<>();
     private final Map<Long, String> artifactDownloads = new ConcurrentHashMap<>();
@@ -96,9 +101,58 @@ public class MainActivity extends Activity {
     private volatile boolean appForeground = true;
     private volatile String eventConversationId = "";
     private volatile HttpURLConnection eventConnection;
+    private volatile boolean usingStandby;
+    private boolean standbyAttempted;
     private final AtomicInteger eventGeneration = new AtomicInteger();
     private final WebBridge webBridge = new WebBridge();
+    private LocalSshManager localSsh;
+    private String pendingSftpDirectory = ".";
+    private String pendingSftpDownloadPath = "";
     private static final String AUTH_KEY_ALIAS = "witt-device-auth-v2";
+
+    private static String hostOf(String rawUrl) {
+        try { return Uri.parse(rawUrl).getHost(); } catch (Exception ignored) { return ""; }
+    }
+
+    private static String originOf(String rawUrl) {
+        try {
+            Uri uri = Uri.parse(rawUrl);
+            return uri.getScheme() + "://" + uri.getAuthority();
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private boolean isTrustedWittHost(String host) {
+        return host != null && (host.equalsIgnoreCase(hostOf(BuildConfig.WEB_URL)) ||
+            host.equalsIgnoreCase(hostOf(BuildConfig.FALLBACK_WEB_URL)));
+    }
+
+    private boolean isStandbyHost(String host) {
+        return host != null && host.equalsIgnoreCase(hostOf(BuildConfig.FALLBACK_WEB_URL));
+    }
+
+    private Set<String> trustedWebOrigins() {
+        Set<String> origins = new HashSet<>();
+        origins.add(originOf(BuildConfig.WEB_URL));
+        origins.add(originOf(BuildConfig.FALLBACK_WEB_URL));
+        origins.remove("");
+        return origins;
+    }
+
+    private String activeApiUrl() {
+        return usingStandby ? BuildConfig.FALLBACK_API_URL : BuildConfig.API_URL;
+    }
+
+    private boolean tryStandby(WebView view, Uri failedUri) {
+        if (standbyAttempted || usingStandby || failedUri == null ||
+            !hostOf(BuildConfig.WEB_URL).equalsIgnoreCase(failedUri.getHost())) return false;
+        standbyAttempted = true;
+        usingStandby = true;
+        view.stopLoading();
+        view.loadUrl(BuildConfig.FALLBACK_WEB_URL);
+        return true;
+    }
 
     private SharedPreferences authPreferences() {
         return getSharedPreferences("witt-device-auth", MODE_PRIVATE);
@@ -195,6 +249,39 @@ public class MainActivity extends Activity {
     @SuppressLint("SetJavaScriptEnabled")
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        localSsh = new LocalSshManager(this, new LocalSshManager.Callback() {
+            @Override public void onStatus(String json) {
+                callJs("window.DropVault.onLocalSshStatus(" + JSONObject.quote(json) + ")");
+            }
+            @Override public void onProfiles(String json) {
+                callJs("window.DropVault.onLocalSshProfiles(" + JSONObject.quote(json) + ")");
+            }
+            @Override public void onProfileError(String message) {
+                callJs("window.DropVault.onLocalSshProfileError(" + JSONObject.quote(message) + ")");
+            }
+            @Override public void onConnected(String json) {
+                callJs("window.DropVault.onLocalSshConnected(" + JSONObject.quote(json) + ")");
+            }
+            @Override public void onOutput(String text) {
+                callJs("window.DropVault.onLocalSshOutput(" + JSONObject.quote(text) + ")");
+            }
+            @Override public void onError(String message) {
+                callJs("window.DropVault.onLocalSshError(" + JSONObject.quote(message) + ")");
+            }
+            @Override public void onDisconnected() {
+                callJs("window.DropVault.onLocalSshDisconnected()");
+            }
+            @Override public void onSftpList(String json) {
+                callJs("window.DropVault.onLocalSftpList(" + JSONObject.quote(json) + ")");
+            }
+            @Override public void onSftpError(String message) {
+                callJs("window.DropVault.onLocalSftpError(" + JSONObject.quote(message) + ")");
+            }
+            @Override public void onSftpComplete(String operation, String path) {
+                callJs("window.DropVault.onLocalSftpComplete(" + JSONObject.quote(operation)
+                    + "," + JSONObject.quote(path) + ")");
+            }
+        });
         applySystemBars("light");
 
         rootView = new FrameLayout(this);
@@ -220,10 +307,10 @@ public class MainActivity extends Activity {
 
         CookieManager.getInstance().setAcceptCookie(false);
         WebViewCompat.addWebMessageListener(webView, "WittNative",
-            Collections.singleton("https://upload.16.208.20.133.sslip.io"),
+            trustedWebOrigins(),
             (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
                 if (!isMainFrame || sourceOrigin == null ||
-                    !"upload.16.208.20.133.sslip.io".equalsIgnoreCase(sourceOrigin.getHost())) return;
+                    !isTrustedWittHost(sourceOrigin.getHost())) return;
                 dispatchNativeMessage(message.getData());
             });
         webView.setWebChromeClient(new WebChromeClient());
@@ -243,13 +330,18 @@ public class MainActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
-                if ("upload.16.208.20.133.sslip.io".equalsIgnoreCase(uri.getHost())) return false;
+                if (isTrustedWittHost(uri.getHost())) return false;
                 try {
                     startActivity(new Intent(Intent.ACTION_VIEW, uri));
                 } catch (Exception ignored) {
                     Toast.makeText(MainActivity.this, "无法打开链接", Toast.LENGTH_SHORT).show();
                 }
                 return true;
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                usingStandby = isStandbyHost(hostOf(url));
             }
 
             @Override
@@ -268,10 +360,20 @@ public class MainActivity extends Activity {
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (!request.isForMainFrame()) return;
+                if (tryStandby(view, request.getUrl())) return;
+                String retryUrl = usingStandby ? BuildConfig.FALLBACK_WEB_URL : BuildConfig.WEB_URL;
                 String html = "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>" +
                     "<style>body{min-height:100vh;margin:0;display:grid;place-content:center;text-align:center;font-family:sans-serif;background:#f5f8ff;color:#263952}button{margin:18px auto;padding:12px 20px;border:0;border-radius:12px;color:white;background:#566fe8}</style>" +
-                    "<h2>暂时无法连接 Witt</h2><p>请检查网络后重试</p><button onclick='location.href=\"" + BuildConfig.WEB_URL + "\"'>重新连接</button>";
-                view.loadDataWithBaseURL(BuildConfig.WEB_URL, html, "text/html", "UTF-8", null);
+                    "<h2>暂时无法连接 Witt</h2><p>请检查网络后重试</p><button onclick='location.href=\"" + retryUrl + "\"'>重新连接</button>";
+                view.loadDataWithBaseURL(retryUrl, html, "text/html", "UTF-8", null);
+            }
+
+            @Override
+            public void onReceivedHttpError(WebView view, WebResourceRequest request,
+                                            WebResourceResponse errorResponse) {
+                if (request.isForMainFrame() && errorResponse.getStatusCode() >= 500) {
+                    tryStandby(view, request.getUrl());
+                }
             }
 
             @Override
@@ -297,7 +399,7 @@ public class MainActivity extends Activity {
         Uri uri = request.getUrl();
         if (!"GET".equalsIgnoreCase(request.getMethod()) ||
             !"https".equalsIgnoreCase(uri.getScheme()) ||
-            !"upload.16.208.20.133.sslip.io".equalsIgnoreCase(uri.getHost()) ||
+            !isTrustedWittHost(uri.getHost()) ||
             uri.getPath() == null ||
             !uri.getPath().matches("^/vault-api/chat-images/[a-f0-9-]{36}$")) return null;
         String token = apiToken();
@@ -357,7 +459,7 @@ public class MainActivity extends Activity {
                     webBridge.subscribeConversationEvents(args.optString(0)); break;
                 case "unsubscribeConversationEvents": webBridge.unsubscribeConversationEvents(); break;
                 case "requestUsage": webBridge.requestUsage(args.optString(0)); break;
-                case "consumeRateLimitReset": webBridge.consumeRateLimitReset(); break;
+                case "consumeRateLimitReset": webBridge.consumeRateLimitReset(args.optString(0)); break;
                 case "requestStreamDetail": webBridge.requestStreamDetail(
                     args.optString(0), args.optString(1), args.optString(2)); break;
                 case "createConversation": webBridge.createConversation(
@@ -384,6 +486,24 @@ public class MainActivity extends Activity {
                     args.optString(2), args.optString(3), args.optString(4)); break;
                 case "downloadImage": webBridge.downloadImage(
                     args.optString(0), args.optString(1), args.optString(2)); break;
+                case "requestLocalSshStatus": webBridge.requestLocalSshStatus(); break;
+                case "requestLocalSshProfiles": webBridge.requestLocalSshProfiles(); break;
+                case "connectLocalSsh": webBridge.connectLocalSsh(
+                    args.optString(0), args.optString(1), args.optInt(2, 22), args.optString(3)); break;
+                case "saveAndConnectLocalSsh": webBridge.saveAndConnectLocalSsh(
+                    args.optString(0), args.optString(1), args.optString(2),
+                    args.optInt(3, 22), args.optString(4)); break;
+                case "connectSavedLocalSsh": webBridge.connectSavedLocalSsh(args.optString(0)); break;
+                case "deleteSavedLocalSsh": webBridge.deleteSavedLocalSsh(args.optString(0)); break;
+                case "sendLocalSshInput": webBridge.sendLocalSshInput(args.optString(0)); break;
+                case "resizeLocalSsh": webBridge.resizeLocalSsh(
+                    args.optInt(0, 120), args.optInt(1, 36)); break;
+                case "disconnectLocalSsh": webBridge.disconnectLocalSsh(); break;
+                case "requestLocalSftp": webBridge.requestLocalSftp(args.optString(0, ".")); break;
+                case "pickLocalSftpUpload":
+                    webBridge.pickLocalSftpUpload(args.optString(0, ".")); break;
+                case "downloadLocalSftp": webBridge.downloadLocalSftp(
+                    args.optString(0), args.optString(1, "file")); break;
                 case "checkForUpdates": webBridge.checkForUpdates(); break;
                 default: break;
             }
@@ -442,10 +562,42 @@ public class MainActivity extends Activity {
         startActivityForResult(intent, PICK_FILES);
     }
 
+    private void chooseSftpUpload(String directory) {
+        pendingSftpDirectory = directory == null || directory.isEmpty() ? "." : directory;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("*/*");
+        startActivityForResult(intent, PICK_SFTP_UPLOAD);
+    }
+
+    private void chooseSftpDownload(String remotePath, String name) {
+        pendingSftpDownloadPath = remotePath == null ? "" : remotePath;
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("application/octet-stream")
+            .putExtra(Intent.EXTRA_TITLE, name == null || name.isEmpty() ? "file" : name);
+        startActivityForResult(intent, CREATE_SFTP_DOWNLOAD);
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != PICK_FILES || resultCode != RESULT_OK || data == null) return;
+        if (resultCode != RESULT_OK || data == null) return;
+        if (requestCode == PICK_SFTP_UPLOAD) {
+            Uri uri = data.getData();
+            if (uri != null && localSsh != null) {
+                localSsh.uploadSftp(uri, pendingSftpDirectory, displayName(uri));
+            }
+            return;
+        }
+        if (requestCode == CREATE_SFTP_DOWNLOAD) {
+            Uri uri = data.getData();
+            if (uri != null && localSsh != null && !pendingSftpDownloadPath.isEmpty()) {
+                localSsh.downloadSftp(pendingSftpDownloadPath, uri);
+            }
+            return;
+        }
+        if (requestCode != PICK_FILES) return;
         JSONArray result = new JSONArray();
         if (data.getClipData() != null) {
             for (int index = 0; index < data.getClipData().getItemCount(); index++) {
@@ -455,6 +607,18 @@ public class MainActivity extends Activity {
             addPickedFile(data.getData(), data, result);
         }
         callJs("window.DropVault.onFilesPicked(" + JSONObject.quote(result.toString()) + ")");
+    }
+
+    private String displayName(Uri uri) {
+        String name = "file";
+        try (Cursor cursor = getContentResolver().query(uri,
+            new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (index >= 0 && cursor.getString(index) != null) name = cursor.getString(index);
+            }
+        }
+        return name;
     }
 
     private void addPickedFile(Uri uri, Intent source, JSONArray output) {
@@ -499,7 +663,7 @@ public class MainActivity extends Activity {
         network.execute(() -> {
             HttpURLConnection connection = null;
             try {
-                connection = (HttpURLConnection) new URL(BuildConfig.API_URL + "files").openConnection();
+                connection = (HttpURLConnection) new URL(activeApiUrl() + "files").openConnection();
                 connection.setRequestMethod("POST");
                 connection.setDoOutput(true);
                 connection.setConnectTimeout(15_000);
@@ -553,7 +717,7 @@ public class MainActivity extends Activity {
         network.execute(() -> {
             HttpURLConnection connection = null;
             try {
-                connection = (HttpURLConnection) new URL(BuildConfig.API_URL + "files?limit=100").openConnection();
+                connection = (HttpURLConnection) new URL(activeApiUrl() + "files?limit=100").openConnection();
                 connection.setConnectTimeout(10_000);
                 connection.setReadTimeout(15_000);
                 connection.setRequestProperty("Authorization", "Bearer " + apiToken());
@@ -616,7 +780,7 @@ public class MainActivity extends Activity {
     }
 
     private HttpURLConnection openApiConnection(String endpoint, String method) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL(BuildConfig.API_URL + endpoint).openConnection();
+        HttpURLConnection connection = (HttpURLConnection) new URL(activeApiUrl() + endpoint).openConnection();
         connection.setRequestMethod(method);
         connection.setConnectTimeout(15_000);
         connection.setReadTimeout(30_000);
@@ -647,7 +811,7 @@ public class MainActivity extends Activity {
         network.execute(() -> {
             HttpURLConnection connection = null;
             try {
-                connection = (HttpURLConnection) new URL(BuildConfig.API_URL + "auth/activate").openConnection();
+                connection = (HttpURLConnection) new URL(activeApiUrl() + "auth/activate").openConnection();
                 connection.setRequestMethod("POST");
                 connection.setDoOutput(true);
                 connection.setConnectTimeout(15_000);
@@ -874,11 +1038,13 @@ public class MainActivity extends Activity {
         requestChat("usage" + suffix, "window.DropVault.onUsage", "window.DropVault.onUsageError");
     }
 
-    private void consumeRateLimitReset() {
+    private void consumeRateLimitReset(String conversationId) {
+        String suffix = conversationId != null && conversationId.matches("[a-f0-9-]{36}")
+            ? "?conversationId=" + conversationId : "";
         network.execute(() -> {
             HttpURLConnection connection = null;
             try {
-                connection = openApiConnection("usage/reset", "POST");
+                connection = openApiConnection("chat/usage/reset" + suffix, "POST");
                 connection.setDoOutput(true);
                 connection.getOutputStream().close();
                 int status = connection.getResponseCode();
@@ -1080,7 +1246,7 @@ public class MainActivity extends Activity {
                     .replaceAll("^\\.+", "");
                 if (safeName.trim().isEmpty()) safeName = "交付文件";
                 String destinationName = System.currentTimeMillis() + "-" + safeName;
-                Uri uri = Uri.parse(BuildConfig.API_URL + "chat/conversations/" + conversationId +
+                Uri uri = Uri.parse(activeApiUrl() + "chat/conversations/" + conversationId +
                     "/messages/" + messageId + "/artifacts/" + artifactId);
                 DownloadManager.Request request = new DownloadManager.Request(uri)
                     .addRequestHeader("Authorization", "Bearer " + apiToken())
@@ -1109,7 +1275,7 @@ public class MainActivity extends Activity {
             try {
                 Uri uri = Uri.parse(rawUrl);
                 if (!"https".equalsIgnoreCase(uri.getScheme()) ||
-                    !"upload.16.208.20.133.sslip.io".equalsIgnoreCase(uri.getHost()) ||
+                    !isTrustedWittHost(uri.getHost()) ||
                     uri.getPath() == null || !uri.getPath().matches("^/vault-api/chat-images/[a-f0-9-]{36}$")) {
                     throw new IllegalArgumentException("invalid image url");
                 }
@@ -1263,6 +1429,7 @@ public class MainActivity extends Activity {
         updateHandler.removeCallbacks(foregroundUpdateCheck);
         if (receiverRegistered) unregisterReceiver(downloadReceiver);
         unsubscribeConversationEvents();
+        if (localSsh != null) localSsh.shutdown();
         network.shutdownNow();
         if (webView != null) {
             webView.destroy();
@@ -1313,7 +1480,9 @@ public class MainActivity extends Activity {
             MainActivity.this.unsubscribeConversationEvents();
         }
         @JavascriptInterface public void requestUsage(String conversationId) { MainActivity.this.requestUsage(conversationId); }
-        @JavascriptInterface public void consumeRateLimitReset() { MainActivity.this.consumeRateLimitReset(); }
+        @JavascriptInterface public void consumeRateLimitReset(String conversationId) {
+            MainActivity.this.consumeRateLimitReset(conversationId);
+        }
         @JavascriptInterface public void requestStreamDetail(
                 String conversationId, String messageId, String entryId) {
             MainActivity.this.requestStreamDetail(conversationId, messageId, entryId);
@@ -1370,6 +1539,46 @@ public class MainActivity extends Activity {
         }
         @JavascriptInterface public void downloadImage(String url, String name, String mimeType) {
             MainActivity.this.downloadImage(url, name, mimeType);
+        }
+        @JavascriptInterface public void requestLocalSshStatus() {
+            if (localSsh != null) localSsh.requestStatus();
+        }
+        @JavascriptInterface public void requestLocalSshProfiles() {
+            if (localSsh != null) localSsh.requestProfiles();
+        }
+        @JavascriptInterface public void connectLocalSsh(
+                String host, String username, int port, String password) {
+            if (localSsh != null) localSsh.connect(host, username, port, password);
+        }
+        @JavascriptInterface public void saveAndConnectLocalSsh(
+                String label, String host, String username, int port, String password) {
+            if (localSsh != null) {
+                localSsh.connectAndRemember(label, host, username, port, password);
+            }
+        }
+        @JavascriptInterface public void connectSavedLocalSsh(String profileId) {
+            if (localSsh != null) localSsh.connectSaved(profileId);
+        }
+        @JavascriptInterface public void deleteSavedLocalSsh(String profileId) {
+            if (localSsh != null) localSsh.deleteSaved(profileId);
+        }
+        @JavascriptInterface public void sendLocalSshInput(String input) {
+            if (localSsh != null) localSsh.send(input);
+        }
+        @JavascriptInterface public void resizeLocalSsh(int columns, int rows) {
+            if (localSsh != null) localSsh.resize(columns, rows);
+        }
+        @JavascriptInterface public void disconnectLocalSsh() {
+            if (localSsh != null) localSsh.disconnect();
+        }
+        @JavascriptInterface public void requestLocalSftp(String path) {
+            if (localSsh != null) localSsh.listSftp(path);
+        }
+        @JavascriptInterface public void pickLocalSftpUpload(String directory) {
+            runOnUiThread(() -> chooseSftpUpload(directory));
+        }
+        @JavascriptInterface public void downloadLocalSftp(String path, String name) {
+            runOnUiThread(() -> chooseSftpDownload(path, name));
         }
         @JavascriptInterface public void checkForUpdates() { runOnUiThread(() -> UpdateManager.check(MainActivity.this, true)); }
         @JavascriptInterface public String getVersion() { return BuildConfig.VERSION_NAME; }

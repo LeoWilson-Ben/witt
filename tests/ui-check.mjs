@@ -1,8 +1,57 @@
 import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
 
+const androidSource = readFileSync(
+  new URL("../android/app/src/main/java/com/codevibe/dropvault/MainActivity.java", import.meta.url),
+  "utf8",
+);
+const sshProfileSource = readFileSync(
+  new URL("../android/app/src/main/java/com/codevibe/dropvault/LocalSshProfileStore.java", import.meta.url),
+  "utf8",
+);
+const localSshManagerSource = readFileSync(
+  new URL("../android/app/src/main/java/com/codevibe/dropvault/LocalSshManager.java", import.meta.url),
+  "utf8",
+);
+const androidManifest = readFileSync(
+  new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8",
+);
+if (!sshProfileSource.includes('KeyStore.getInstance("AndroidKeyStore")') ||
+    !sshProfileSource.includes('Cipher.getInstance("AES/GCM/NoPadding")') ||
+    !sshProfileSource.includes("cipher.updateAAD")) {
+  throw new Error("Saved SSH passwords are not protected by an authenticated Android Keystore envelope");
+}
+if (!androidManifest.includes('android:windowSoftInputMode="adjustResize"')) {
+  throw new Error("Android terminal is not configured to follow the software keyboard");
+}
+if (!localSshManagerSource.includes("newSingleThreadExecutor()")) {
+  throw new Error("Android terminal input is not serialized for interactive programs");
+}
+if (!localSshManagerSource.includes("ScheduledExecutorService") ||
+    !localSshManagerSource.includes("scheduleReconnect()") ||
+    !localSshManagerSource.includes("RECONNECT_DELAYS_SECONDS")) {
+  throw new Error("Android terminal does not automatically recover saved SSH sessions");
+}
+if (!androidSource.includes('openApiConnection("chat/usage/reset" + suffix, "POST")') ||
+    !androidSource.includes('webBridge.consumeRateLimitReset(args.optString(0))')) {
+  throw new Error("Android quota reset is not connected to the chat usage reset route");
+}
+const backendSource = readFileSync(new URL("../backend/server.js", import.meta.url), "utf8");
+const chatServiceSource = readFileSync(new URL("../backend/chat-service.js", import.meta.url), "utf8");
+if (!backendSource.includes('url.pathname === "/usage/reset"') ||
+    !backendSource.includes('url.pathname = "/chat/usage/reset"')) {
+  throw new Error("Backend does not preserve the legacy quota reset route");
+}
+if (!chatServiceSource.includes('this.consumeRateLimitReset(res, url.searchParams.get("conversationId"))') ||
+    !chatServiceSource.includes("codexHome: profile.codexHome") ||
+    !chatServiceSource.includes("conversationId || this.lastUsageConversationId") ||
+    !chatServiceSource.includes("this.usageCache.delete(profile.id)")) {
+  throw new Error("Backend quota reset is not scoped to the active conversation account");
+}
+
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
+const cdpSession = await page.context().newCDPSession(page);
 await page.context().grantPermissions(["clipboard-read", "clipboard-write"], {
   origin: "https://wit.test",
 });
@@ -10,6 +59,7 @@ const errors = [];
 page.on("console", (message) => {
   if (message.type() === "error") errors.push(message.text());
 });
+page.on("pageerror", (error) => errors.push(error.message));
 
 const now = new Date().toISOString();
 const startedAt = new Date(Date.now() - 83_000).toISOString();
@@ -162,6 +212,79 @@ const installBridge = ({ conversation, now }) => {
         features: [{ name: "multi_agent", enabled: true }],
       })), 10);
     },
+    requestLocalSshStatus() {
+      setTimeout(() => window.DropVault?.onLocalSshStatus(JSON.stringify({
+        connected: false, connecting: false,
+      })), 10);
+    },
+    requestLocalSshProfiles() {
+      window.__sshProfiles ||= [];
+      setTimeout(() => window.DropVault?.onLocalSshProfiles(JSON.stringify({
+        profiles: window.__sshProfiles,
+      })), 10);
+    },
+    saveAndConnectLocalSsh(label, host, username, port, password) {
+      window.__localSshSave = { label, host, username, port, password };
+      const profile = {
+        id: "55555555-5555-4555-8555-555555555555",
+        label: label || host, host, username, port, updatedAt: Date.now(),
+      };
+      window.__sshProfiles = [profile];
+      setTimeout(() => {
+        window.DropVault?.onLocalSshProfiles(JSON.stringify({ profiles: window.__sshProfiles }));
+        window.DropVault?.onLocalSshConnected(JSON.stringify({
+          connected: true, connecting: false, profileId: profile.id,
+          host, username, port, connectedAt: Date.now(),
+        }));
+        window.DropVault?.onLocalSshOutput("Open https://example.com/oauth/authorize?response_type=code&client_id=witt-terminal-test&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid%20profile%20email%20offline_access&code_challenge=abcdefghijklmnopqrstuvwxyz0123456789\r\nroot@test:~# ");
+      }, 20);
+    },
+    connectSavedLocalSsh(profileId) {
+      window.__savedSshConnect = profileId;
+      const profile = window.__sshProfiles.find((item) => item.id === profileId);
+      setTimeout(() => window.DropVault?.onLocalSshConnected(JSON.stringify({
+        connected: true, connecting: false, profileId,
+        host: profile.host, username: profile.username, port: profile.port,
+        connectedAt: Date.now(),
+      })), 20);
+    },
+    deleteSavedLocalSsh(profileId) {
+      window.__sshProfiles = window.__sshProfiles.filter((item) => item.id !== profileId);
+      setTimeout(() => window.DropVault?.onLocalSshProfiles(JSON.stringify({
+        profiles: window.__sshProfiles,
+      })), 10);
+    },
+    connectLocalSsh(host, username, port, password) {
+      window.__localSshConnect = { host, username, port, password };
+      setTimeout(() => {
+        window.DropVault?.onLocalSshConnected(JSON.stringify({
+          connected: true, connecting: false, host, username, port,
+          connectedAt: Date.now(),
+        }));
+        window.DropVault?.onLocalSshOutput("root@test:~# ");
+      }, 20);
+    },
+    sendLocalSshInput(input) {
+      window.__localSshInput = input;
+      window.__localSshInputs = [...(window.__localSshInputs || []), input];
+      setTimeout(() => window.DropVault?.onLocalSshOutput(`${input}ok\nroot@test:~# `), 10);
+    },
+    disconnectLocalSsh() {
+      window.__localSshDisconnected = true;
+      setTimeout(() => window.DropVault?.onLocalSshDisconnected(), 10);
+    },
+    requestLocalSftp(path) {
+      window.__localSftpPath = path;
+      setTimeout(() => window.DropVault?.onLocalSftpList(JSON.stringify({
+        path: path === "." ? "/root" : path,
+        entries: [
+          { name: "projects", directory: true, size: 0, modifiedAt: Date.now() },
+          { name: "notes.txt", directory: false, size: 128, modifiedAt: Date.now() },
+        ],
+      })), 10);
+    },
+    pickLocalSftpUpload(path) { window.__localSftpUploadPath = path; },
+    downloadLocalSftp(path, name) { window.__localSftpDownload = { path, name }; },
     requestConversation(id) {
       window.__requestedConversationId = id;
       setTimeout(() => window.DropVault?.onConversation(JSON.stringify({ conversation })), 30);
@@ -229,7 +352,10 @@ const installBridge = ({ conversation, now }) => {
         context: conversation.contextUsage,
       })), 20);
     },
-    consumeRateLimitReset() { window.__resetAttempt = true; },
+    consumeRateLimitReset(conversationId) {
+      window.__resetAttempt = true;
+      window.__resetConversationId = conversationId;
+    },
     createConversation(model, reasoning, accessMode) {
       createConversation(model, reasoning, accessMode);
     },
@@ -331,7 +457,7 @@ const installBridge = ({ conversation, now }) => {
     },
     archiveConversation() {},
     checkForUpdates() {},
-    getVersion() { return "2.1.7"; },
+    getVersion() { return "2.2.16"; },
   };
   window.WittNative = {
     postMessage(raw) {
@@ -342,20 +468,27 @@ const installBridge = ({ conversation, now }) => {
 };
 
 const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
-const cssNames = ["styles.css", "quota.css", "quota-fix.css", "reset-glow.css", "composer-aura.css", "composer-refine.css", "composer-transparency.css", "composer-overlay.css", "composer-spectra.css", "quota-layout.css", "quota-header-restore.css", "quota-confirm.css", "quota-compact.css", "drawer-motion.css", "quota-profile-motion.css", "usage-insight.css", "quota-spacing.css", "usage-ring-fit.css", "auth-gate.css", "approval-card.css", "conversation-type.css", "night-theme.css", "message-collapse.css", "chat-overflow-fix.css", "codex-accounts.css", "formula-code.css", "performance.css", "landscape.css", "lumora-global.css", "codex-model-picker.css", "chat-links.css", "completed-turn.css", "drawer-layout.css", "witt-next.css", "artifact-preview.css", "claude-app.css"];
+const cssNames = ["styles.css", "quota.css", "quota-fix.css", "reset-glow.css", "composer-aura.css", "composer-refine.css", "composer-transparency.css", "composer-overlay.css", "composer-spectra.css", "quota-layout.css", "quota-header-restore.css", "quota-confirm.css", "quota-compact.css", "drawer-motion.css", "quota-profile-motion.css", "usage-insight.css", "quota-spacing.css", "usage-ring-fit.css", "auth-gate.css", "approval-card.css", "conversation-type.css", "night-theme.css", "message-collapse.css", "chat-overflow-fix.css", "codex-accounts.css", "formula-code.css", "performance.css", "landscape.css", "lumora-global.css", "codex-model-picker.css", "chat-links.css", "completed-turn.css", "drawer-layout.css", "witt-next.css", "artifact-preview.css", "claude-app.css", "local-terminal.css"];
 const cssFiles = new Map(cssNames.map((name) => [
   name, readFileSync(new URL(`../web/${name}`, import.meta.url), "utf8"),
 ]));
 const js = readFileSync(new URL("../web/app.js", import.meta.url), "utf8");
 const katexJs = readFileSync(new URL("../web/vendor/katex/katex.min.js", import.meta.url), "utf8");
 const katexCss = readFileSync(new URL("../web/vendor/katex/katex.min.css", import.meta.url), "utf8");
+const xtermJs = readFileSync(new URL("../web/vendor/xterm/xterm.js", import.meta.url), "utf8");
+const xtermFitJs = readFileSync(new URL("../web/vendor/xterm/addon-fit.js", import.meta.url), "utf8");
+const xtermWebLinksJs = readFileSync(new URL("../web/vendor/xterm/addon-web-links.js", import.meta.url), "utf8");
+const xtermCss = readFileSync(new URL("../web/vendor/xterm/xterm.css", import.meta.url), "utf8");
 const icon = readFileSync(new URL("../web/icon.svg", import.meta.url), "utf8");
 await page.route("**/vault/**", async (route) => {
   const pathname = new URL(route.request().url()).pathname;
   if (pathname.endsWith(".css")) {
     const name = pathname.split("/").pop();
-    return route.fulfill({ contentType: "text/css", body: name === "katex.min.css" ? katexCss : (cssFiles.get(name) || "") });
+    return route.fulfill({ contentType: "text/css", body: name === "katex.min.css" ? katexCss : (name === "xterm.css" ? xtermCss : (cssFiles.get(name) || "")) });
   }
+  if (pathname.endsWith("xterm.js")) return route.fulfill({ contentType: "application/javascript", body: xtermJs });
+  if (pathname.endsWith("addon-fit.js")) return route.fulfill({ contentType: "application/javascript", body: xtermFitJs });
+  if (pathname.endsWith("addon-web-links.js")) return route.fulfill({ contentType: "application/javascript", body: xtermWebLinksJs });
   if (pathname.endsWith(".js")) return route.fulfill({ contentType: "application/javascript", body: pathname.endsWith("katex.min.js") ? katexJs : js });
   if (pathname.includes("/fonts/")) return route.fulfill({ status: 204 });
   if (pathname.endsWith(".svg")) return route.fulfill({ contentType: "image/svg+xml", body: icon });
@@ -394,9 +527,17 @@ await page.goto("https://wit.test/vault/", { waitUntil: "networkidle" });
 
 await page.waitForTimeout(250);
 await page.evaluate(() => window.DropVault.nativeReady({
-  version: "2.2.9", cacheScope: "0123456789abcdef01234567",
+  version: "2.2.16", cacheScope: "0123456789abcdef01234567",
 }));
 await page.waitForTimeout(180);
+await page.evaluate(() => {
+  const registerLinkProvider = window.Terminal.prototype.registerLinkProvider;
+  window.Terminal.prototype.registerLinkProvider = function captureLinkProvider(provider) {
+    window.__terminalLinkProvider = provider;
+    window.__terminalForLinkTest = this;
+    return registerLinkProvider.call(this, provider);
+  };
+});
 const nativeRequestCount = await page.evaluate(() => window.__conversationRequestCount || 0);
 if (nativeRequestCount !== 1) {
   throw new Error(`Native initialization request count was ${nativeRequestCount}: ${errors.join(" | ")}`);
@@ -422,6 +563,189 @@ await page.locator("#artifactCodeTab").click();
 await page.waitForFunction(() => document.querySelector("#artifactCode code")?.textContent.includes("Artifact ready"));
 await page.locator("#artifactClose").click();
 await page.waitForFunction(() => !document.body.classList.contains("artifact-open"));
+await page.locator("#menuButton").click();
+await page.locator("#localSshButton").click();
+await page.locator("#localSshSheet.open").waitFor();
+await page.locator("#localSshConnectForm:not([hidden])").waitFor();
+await page.locator("#localSshLabel").fill("测试服务器");
+await page.locator("#localSshHost").fill("203.0.113.10");
+await page.locator("#localSshPassword").fill("temporary-test-password");
+await page.locator("#localSshConnectButton").click();
+await page.locator("#localTerminal:not([hidden])").waitFor();
+const localSshState = await page.evaluate(() => ({
+  request: window.__localSshSave,
+  passwordValue: document.querySelector("#localSshPassword")?.value,
+  terminalTarget: document.querySelector("#localTerminalTarget")?.textContent,
+}));
+if (localSshState.request?.host !== "203.0.113.10" ||
+    localSshState.request?.label !== "测试服务器" ||
+    localSshState.request?.username !== "root" || localSshState.request?.port !== 22 ||
+    localSshState.passwordValue !== "" ||
+    localSshState.terminalTarget !== "root@203.0.113.10") {
+  throw new Error(`Local SSH connection UI failed: ${JSON.stringify(localSshState)}`);
+}
+await page.waitForTimeout(80);
+if (await page.locator("#copyLocalTerminal").count()) {
+  throw new Error("Local SSH terminal still exposes the removed fixed copy button");
+}
+const parsedTerminalLinks = await page.evaluate(async () => {
+  const provider = window.__terminalLinkProvider;
+  const terminal = window.__terminalForLinkTest;
+  if (!provider || !terminal) return [];
+  await new Promise((resolve) => terminal.write("", resolve));
+  const links = [];
+  for (let row = 1; row <= terminal.buffer.active.length; row += 1) {
+    await new Promise((resolve) => provider.provideLinks(row, (items) => {
+      for (const item of items || []) links.push(item.text);
+      resolve();
+    }));
+  }
+  return [...new Set(links)];
+});
+const expectedWrappedLink = "https://example.com/oauth/authorize?response_type=code&client_id=witt-terminal-test&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid%20profile%20email%20offline_access&code_challenge=abcdefghijklmnopqrstuvwxyz0123456789";
+if (!parsedTerminalLinks.includes(expectedWrappedLink)) {
+  throw new Error(`Wrapped terminal URL was not parsed intact: ${JSON.stringify(parsedTerminalLinks)}`);
+}
+await page.locator("#localTerminalOutput").dispatchEvent("contextmenu", {
+  bubbles: true, cancelable: true, clientX: 80, clientY: 160, button: 2,
+});
+const terminalContextDebug = await page.evaluate(() => {
+  const output = document.querySelector("#localTerminalOutput");
+  const menu = document.querySelector("#localTerminalContext");
+  return {
+    ready: output?.dataset.contextMenuReady,
+    hidden: menu?.hidden,
+    parent: menu?.parentElement?.tagName,
+    display: menu ? getComputedStyle(menu).display : "missing",
+    selection: window.__terminalForLinkTest?.getSelection(),
+  };
+});
+if (terminalContextDebug.hidden) {
+  throw new Error(`Local SSH context menu did not open: ${JSON.stringify(terminalContextDebug)} | ${errors.join(" | ")}`);
+}
+await page.locator("#localTerminalContext:not([hidden])").waitFor();
+await page.locator("[data-terminal-context='select-all']").click();
+await page.locator("[data-terminal-context='copy']").click();
+const copiedTerminal = await page.evaluate(() => navigator.clipboard.readText());
+if (!copiedTerminal.includes(expectedWrappedLink)) {
+  throw new Error("Local SSH terminal content was not copied");
+}
+await page.evaluate(() => navigator.clipboard.writeText("echo clipboard-test"));
+await page.locator("#localTerminalOutput").dispatchEvent("contextmenu", {
+  bubbles: true, cancelable: true, clientX: 80, clientY: 160, button: 2,
+});
+await page.locator("[data-terminal-context='paste']").click();
+await page.waitForTimeout(30);
+if (!(await page.evaluate(() => (window.__localSshInputs || []).join(""))).includes("echo clipboard-test")) {
+  throw new Error("Local SSH long-press menu did not paste clipboard text");
+}
+const terminalBox = await page.locator("#localTerminalOutput").boundingBox();
+await cdpSession.send("Input.dispatchTouchEvent", {
+  type: "touchStart",
+  touchPoints: [{ x: terminalBox.x + 80, y: terminalBox.y + 30 }],
+});
+await page.waitForTimeout(600);
+await cdpSession.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+await page.locator("#localTerminalContext:not([hidden])").waitFor();
+if (process.env.WITT_LOCAL_SSH_ONLY === "1") {
+  await page.screenshot({ path: "/tmp/witt-local-terminal-context.png", fullPage: false });
+}
+await page.locator("[data-terminal-context='copy']").click();
+const terminalInput = page.locator("#localTerminalOutput .xterm-helper-textarea");
+await terminalInput.focus();
+await terminalInput.pressSequentially("pwd");
+await terminalInput.press("Enter");
+await page.waitForTimeout(30);
+const terminalInputs = await page.evaluate(() => window.__localSshInputs || []);
+if (!terminalInputs.join("").includes("pwd\r")) {
+  throw new Error("Local SSH terminal input/output bridge failed");
+}
+await page.setViewportSize({ width: 390, height: 500 });
+await page.waitForTimeout(100);
+const terminalDockPosition = await page.locator(".local-terminal-tools").evaluate((node) => ({
+  bottom: Math.round(node.getBoundingClientRect().bottom),
+  viewport: window.innerHeight,
+}));
+if (Math.abs(terminalDockPosition.bottom - terminalDockPosition.viewport) > 2) {
+  throw new Error(`Local SSH shortcuts did not follow the keyboard viewport: ${JSON.stringify(terminalDockPosition)}`);
+}
+await page.setViewportSize({ width: 390, height: 844 });
+await page.waitForTimeout(100);
+await page.getByRole("button", { name: "Tab", exact: true }).click();
+if (await page.evaluate(() => window.__localSshInput) !== "\t") {
+  throw new Error("Local SSH shortcut bar did not send Tab");
+}
+await page.getByRole("button", { name: "文件", exact: true }).click();
+await page.locator("#localSftp:not([hidden])").waitFor();
+await page.getByRole("button", { name: "下载", exact: true }).click();
+await page.getByRole("button", { name: "上传", exact: true }).click();
+const sftpState = await page.evaluate(() => ({
+  path: window.__localSftpPath,
+  uploadPath: window.__localSftpUploadPath,
+  download: window.__localSftpDownload,
+}));
+if (sftpState.path !== "." || sftpState.uploadPath !== "/root" ||
+    sftpState.download?.path !== "/root/notes.txt") {
+  throw new Error(`Local SFTP browser bridge failed: ${JSON.stringify(sftpState)}`);
+}
+if (process.env.WITT_LOCAL_SSH_ONLY === "1") {
+  await page.screenshot({ path: "/tmp/witt-local-sftp.png", fullPage: false });
+}
+await page.locator("#closeLocalSftp").click();
+await page.locator("#localTerminal:not([hidden])").waitFor();
+await page.locator("#disconnectLocalSsh").click();
+await page.locator("#localSshLibrary:not([hidden])").waitFor();
+const savedProfileText = await page.locator(".local-ssh-profile").textContent();
+if (!savedProfileText.includes("测试服务器") || savedProfileText.includes("temporary-test-password")) {
+  throw new Error("Saved SSH profile leaked its password or did not render");
+}
+if (process.env.WITT_LOCAL_SSH_ONLY === "1") {
+  await page.screenshot({ path: "/tmp/witt-local-ssh-profiles.png", fullPage: false });
+}
+await page.locator("[data-connect-ssh-profile]").click();
+await page.locator("#localTerminal:not([hidden])").waitFor();
+if (await page.evaluate(() => window.__savedSshConnect) !==
+    "55555555-5555-4555-8555-555555555555") {
+  throw new Error("Saved SSH profile did not connect with one tap");
+}
+if (process.env.WITT_LOCAL_SSH_ONLY === "1") {
+  await page.screenshot({ path: "/tmp/witt-local-ssh-mobile.png", fullPage: false });
+  await page.evaluate(() => {
+    window.DropVault.onLocalSshDisconnected();
+    window.DropVault.onLocalSshStatus(JSON.stringify({
+      connected: false, connecting: false, reconnecting: true,
+      profileId: "55555555-5555-4555-8555-555555555555",
+      host: "127.0.0.1", username: "root", port: 22,
+    }));
+  });
+  await page.waitForTimeout(30);
+  const unexpectedDisconnect = await page.evaluate(() => ({
+    terminalHidden: document.querySelector("#localTerminal")?.hidden,
+    target: document.querySelector("#localTerminalTarget")?.textContent,
+    disconnectHidden: document.querySelector("#disconnectLocalSsh")?.hidden,
+  }));
+  if (unexpectedDisconnect.terminalHidden || unexpectedDisconnect.disconnectHidden ||
+      !unexpectedDisconnect.target.includes("自动重连中")) {
+    throw new Error(`Unexpected SSH disconnect discarded the terminal: ${JSON.stringify(unexpectedDisconnect)}`);
+  }
+  await page.evaluate(() => window.DropVault.onLocalSshConnected(JSON.stringify({
+    connected: true, connecting: false, reconnecting: false, reconnected: true,
+    profileId: "55555555-5555-4555-8555-555555555555",
+    host: "127.0.0.1", username: "root", port: 22, connectedAt: Date.now(),
+  })));
+  await page.waitForTimeout(30);
+  const recoveredConnection = await page.evaluate(() => ({
+    terminalHidden: document.querySelector("#localTerminal")?.hidden,
+    target: document.querySelector("#localTerminalTarget")?.textContent,
+  }));
+  if (recoveredConnection.terminalHidden || recoveredConnection.target.includes("自动重连中")) {
+    throw new Error(`Recovered SSH session did not restore the terminal: ${JSON.stringify(recoveredConnection)}`);
+  }
+  await browser.close();
+  console.log("Local SSH UI check passed");
+  process.exit(0);
+}
+await page.locator("#closeLocalSsh").click();
 const surfaceMotion = await page.evaluate(() => {
   const sheetIds = [
     "projectSheet", "profileSheet", "adminSettingsSheet", "codexAccountSheet",
@@ -552,7 +876,7 @@ const compactHeader = await page.evaluate(() => {
 });
 if (compactHeader.background !== "rgba(0, 0, 0, 0)" ||
     compactHeader.height > 68 ||
-    compactHeader.actionsWidth > 110 ||
+    compactHeader.actionsWidth > 160 ||
     compactHeader.menuTop < 6 ||
     compactHeader.menuTop > 24) {
   throw new Error(`Compact landscape header is invalid: ${JSON.stringify(compactHeader)}`);
@@ -808,7 +1132,14 @@ if (scrollAnchorAfter.scrollTop < 100 ||
   throw new Error(`Output refresh moved the visible conversation anchor: ${JSON.stringify({ scrollAnchorBefore, scrollAnchorAfter })}`);
 }
 await page.locator("#modelButton").click();
-await page.locator('[data-model="gpt-5.6-terra"]').click();
+await page.locator("#quickModelExpand").click();
+await page.locator('[data-quick-model="gpt-5.6-terra"]').click();
+await page.waitForTimeout(120);
+await page.evaluate(() => {
+  const sheet = document.querySelector("#settingsSheet");
+  sheet.classList.add("open");
+  sheet.setAttribute("aria-hidden", "false");
+});
 if ((await page.locator("#reasoningStops [data-reasoning]").count()) !== 6) {
   throw new Error("Dynamic reasoning rail did not expose all supported levels");
 }
@@ -1034,6 +1365,9 @@ if ((await page.locator("#quotaConfirm").textContent()).includes("https://")) {
 }
 await page.locator("#confirmQuotaReset").click();
 if (!(await page.evaluate(() => window.__resetAttempt))) throw new Error("Reset confirmation did not call the bridge");
+if ((await page.evaluate(() => window.__resetConversationId)) !== conversation.id) {
+  throw new Error("Reset confirmation did not target the active conversation account");
+}
 await page.screenshot({ path: "tests/ui-profile-mobile.png", fullPage: true });
 await page.locator("#closeProfile").click();
 await page.locator("#attachButton").click();

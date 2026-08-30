@@ -667,6 +667,9 @@ http.createServer((req, res) => {
     return;
   }
   const userChat = chatFor(principal);
+  if (req.method === "POST" && url.pathname === "/usage/reset") {
+    url.pathname = "/chat/usage/reset";
+  }
   if (imageRequest && userChat.handlePublicImage(req, res, url)) return;
   if (userChat.handle(req, res, url)) return;
   if (req.method === "GET" && url.pathname === "/files") {

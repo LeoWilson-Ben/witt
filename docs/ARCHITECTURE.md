@@ -4,7 +4,7 @@
 
 ### Android 外壳
 
-Android 应用加载受信任的 Witt Web 页面，通过 WebMessageListener 暴露最小原生桥。设备凭据保存在 Android Keystore 支持的私有存储中，网页只能发起经过约束的 API、下载和更新操作。
+Android 应用加载受信任的 Witt Web 页面，通过 WebMessageListener 暴露最小原生桥。设备凭据保存在 Android Keystore 支持的私有存储中，网页只能发起经过约束的 API、下载和更新操作。独立 SSH 终端由 Android 原生层直接连接目标服务器，不经过 Witt API；连接成功后，SSH 密码使用 Android Keystore 中的 AES-GCM 密钥加密并保存在 App 私有存储中，网页只能读取不含密码的服务器配置。首次连接取得的主机指纹同样保存在 App 私有存储中供后续校验。
 
 ### Web UI
 
@@ -36,6 +36,8 @@ Web UI 使用原生 HTML、CSS 和 JavaScript，无需前端构建工具。它�
 | Codex 登录目录 | 用户配置目录 | 私有 |
 | 兼容令牌 | 权限为 `600` 的独立文件 | 私有 |
 | Android keystore 和签名配置 | 构建机私有目录 | 私有 |
+| SSH 密码 | Android Keystore 加密的 App 私有存储 | 仅原生 SSH 层可解密 |
+| SSH 主机指纹 | Android App 私有存储 | 仅本机 |
 
 ## 请求路径
 
@@ -45,6 +47,8 @@ Web UI 使用原生 HTML、CSS 和 JavaScript，无需前端构建工具。它�
 4. 对话请求发送到对应 Codex App Server thread。
 5. 事件经过过滤、归一化和持久化后返回客户端。
 6. 高风险操作通过审批事件暂停，直到用户明确选择。
+
+本地 SSH 终端使用独立路径：Android App 直接与用户填写的 IP 建立 SSH 连接。终端输入、输出和密码不会发送到 Witt Node.js 服务，也不会加入聊天上下文；已保存密码不会返回给 Web UI。
 
 ## 威胁模型提示
 
