@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" id="themeColor" content="#f7f8fc">
+  <meta name="theme-color" id="themeColor" content="#ffffff">
   <script>
     (() => {
       const choices = ["system", "light", "colorful", "dark"];
@@ -38,12 +38,12 @@
   <link rel="stylesheet" href="/vault/quota-confirm.css?v=2.1.12-quota4">
   <link rel="stylesheet" href="/vault/quota-compact.css?v=2.1.12-quota5">
   <link rel="stylesheet" href="/vault/drawer-motion.css?v=2.1.12-drawer1">
-  <link rel="stylesheet" href="/vault/quota-profile-motion.css?v=2.1.12-quota6">
+  <link rel="stylesheet" href="/vault/quota-profile-motion.css?v=3.2.2-pro-quota2">
   <link rel="stylesheet" href="/vault/usage-insight.css?v=2.1.12-usage1">
   <link rel="stylesheet" href="/vault/quota-spacing.css?v=2.1.12-quota7">
   <link rel="stylesheet" href="/vault/usage-ring-fit.css?v=2.1.12-usage2">
   <link rel="stylesheet" href="/vault/auth-gate.css?v=2.2.7-admin-hide1">
-  <link rel="stylesheet" href="/vault/approval-card.css?v=2.2.9-connector1">
+  <link rel="stylesheet" href="/vault/approval-card.css?v=2.3.0-user-input1">
   <link rel="stylesheet" href="/vault/conversation-type.css?v=2.2.0-type1">
   <link rel="stylesheet" href="/vault/night-theme.css?v=2.2.13-night2">
   <link rel="stylesheet" href="/vault/message-collapse.css?v=2.2.0-collapse1">
@@ -58,12 +58,71 @@
   <link rel="stylesheet" href="/vault/chat-links.css?v=2.2.9-links1">
   <link rel="stylesheet" href="/vault/completed-turn.css?v=2.2.10-result1">
   <link rel="stylesheet" href="/vault/drawer-layout.css?v=2.2.11-drawer2">
-  <link rel="stylesheet" href="/vault/witt-next.css?v=3.0.12-openai-font2">
+  <link rel="stylesheet" href="/vault/witt-next.css?v=3.2.4-weekly">
   <link rel="stylesheet" href="/vault/artifact-preview.css?v=3.0.0">
   <link rel="stylesheet" href="/vault/claude-app.css?v=1.0.0">
   <link rel="stylesheet" href="/vault/vendor/xterm/xterm.css?v=6.0.0">
   <link rel="stylesheet" href="/vault/local-terminal.css?v=2.2.16-terminal-workspace4">
   <link rel="stylesheet" href="/vault/night-contrast.css?v=2.2.13-nightfix1">
+  <link rel="stylesheet" href="/vault/approval-dock.css?v=3.2.1-swipefix1">
+  <link rel="stylesheet" href="/vault/witt-white.css?v=3.0.18-modelrestore1">
+  <style id="workspace-critical-style">
+/* Semantic workspace layer. Legacy terminal/artifact/theme styles stay intact. */
+:root { --ws-ink: #243839; --ws-muted: #718181; --ws-line: rgba(42,68,68,.12); --ws-surface: rgba(255,255,255,.94); --ws-accent: #227b70; --ws-radius: 16px; }
+[data-theme="dark"] { --ws-ink: #e1edeb; --ws-muted: #a3b8b3; --ws-line: rgba(183,215,208,.18); --ws-surface: #17201f; --ws-accent: #79cabc; }
+.workspace-chat-title { flex: 1; min-width: 0; margin: 0 8px; font-size: 15px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ws-ink); }
+.task-status-strip { display: flex; align-items: center; gap: 9px; max-width: 900px; margin: calc(92px + env(safe-area-inset-top)) auto 22px; padding: 11px 14px; border: 1px solid var(--ws-line); border-radius: var(--ws-radius); color: var(--ws-ink); background: var(--ws-surface); font-size: 12px; }
+.task-status-strip:not([hidden]) ~ .messages { padding-top: 12px !important; }
+.task-status-strip[hidden], .history-load[hidden] { display: none; }
+.task-state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ws-accent); flex: none; }
+.task-origin { flex: 1; color: var(--ws-muted); line-height: 1.5; }
+.task-status-strip[data-state="awaiting_confirmation"], .task-status-strip[data-state="waiting_confirmation"] { border-color: #c79848; }
+.task-status-strip[data-state="failed"] .task-state-dot { background: #c45555; }
+.task-status-strip button { border: none; background: transparent; color: var(--ws-accent); font: inherit; cursor: pointer; }
+.history-load { display: block; margin: 0 auto 24px; padding: 10px 20px; border: 1px solid var(--ws-line); border-radius: 999px; color: var(--ws-accent); background: var(--ws-surface); font: inherit; font-size: 12px; cursor: pointer; }
+.drawer-panel .drawer-history { display: flex; flex-direction: column; min-height: 0; }
+.drawer-panel .drawer-history-head { flex: 0 0 auto; }
+.drawer-panel .drawer-history .history-controls { flex: 0 0 auto; min-height: 112px; position: relative; display: grid; gap: 9px; padding: 4px 12px 14px; }
+.drawer-panel .drawer-history .conversation-list { flex: 1 1 0; min-height: 0; width: auto; }
+@media (max-height: 550px) {
+  .drawer-panel { overflow-y: auto; grid-template-rows: auto auto minmax(250px, 1fr) auto; }
+  .drawer-panel .drawer-history { min-height: 250px; }
+}
+.history-controls > input { width: 100%; box-sizing: border-box; min-width: 0; padding: 11px 12px; border: 1px solid var(--ws-line); border-radius: 11px; background: var(--ws-surface); color: var(--ws-ink); font: inherit; font-size: 13px; }
+.history-controls > div { display: flex; align-items: center; gap: 10px; }
+.history-controls > div[hidden], #workspaceOverviewButton[hidden], #moreGroupButton[hidden] { display: none !important; }
+.history-controls select { flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--ws-line); border-radius: 8px; background: var(--ws-surface); color: var(--ws-ink); }
+.history-controls label { font-size: 12px; white-space: nowrap; color: var(--ws-ink); }
+.history-controls small { color: var(--ws-muted); font-size: 11px; line-height: 1.5; }
+.history-project-label { display: block; font-size: 10px; font-weight: 500; color: var(--ws-accent); margin-bottom: 3px; }
+.workspace-entry { display: flex; justify-content: space-between; width: 100%; padding: 12px 15px; margin: 0 0 8px; border: 1px solid var(--ws-line); border-radius: 12px; background: var(--ws-surface); color: var(--ws-ink); font: inherit; font-size: 13px; cursor: pointer; }
+.workspace-overview { position: fixed; inset: 0; z-index: 160; display: none; }
+.workspace-overview.open { display: flex; justify-content: flex-end; }
+.workspace-backdrop { position: absolute; inset: 0; border: 0; background: rgba(10,22,21,.35); }
+.workspace-panel { position: relative; width: min(480px, 100%); max-height: 100dvh; overflow: auto; overscroll-behavior: contain; padding: max(24px,env(safe-area-inset-top)) 24px max(24px,env(safe-area-inset-bottom)); box-sizing: border-box; color: var(--ws-ink); background: var(--ws-surface); }
+.workspace-panel > header { display: flex; justify-content: space-between; align-items: center; }
+.workspace-panel header small { letter-spacing: 2px; color: var(--ws-muted); font-size: 10px; }
+.workspace-panel h2 { font-size: 22px; margin: 8px 0 14px; }
+.workspace-panel header button { padding: 6px 10px; font-size: 26px; background: transparent; border: 0; color: var(--ws-ink); cursor: pointer; }
+.workspace-panel > p, .workspace-checked { color: var(--ws-muted); font-size: 12px; line-height: 1.7; }
+.workspace-section h3 { margin: 22px 0 8px; font-size: 13px; }
+.workspace-section article { display: flex; gap: 12px; justify-content: space-between; padding: 14px 0; border-bottom: 1px solid var(--ws-line); font-size: 13px; }
+.workspace-section article > div { min-width: 0; }
+.workspace-section article small { display: block; margin-top: 5px; color: var(--ws-muted); line-height: 1.6; }
+.workspace-section code { display: block; overflow-wrap: anywhere; margin-top: 5px; font-size: 10px; color: var(--ws-muted); }
+.workspace-section article > span { flex: none; color: var(--ws-accent); font-size: 11px; }
+.workspace-refresh { width: 100%; padding: 12px; border: 1px solid var(--ws-line); border-radius: 11px; background: transparent; color: var(--ws-accent); font: inherit; cursor: pointer; }
+.history-controls input:focus-visible, .workspace-panel button:focus-visible, .history-load:focus-visible { outline: 2px solid var(--ws-accent); outline-offset: 2px; }
+@media (max-width: 600px) {
+  .workspace-chat-title { font-size: 13px; }
+  .task-status-strip { margin: calc(98px + env(safe-area-inset-top)) 4px 18px; flex-wrap: wrap; padding: 10px 12px; }
+  .task-origin { flex-basis: calc(100% - 22px); order: 3; padding-left: 16px; font-size: 11px; }
+  .task-status-strip button { margin-left: auto; }
+  .workspace-panel { padding-left: 20px; padding-right: 20px; }
+  .composer-hint { font-size: 10px; line-height: 1.4; }
+}
+@media (prefers-reduced-motion: reduce) { .task-status-strip, .workspace-overview, .history-load { animation: none; transition: none; } }
+  </style>
 </head>
 <body>
   <div class="app-atmosphere" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -90,7 +149,7 @@
   <div class="app-shell">
     <header class="compact-nav animate-blur-fade-up" style="animation-delay:0ms">
       <button class="compact-nav-button compact-menu-button" id="menuButton" aria-label="打开对话列表">
-        <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h11"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M4.5 9h15M4.5 15h10.5"/></svg>
       </button>
       <h1 id="chatTitle" class="visually-hidden">Witt</h1>
       <div class="compact-nav-actions">
@@ -113,12 +172,14 @@
         <button id="morePinButton" class="chat-more-item">
           <svg viewBox="0 0 24 24"><path d="m8 4 8 8m-7.5-7.5 7 7M9 13l-4 6 6-4 4-4-6-6-4 4Z"/></svg><span id="morePinLabel">置顶</span>
         </button>
+        <button id="moreGroupButton" class="chat-more-item"><span>项目分组</span><small>整理历史，不更改工作目录</small></button>
+        <button id="moreNotifyButton" class="chat-more-item" aria-pressed="false"><span>完成提醒（仅前台）</span><small id="completionNotifyLabel">已关闭</small></button>
         <button id="deliveryButton" class="chat-more-item delivery-button" aria-label="查看交付文件">
           <svg viewBox="0 0 24 24"><path d="M4 8.5h6l2-2h8v11H4v-9Z"/><path d="M12 10v5m0 0-2-2m2 2 2-2"/></svg><span>交付文件</span><b id="deliveryBadge">0</b>
         </button>
         <button id="quotaButton" class="chat-more-item quota-button" aria-label="查看 Codex 额度" hidden>
           <svg viewBox="0 0 24 24"><path d="M5 18V9m7 9V5m7 13v-6"/></svg><span>额度与用量</span>
-          <small><b id="weeklyQuotaLabel">已用 —</b></small>
+          <small><b id="fiveHourQuotaLabel">5小时 —</b><b id="weeklyQuotaLabel">本周 —</b></small>
         </button>
         <button id="moreProjectButton" class="chat-more-item">
           <svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17v-11Z"/></svg><span>当前项目</span><small id="moreProjectLabel">空白</small>
@@ -145,7 +206,7 @@
       <section class="welcome" id="welcome">
         <div class="welcome-mark animate-blur-fade-up" style="animation-delay:100ms" aria-hidden="true"><span>W</span><i></i><b>SERVER NATIVE</b></div>
         <span class="lumora-badge liquid-glass animate-blur-fade-up" style="animation-delay:160ms"><i></i>你的私人 Codex 已就绪</span>
-        <h1 class="animate-blur-fade-up" style="animation-delay:220ms">把复杂交给 Witt<br><em>你只决定方向</em></h1>
+        <h1 class="animate-blur-fade-up" style="animation-delay:220ms">有什么可以帮忙的？</h1>
         <p class="animate-blur-fade-up" style="animation-delay:280ms">在你的服务器上持续工作、调用工具、整理结果。上下文、文件和执行过程始终归你所有。</p>
         <div class="suggestions">
           <button data-prompt="我有一个新任务，先帮我梳理目标和下一步。"><span>01</span><b>开始新任务</b><small>从目标到交付，完整推进</small><i>↗</i></button>
@@ -153,20 +214,26 @@
           <button data-prompt="检查服务器当前状态，先告诉我是否有异常。"><span>03</span><b>检查服务器</b><small>服务、资源与异常</small><i>↗</i></button>
         </div>
       </section>
+      <section class="task-status-strip" id="taskStatusStrip" aria-live="polite" hidden></section>
+      <button class="history-load" id="loadOlderMessages" type="button" hidden>加载更早消息</button>
       <section class="messages" id="messageList" aria-live="polite"></section>
       <div class="bottom-spacer"></div>
     </main>
 
+    <section class="approval-dock" id="approvalDock" aria-live="polite" hidden>
+      <div class="approval-dock-panel" id="approvalDockPanel"></div>
+    </section>
+
     <section class="composer-wrap animate-blur-fade-up" style="animation-delay:500ms">
       <div class="attachment-strip" id="attachmentStrip"></div>
       <div class="composer liquid-glass" id="composer">
-        <textarea id="messageInput" rows="1" maxlength="48000" placeholder="给 Witt 发消息"></textarea>
+        <textarea id="messageInput" rows="1" maxlength="48000" placeholder="回复 Witt"></textarea>
         <div class="composer-toolbar">
           <button class="attach-button" id="attachButton" aria-label="添加内容" aria-expanded="false">
             <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
           </button>
           <button class="composer-model" id="modelButton" aria-label="模型与智能程度">
-            <span class="model-spark">✦</span><b id="modelLabel">Sol</b><i></i><span id="reasoningLabel">均衡</span>
+            <span class="model-spark">✦</span><b id="modelLabel">Astra</b><i></i><span id="reasoningLabel">均衡</span>
             <span id="accessLabel" class="visually-hidden">完全访问</span>
           </button>
           <button class="voice-button" id="voiceButton" aria-label="语音模式暂未接入" title="语音模式暂未接入" disabled>
@@ -184,7 +251,7 @@
       </div>
       <section class="quick-model-menu" id="quickModelMenu" aria-hidden="true" aria-label="模型与智能程度">
         <button class="quick-model-row" id="quickModelExpand" aria-expanded="false">
-          <span>模型</span><strong id="quickModelCurrent">GPT-5.6 Sol</strong><svg viewBox="0 0 24 24"><path d="m9 5 6 7-6 7"/></svg>
+          <span>模型</span><strong id="quickModelCurrent">GPT-6-Astra</strong><svg viewBox="0 0 24 24"><path d="m9 5 6 7-6 7"/></svg>
         </button>
         <div class="quick-model-options" id="quickModelOptions" role="radiogroup" aria-label="选择模型"></div>
         <div class="quick-picker-divider"></div>
@@ -251,9 +318,15 @@
           <span id="drawerHistoryTitle">最近对话</span>
           <b id="conversationCount">0</b>
         </div>
+        <div class="history-controls">
+          <input id="historySearch" type="search" placeholder="搜索对话和消息" aria-label="搜索历史对话" autocomplete="off">
+          <div><select id="historyProject" aria-label="按项目筛选"><option value="">全部项目</option></select><label><input type="checkbox" id="historyAttachments"> 含附件</label></div>
+          <small id="historySearchHint">按项目整理，置顶优先显示</small>
+        </div>
         <div class="conversation-list" id="conversationList"></div>
       </section>
       <div class="drawer-tools">
+        <button class="workspace-entry" id="workspaceOverviewButton" type="button">项目与服务连接 <span>↗</span></button>
         <div class="drawer-utilities">
           <button class="drawer-profile" id="profileButton">
             <span class="profile-monogram">W</span>
@@ -421,12 +494,12 @@
         <div><span class="eyebrow">CODEX ACCOUNTS</span><h2>账号与项目</h2></div>
         <button class="icon-button" id="closeCodexAccounts" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </div>
-      <p class="codex-account-intro">两个账号的登录状态、会话与额度相互独立。</p>
+      <p class="codex-account-intro">每个账号的登录状态、会话与额度相互独立。</p>
       <div class="codex-account-list" id="codexAccountList">
         <article class="codex-account-card loading"><span class="codex-account-avatar"></span><div class="codex-account-identity"><strong>正在读取账号</strong><small>请稍候…</small></div></article>
       </div>
       <section class="codex-login-flow" id="codexLoginFlow" hidden>
-        <span class="codex-login-kicker">子账号登录</span>
+        <span class="codex-login-kicker" id="codexLoginKicker">子账号登录</span>
         <strong>在浏览器中登录新 Codex 账号</strong>
         <p>打开登录页面后输入下面的一次性代码。Witt 默认账号不会退出。</p>
         <button class="codex-device-code" id="copyCodexDeviceCode" type="button"><code id="codexDeviceCode"></code><small>点击复制</small></button>
@@ -464,9 +537,7 @@
        <section class="model-picker-section">
         <div class="settings-section-head"><h3>选择模型</h3><small>由 App Server 实时提供</small></div>
         <div class="model-options" role="radiogroup" aria-label="选择模型">
-          <button data-model="gpt-5.6-sol"><span class="model-glyph sol">S</span><span><strong>Sol</strong><small>复杂、开放和高价值任务</small></span><i></i></button>
-          <button data-model="gpt-5.6-terra"><span class="model-glyph terra">T</span><span><strong>Terra</strong><small>日常工作的均衡全能选择</small></span><i></i></button>
-          <button data-model="gpt-5.6-luna"><span class="model-glyph luna">L</span><span><strong>Luna</strong><small>清晰、重复和快速的任务</small></span><i></i></button>
+          <button data-model="gpt-6-astra"><span class="model-glyph astra">A</span><span><strong>Astra</strong><small>旗舰智能与复杂任务</small></span><i></i></button>
         </div>
       </section>
       <section class="reasoning-picker-section">
@@ -557,6 +628,15 @@
   <script src="/vault/vendor/xterm/xterm.js?v=6.0.0"></script>
   <script src="/vault/vendor/xterm/addon-fit.js?v=0.11.0"></script>
   <script src="/vault/vendor/xterm/addon-web-links.js?v=0.12.0"></script>
-  <script src="/vault/app.js?v=3.1.5-terminal-reconnect"></script>
+  <aside class="workspace-overview" id="workspaceOverview" aria-hidden="true">
+    <button class="workspace-backdrop" id="workspaceBackdrop" aria-label="关闭项目与服务连接"></button>
+    <section class="workspace-panel" role="dialog" aria-modal="true" aria-labelledby="workspaceTitle">
+      <header><div><small>WORKSPACE</small><h2 id="workspaceTitle">项目与服务连接</h2></div><button id="closeWorkspace" aria-label="关闭">×</button></header>
+      <p>仅展示连接状态与用途，不显示凭据。打开时检查，不在后台持续监视。</p>
+      <div id="workspaceOverviewContent"></div>
+      <button class="workspace-refresh" id="refreshWorkspace">刷新状态</button>
+    </section>
+  </aside>
+  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.4-hide-routine-status"></script>
 </body>
 </html>

@@ -151,7 +151,14 @@ class AppServerClient extends EventEmitter {
 const sharedClients = new Map();
 
 function sharedAppServer(options) {
-  const key = `${options.codexHome || "default"}:${JSON.stringify(options.configOverrides || [])}`;
+  // A Codex app-server multiplexes notifications for every thread it owns. Do not share one
+  // process across ChatService instances: listeners from different Witt users would otherwise
+  // receive the same turn notifications and write them into each user's active conversation.
+  const key = [
+    options.clientScope || "global",
+    options.codexHome || "default",
+    JSON.stringify(options.configOverrides || []),
+  ].join(":");
   const current = sharedClients.get(key);
   if (current && !current.closed) return current;
   const client = new AppServerClient(options);

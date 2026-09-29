@@ -6,8 +6,18 @@
     },
   });
   const bridge = () => window.WittNative ? nativeBridge : (window.DropVaultAndroid || null);
-  const CODEX_PROFILE_IDS = ["default", "xuanyu", "account4", "account5"];
-  const savedModel = localStorage.getItem("wit_model_preference") || localStorage.getItem("wit_model") || "gpt-5.6-sol";
+  const CODEX_PROFILE_IDS = ["default", "xuanyu", "account3", "account4", "account5"];
+  const previousModel = localStorage.getItem("wit_model_preference") || localStorage.getItem("wit_model");
+  const shouldUpgradeDefaultModel = !localStorage.getItem("wit_gpt6_model_migrated") &&
+    (!previousModel || previousModel === "gpt-5.6-sol");
+  const savedModel = shouldUpgradeDefaultModel ? "gpt-6-astra" : (previousModel || "gpt-6-astra");
+  if (!localStorage.getItem("wit_gpt6_model_migrated")) {
+    localStorage.setItem("wit_gpt6_model_migrated", "1");
+    if (shouldUpgradeDefaultModel) {
+      localStorage.setItem("wit_model", savedModel);
+      localStorage.setItem("wit_model_preference", savedModel);
+    }
+  }
   const savedReasoning = localStorage.getItem("wit_reasoning_preference") || localStorage.getItem("wit_reasoning") || "medium";
   const savedAccessMode = localStorage.getItem("wit_access_preference") || localStorage.getItem("wit_access") || "danger-full-access";
   const state = {
@@ -71,7 +81,97 @@
     localSshLost: false,
     localSftpOpen: false,
     localSftpPath: ".",
+    workspaceFeatures: false,
+    historyResults: null,
+    historyRequest: 0,
+    loadingOlder: false,
+    attachmentDrafts: new Map(),
+    sendRequest: null,
   };
+  let historySearchTimer;
+  let draftSaveTimer;
+  let completionReminder = false;
+  try { completionReminder = localStorage.getItem("witt_completion_reminder") === "1"; } catch {}
+
+  function draftKey(id = state.activeId) {
+    return `witt_draft:${state.cacheScope || "device"}:${id || "new"}`;
+  }
+
+  function saveDraft() {
+    clearTimeout(draftSaveTimer);
+    try {
+      const text = $("#messageInput").value;
+      if (text) localStorage.setItem(draftKey(), text);
+      else localStorage.removeItem(draftKey());
+      state.attachmentDrafts.set(draftKey(), new Map(state.attachments));
+    } catch { /* Storage may be disabled or full; keep the visible draft. */ }
+  }
+
+  function restoreDraft() {
+    try { $("#messageInput").value = localStorage.getItem(draftKey()) || ""; } catch { $("#messageInput").value = ""; }
+    state.attachments = new Map(state.attachmentDrafts.get(draftKey()) || []);
+    $("#messageInput").style.height = "";
+    renderAttachments();
+  }
+
+  function pinnedIds() {
+    if (state.workspaceFeatures) return new Set(state.conversations.filter((item) => item.pinned).map((item) => item.id));
+    try { return new Set(JSON.parse(localStorage.getItem(`wit_pinned_conversations:${state.cacheScope}`) || "[]")); } catch { return new Set(); }
+  }
+
+  function historyProjectName(item) {
+    return item.project || "未分组";
+  }
+
+  function refreshHistorySearch() {
+    clearTimeout(historySearchTimer);
+    const q = $("#historySearch").value.trim();
+    const project = $("#historyProject").value;
+    const attachments = $("#historyAttachments").checked;
+    state.historyRequest += 1;
+    state.historyResults = null;
+    if (state.workspaceFeatures && (q || project || attachments)) {
+      $("#historySearchHint").textContent = "正在搜索完整历史…";
+      bridge()?.searchConversations?.(q, project, attachments, String(state.historyRequest));
+    } else {
+      $("#historySearchHint").textContent = state.workspaceFeatures ? "按项目整理，置顶跨设备同步" : "搜索标题与摘要 · 置顶仅保存在此设备";
+    }
+    renderConversations();
+  }
+
+  function renderTaskStatus() {
+    const strip = $("#taskStatusStrip");
+    const approval = pendingApproval();
+    const last = state.active?.messages?.findLast((message) => message.role === "assistant");
+    const status = approval ? { state: "waiting_confirmation", label: "等你确认" }
+      : state.active?.taskStatus || { state: state.busy ? "running" : last?.status || "idle", label: state.busy ? "处理中" : last?.status === "failed" ? "执行失败" : last?.status === "interrupted" ? "已暂停" : last ? "已完成" : "准备就绪" };
+    strip.hidden = !state.activeId;
+    strip.dataset.state = status.state;
+    strip.innerHTML = `<span class="task-state-dot"></span><strong>${escapeHtml(status.label)}</strong><span class="task-origin">${escapeHtml(state.active?.activeDeviceLabel ? `${state.active.activeDeviceLabel} 发起 · 同一会话会同步` : "不同任务请使用独立对话")}</span>${approval ? '<button id="jumpToApproval" type="button">查看并确认 ↓</button>' : ""}`;
+    strip.querySelector("#jumpToApproval")?.addEventListener("click", () => $("#approvalDock")?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+    const older = $("#loadOlderMessages");
+    older.hidden = !state.workspaceFeatures || !state.active?.hasMore;
+    older.disabled = state.loadingOlder;
+    older.textContent = state.loadingOlder ? "正在加载…" : `加载更早消息${Number.isFinite(state.active?.messageOffset) ? `（还有 ${state.active.messageOffset} 条）` : ""}`;
+  }
+
+  function requestWorkspaceOverview() {
+    $("#workspaceOverviewContent").textContent = state.workspaceFeatures ? "正在检查连接…" : "此功能需要支持工作区的新客户端，当前安装版本暂不支持。";
+    if (state.workspaceFeatures) bridge()?.requestWorkspaceOverview?.();
+  }
+
+  function openWorkspaceOverview() {
+    closeDrawer();
+    $("#workspaceOverview").classList.add("open");
+    $("#workspaceOverview").setAttribute("aria-hidden", "false");
+    $("#closeWorkspace").focus();
+    requestWorkspaceOverview();
+  }
+
+  function closeWorkspaceOverview() {
+    $("#workspaceOverview").classList.remove("open");
+    $("#workspaceOverview").setAttribute("aria-hidden", "true");
+  }
   let pollTimer;
   let toastTimer;
   let collapseResizeTimer;
@@ -282,6 +382,7 @@
         state.codexProfile = cachedConversation.codexProfile || state.codexProfile;
         state.workDir = cachedConversation.workDir || "";
         localStorage.setItem("wit_active_conversation", preferredId);
+        restoreDraft();
         updateModelControls();
         setConnected(true, "已载入本地记录 · 正在同步");
         dismissBoot();
@@ -510,12 +611,18 @@
   }
 
   const modelNames = {
+    "gpt-6-astra": "Astra",
+    "gpt-6-sol": "Sol",
+    "gpt-6-luna": "Luna",
     "gpt-5.6-sol": "Sol",
     "gpt-5.6-terra": "Terra",
     "gpt-5.6-luna": "Luna",
   };
 
   const modelDescriptions = {
+    "gpt-6-astra": "旗舰智能 · 复杂任务",
+    "gpt-6-sol": "专业编码 · 均衡推理",
+    "gpt-6-luna": "快速高效 · 日常任务",
     "gpt-5.6-sol": "复杂任务 · 深度推理",
     "gpt-5.6-terra": "日常工作 · 均衡全能",
     "gpt-5.6-luna": "快速响应 · 轻量任务",
@@ -536,6 +643,11 @@
   function selectedModelCapability() {
     const models = Array.isArray(state.capabilities?.models) ? state.capabilities.models : [];
     return models.find((model) => model.id === (state.draftModel || state.model)) || null;
+  }
+
+  function modelDisplayName(modelId) {
+    const capability = (state.capabilities?.models || []).find((model) => model.id === modelId);
+    return capability?.displayName || modelNames[modelId] || modelId;
   }
 
   function renderReasoningControl() {
@@ -602,7 +714,7 @@
       : Object.keys(modelNames).map((id) => ({ id, displayName: modelNames[id] }));
     const selectedModel = state.draftModel || state.model;
     const selectedReasoning = state.draftReasoning || state.reasoning;
-    $("#quickModelCurrent").textContent = `GPT-5.6 ${modelNames[selectedModel] || selectedModel}`;
+    $("#quickModelCurrent").textContent = modelDisplayName(selectedModel);
     $("#quickModelOptions").innerHTML = models.map((model) => {
       const selected = model.id === selectedModel;
       return `<button type="button" data-quick-model="${escapeHtml(model.id)}" role="radio" aria-checked="${selected}" class="${selected ? "selected" : ""}"><span>${escapeHtml(model.displayName || modelNames[model.id] || model.id)}</span><i>✓</i></button>`;
@@ -694,15 +806,21 @@
     return Math.round(tokens).toLocaleString("zh-CN");
   }
 
+  function isProPlan(rate = {}) {
+    const plan = String(rate.planType || "").trim().toLowerCase().replace(/[_-]+/g, " ");
+    return plan === "prolite" || plan.split(/\s+/).includes("pro");
+  }
+
   function rateLimitWindows(rate = {}) {
     const windows = [rate.primary, rate.secondary, ...(Array.isArray(rate.additional) ? rate.additional : [])]
       .filter(Boolean);
     const duration = (item) => Math.max(0, Number(item?.windowDurationMins || 0));
-    const fiveHour = windows.find((item) => duration(item) >= 240 && duration(item) <= 360)
+    const pro = isProPlan(rate);
+    const fiveHour = pro ? null : windows.find((item) => duration(item) >= 240 && duration(item) <= 360)
       || (rate.primary && duration(rate.primary) < 24 * 60 ? rate.primary : null);
     const weekly = windows.find((item) => duration(item) >= 6 * 24 * 60 && duration(item) <= 8 * 24 * 60)
       || (rate.secondary && rate.secondary !== fiveHour ? rate.secondary : null);
-    return { fiveHour, weekly };
+    return { fiveHour, weekly, pro };
   }
 
   function rateLimitUsed(item) {
@@ -717,7 +835,7 @@
 
   function updateQuotaStatus() {
     const button = $("#quotaButton");
-    const { fiveHour, weekly } = rateLimitWindows(state.usage?.rateLimits || {});
+    const { fiveHour, weekly, pro } = rateLimitWindows(state.usage?.rateLimits || {});
     const fiveHourUsed = rateLimitUsed(fiveHour);
     const weeklyUsed = rateLimitUsed(weekly);
     if (fiveHourUsed === null && weeklyUsed === null) {
@@ -725,15 +843,16 @@
       return;
     }
     button.hidden = false;
+    button.classList.toggle("pro-quota", pro);
     const fiveHourLabel = $("#fiveHourQuotaLabel");
     const weeklyLabel = $("#weeklyQuotaLabel");
-    fiveHourLabel.hidden = fiveHourUsed === null;
+    fiveHourLabel.hidden = pro || fiveHourUsed === null;
     weeklyLabel.hidden = weeklyUsed === null;
     if (fiveHourUsed !== null) fiveHourLabel.textContent = `5小时 ${fiveHourUsed}%`;
-    if (weeklyUsed !== null) weeklyLabel.textContent = `本周 ${weeklyUsed}%`;
+    if (weeklyUsed !== null) weeklyLabel.textContent = `${pro ? "Pro · 本周" : "本周"} ${weeklyUsed}%`;
     button.setAttribute("aria-label", `查看 Codex 额度：${[
-      fiveHourUsed === null ? "" : `五小时已用 ${fiveHourUsed}%`,
-      weeklyUsed === null ? "" : `本周已用 ${weeklyUsed}%`,
+      pro || fiveHourUsed === null ? "" : `五小时已用 ${fiveHourUsed}%`,
+      weeklyUsed === null ? "" : `${pro ? "Pro " : ""}本周已用 ${weeklyUsed}%`,
     ].filter(Boolean).join("，")}`);
   }
 
@@ -772,7 +891,7 @@
   }
 
   function updateModelControls() {
-    $("#modelLabel").textContent = modelNames[state.model] || "Sol";
+    $("#modelLabel").textContent = modelNames[state.model] || "Astra";
     $("#reasoningLabel").textContent = reasoningNames[state.reasoning] || "均衡";
     $("#accessLabel").textContent = accessNames[state.accessMode] || "完全访问";
     $("#projectLabel").textContent = projectName(state.workDir);
@@ -847,19 +966,23 @@
     }
     const summary = payload.summary || {};
     const rate = payload.rateLimits || {};
-    const { fiveHour, weekly } = rateLimitWindows(rate);
+    const { fiveHour, weekly, pro } = rateLimitWindows(rate);
     const resetCredits = Math.max(0, Number(rate.resetCredits || 0));
-    const renderRateLimit = (label, item) => {
+    const renderRateLimit = (label, item, colorful = false) => {
       const used = rateLimitUsed(item);
-      return item ? `<section class="weekly-quota-summary"><div><small>${label}</small><strong>已用 ${used}%</strong></div><span>${rateLimitResetAt(item)} 重置</span><i><b style="width:${used}%"></b></i></section>` : "";
+      const remaining = used === null ? null : 100 - used;
+      return item ? `<section class="weekly-quota-summary${colorful ? " pro-quota-summary" : ""}"><div><small>${label} · 已用 ${used}%</small><strong>剩余 ${remaining}%</strong></div><span>下次重置：${rateLimitResetAt(item)}</span><i role="progressbar" aria-label="剩余额度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${remaining}"><b style="width:${remaining}%"></b></i></section>` : "";
     };
-    const rateLimitSummary = [renderRateLimit("五小时额度", fiveHour), renderRateLimit("本周额度", weekly)]
+    const rateLimitSummary = [
+      pro ? "" : renderRateLimit("五小时额度", fiveHour),
+      renderRateLimit(pro ? "Pro 本周额度" : "本周额度", weekly, pro),
+    ]
       .filter(Boolean).join("");
     const actionCard = `
       <section class="quota-actions quota-compact">
         ${rateLimitSummary ? `<div class="rate-limit-summaries">${rateLimitSummary}</div>` : ""}
         <div class="quota-action-row">
-          <div><b>重置额度窗口</b><small>${resetCredits ? `可用 ${resetCredits} 次 · 将同时重置五小时与本周额度` : "当前没有可用的重置额度"}</small></div>
+          <div><b>重置额度窗口</b><small>${resetCredits ? `可用 ${resetCredits} 次 · ${pro ? "重置本周额度" : "重置当前额度窗口"}` : "当前没有可用的重置额度"}</small></div>
           ${resetCredits ? `<button class="quota-reset glow-reset" data-reset-rate-limit><i></i><span>确认重置</span><em>✦</em></button>` : `<button class="quota-reset" disabled>暂无额度</button>`}
         </div>
       </section>`;
@@ -1569,7 +1692,7 @@
     const visible = Boolean(open);
     if (visible) {
       $("#chatMoreTitle").textContent = state.active?.title || "当前对话";
-      const pinned = new Set(JSON.parse(localStorage.getItem("wit_pinned_conversations") || "[]"));
+      const pinned = pinnedIds();
       $("#morePinLabel").textContent = pinned.has(state.activeId) ? "取消置顶" : "置顶";
     }
     menu.classList.toggle("open", visible);
@@ -1695,19 +1818,30 @@
 
   function renderConversations() {
     $("#conversationCount").textContent = String(state.conversations.length);
-    const pinned = new Set(JSON.parse(localStorage.getItem("wit_pinned_conversations") || "[]"));
-    const conversations = state.conversations.slice().sort((a, b) =>
-      Number(pinned.has(b.id)) - Number(pinned.has(a.id)));
+    const pinned = pinnedIds();
+    const selectedProject = $("#historyProject").value;
+    const projects = [...new Set(state.conversations.map(historyProjectName))].sort();
+    $("#historyProject").innerHTML = '<option value="">全部项目</option>' + projects.map((project) => `<option value="${escapeHtml(project)}">${escapeHtml(project)}</option>`).join("");
+    $("#historyProject").value = selectedProject;
+    const q = $("#historySearch").value.trim().toLocaleLowerCase();
+    const attachments = $("#historyAttachments").checked;
+    const conversations = (state.historyResults || state.conversations).filter((item) => {
+      if (state.historyResults) return true;
+      return (!selectedProject || historyProjectName(item) === selectedProject) &&
+        (!q || `${item.title} ${item.lastMessage || ""}`.toLocaleLowerCase().includes(q)) &&
+        (!attachments || item.hasAttachments || (item.id === state.activeId && state.active?.messages?.some((message) => message.attachments?.length || message.artifacts?.length)));
+    }).slice().sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)) ||
+      historyProjectName(a).localeCompare(historyProjectName(b)) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
     $("#conversationList").innerHTML = conversations.length
       ? conversations.map((conversation) => `
         <article class="conversation-row ${conversation.id === state.activeId ? "active" : ""}" data-id="${conversation.id}">
           <button class="conversation-open" data-open="${conversation.id}">
             <span class="conversation-mark">${conversation.busy ? '<i></i>' : '<svg viewBox="0 0 24 24"><path d="M5 6h14v10H9l-4 4V6Z"/></svg>'}</span>
-            <span><strong>${pinned.has(conversation.id) ? "⌖ " : ""}${escapeHtml(conversation.title)}</strong><small>${conversation.busy ? "正在处理" : formatDate(conversation.updatedAt)} · ${escapeHtml(conversation.lastMessage || "暂无消息")}</small></span>
+            <span>${state.workspaceFeatures ? `<span class="history-project-label">${escapeHtml(historyProjectName(conversation))}</span>` : ""}<strong>${pinned.has(conversation.id) ? "⌖ " : ""}${escapeHtml(conversation.title)}</strong><small>${conversation.busy ? "正在处理" : formatDate(conversation.updatedAt)} · ${escapeHtml(conversation.searchSnippet || conversation.lastMessage || "暂无消息")}</small></span>
           </button>
           <button class="conversation-more" data-archive="${conversation.id}" aria-label="移除对话">•••</button>
         </article>`).join("")
-      : `<div class="drawer-empty">还没有历史对话</div>`;
+      : `<div class="drawer-empty">${q || selectedProject || attachments ? "没有匹配的对话" : "还没有历史对话"}</div>`;
   }
 
   function attachmentHtml(file) {
@@ -2304,7 +2438,7 @@
         : ""}${files ? `<div class="message-files">${files}</div>` : ""}</div>
         <time>${message.status === "sending"
           ? (message.steeredInto ? "正在引导" : "正在发送")
-          : `${message.steeredInto ? "已引导 · " : ""}${formatDate(message.createdAt)}${message.status === "failed" ? " · 发送失败，可重试" : ""}`}</time>`;
+          : `${message.steeredInto ? "已引导 · " : ""}${formatDate(message.createdAt)}${message.senderDeviceLabel ? ` · ${escapeHtml(message.senderDeviceLabel)}${message.senderDeviceLabel === state.currentDeviceLabel ? "（本机）" : ""}` : ""}${message.status === "failed" ? " · 发送失败，可重试" : ""}`}</time>`;
     }
     const streamedImageIds = new Set(
       (message.stream || []).filter((entry) => entry.kind === "image").map((entry) => entry.imageId));
@@ -2632,6 +2766,7 @@
       (message.status === "queued" || message.status === "running"));
     renderApprovalDock();
     setBusy(busy);
+    renderTaskStatus();
     renderDeliveries();
     renderArtifactWorkspace({ autoOpen: true });
     clearTimeout(pollTimer);
@@ -2655,6 +2790,7 @@
     document.body.classList.toggle("power-paused", !state.appVisible);
     clearTimeout(pollTimer);
     if (!state.appVisible) {
+      saveDraft();
       if (state.supportsSse) bridge()?.unsubscribeConversationEvents?.();
       return;
     }
@@ -2717,7 +2853,9 @@
 
   function selectConversation(id) {
     if (!id) return;
+    if (state.transmitting) { toast("消息正在送达，完成后即可切换对话"); return; }
     const reopeningCurrent = state.active?.id === id;
+    if (!reopeningCurrent) saveDraft();
     if (!reopeningCurrent) {
       closeArtifact();
       state.artifactKey = "";
@@ -2725,6 +2863,13 @@
       state.artifactDismissed = "";
     }
     state.activeId = id;
+    if (!reopeningCurrent) {
+      state.active = null;
+      state.optimisticMessage = null;
+      state.loadingOlder = false;
+      restoreDraft();
+      renderMessages();
+    }
     latestPinned = true;
     pendingLatestConversationId = id;
     localStorage.setItem("wit_active_conversation", id);
@@ -2741,6 +2886,14 @@
   function applyConversation(conversation) {
     if (!conversation || conversation.id !== state.activeId) return;
     const wasBusy = state.busy;
+    // Keep explicitly loaded older pages when a fresh SSE tail arrives.
+    if (state.active?.id === conversation.id && Number.isInteger(conversation.messageOffset) &&
+        Number.isInteger(state.active.messageOffset) && conversation.messageOffset > state.active.messageOffset) {
+      const prefixLength = conversation.messageOffset - state.active.messageOffset;
+      if (prefixLength <= state.active.messages.length) {
+        conversation = { ...conversation, messages: [...state.active.messages.slice(0, prefixLength), ...conversation.messages], messageOffset: state.active.messageOffset, hasMore: state.active.messageOffset > 0 };
+      }
+    }
     state.active = conversation;
     state.model = conversation.model || state.model;
     state.reasoning = conversation.reasoning || state.reasoning;
@@ -2767,7 +2920,10 @@
       renderConversations();
       persistConversationList();
     }
-    if (wasBusy && !state.busy) bridge()?.requestConversations?.();
+    if (wasBusy && !state.busy) {
+      bridge()?.requestConversations?.();
+      if (completionReminder && state.appVisible) toast(`${conversation.title || "当前任务"} · ${conversation.taskStatus?.label || "执行已结束"}`);
+    }
   }
 
   function requestConversationCreation(workDir, callback = null) {
@@ -2810,8 +2966,14 @@
 
   function submitUploadedMessage() {
     if (!state.pendingSend) return;
-    const { text, uploadedIds } = state.pendingSend;
-    bridge()?.sendChatMessage?.(state.activeId, text, JSON.stringify(uploadedIds));
+    const { text } = state.pendingSend;
+    const uploadedIds = state.sendRequest.fileIds.map((id) => state.sendRequest.uploadedByFile[id]);
+    sendPreparedMessage(text, uploadedIds);
+  }
+
+  function sendPreparedMessage(text, uploadedIds) {
+    if (state.workspaceFeatures) bridge()?.sendChatMessageWithRequestId?.(state.activeId, text, JSON.stringify(uploadedIds), state.sendRequest.id);
+    else bridge()?.sendChatMessage?.(state.activeId, text, JSON.stringify(uploadedIds));
   }
 
   function sendMessage(prefill) {
@@ -2822,6 +2984,9 @@
       toast("上一条消息正在送达，请稍候");
       return;
     }
+    const signature = JSON.stringify([state.activeId, text, files.map((file) => file.id)]);
+    if (state.sendRequest?.signature !== signature) state.sendRequest = { signature, id: crypto.randomUUID(), fileIds: files.map((file) => file.id), uploadedByFile: {} };
+    saveDraft();
     state.transmitting = true;
     state.lastSubmittedText = text;
     state.optimisticMessage = {
@@ -2845,16 +3010,19 @@
     setBusy(state.busy);
     renderMessages();
     ensureConversation(() => {
+      state.sendRequest.signature = JSON.stringify([state.activeId, text, files.map((file) => file.id)]);
       if (files.length) {
-        state.pendingSend = { text, waiting: new Set(files.map((file) => file.id)), uploadedIds: [] };
-        files.forEach((file) => {
+        const waitingFiles = files.filter((file) => !state.sendRequest.uploadedByFile[file.id]);
+        state.pendingSend = { text, waiting: new Set(waitingFiles.map((file) => file.id)) };
+        if (!waitingFiles.length) { submitUploadedMessage(); return; }
+        waitingFiles.forEach((file) => {
           file.state = "uploading";
           file.label = "准备上传";
           bridge()?.uploadFile?.(file.id);
         });
         renderAttachments();
       } else {
-        bridge()?.sendChatMessage?.(state.activeId, text, "[]");
+        sendPreparedMessage(text, []);
       }
     });
   }
@@ -2875,11 +3043,21 @@
       document.body.classList.add("native");
       const version = String(info.version || window.DropVaultAndroid?.getVersion?.() || "");
       state.nativeVersion = version;
+      state.workspaceFeatures = Boolean(info.workspaceFeatures);
+      // Do not expose controls whose native transport is absent in older APKs.
+      $("#workspaceOverviewButton").hidden = !state.workspaceFeatures;
+      $("#moreGroupButton").hidden = !state.workspaceFeatures;
+      if (!state.workspaceFeatures) {
+        $("#historySearch").placeholder = "搜索对话标题和摘要";
+        $("#historySearchHint").textContent = "搜索标题与摘要 · 置顶仅保存在此设备";
+        $("#historyProject").parentElement.hidden = true;
+      }
       const cacheScope = String(info.cacheScope || window.DropVaultAndroid?.getCacheScope?.() || "");
       state.supportsSse = Boolean(info.supportsSse);
       if (/^[a-f0-9]{24,64}$/.test(cacheScope)) {
         state.cacheScope = cacheScope;
       }
+      restoreDraft();
       if (version) $("#appVersion").textContent = `v${version}`;
       if (versionLessThan(version, "2.1.7")) {
         setTimeout(() => bridge()?.checkForUpdates?.(), 900);
@@ -2951,6 +3129,7 @@
     onConversations(json) {
       const payload = JSON.parse(json);
       state.conversations = payload.conversations || [];
+      state.currentDeviceLabel = payload.currentDeviceLabel || "";
       persistConversationList();
       setConnected(true, "服务器在线");
       dismissBoot();
@@ -3038,7 +3217,13 @@
     },
     onConversationCreated(json) {
       const conversation = JSON.parse(json).conversation;
+      const previousDraftKey = draftKey();
       state.activeId = conversation.id;
+      saveDraft();
+      if (previousDraftKey !== draftKey()) {
+        try { localStorage.removeItem(previousDraftKey); } catch {}
+        state.attachmentDrafts.delete(previousDraftKey);
+      }
       state.active = conversation;
       state.model = conversation.model || state.model;
       state.reasoning = conversation.reasoning || state.reasoning;
@@ -3065,7 +3250,9 @@
     },
     onConversationForked(json) {
       const conversation = JSON.parse(json).conversation;
+      saveDraft();
       state.activeId = conversation.id;
+      restoreDraft();
       state.active = conversation;
       localStorage.setItem("wit_active_conversation", conversation.id);
       persistConversation(conversation);
@@ -3112,7 +3299,8 @@
       const currentMessages = state.active?.messages || [];
       const replaceFrom = Number(payload.replaceFrom);
       const messages = Array.isArray(payload.messages) ? payload.messages : [];
-      if (!Number.isInteger(replaceFrom) || replaceFrom < 0 || replaceFrom > currentMessages.length ||
+      const offset = Number(state.active?.messageOffset || 0);
+      if (!Number.isInteger(replaceFrom) || replaceFrom < offset || replaceFrom > offset + currentMessages.length ||
           replaceFrom + messages.length !== Number(payload.totalMessages)) {
         bridge()?.requestConversation?.(state.activeId);
         return;
@@ -3120,9 +3308,51 @@
       applyConversation({
         ...state.active,
         ...metadata,
-        messages: [...currentMessages.slice(0, replaceFrom), ...messages],
+        messageOffset: offset,
+        totalMessages: payload.totalMessages,
+        hasMore: offset > 0,
+        messages: [...currentMessages.slice(0, replaceFrom - offset), ...messages],
       });
     },
+    onConversationPage(json) {
+      const page = JSON.parse(json).conversation;
+      state.loadingOlder = false;
+      if (!page || page.id !== state.activeId || !state.active) return;
+      const currentOffset = Number(state.active.messageOffset || 0);
+      const pageOffset = Number(page.messageOffset);
+      if (!Number.isInteger(pageOffset) || pageOffset >= currentOffset) { renderTaskStatus(); return; }
+      const prefix = page.messages.slice(0, currentOffset - pageOffset);
+      if (prefix.length !== currentOffset - pageOffset) { toast("历史消息已变化，请重新打开对话"); renderTaskStatus(); return; }
+      state.active = { ...state.active, messageOffset: pageOffset, hasMore: pageOffset > 0, messages: [...prefix, ...state.active.messages] };
+      persistConversation();
+      renderMessages(true);
+    },
+    onConversationPageError(message) { state.loadingOlder = false; renderTaskStatus(); toast(message || "加载历史失败，请重试"); },
+    onHistorySearch(json) {
+      const payload = JSON.parse(json);
+      if (String(payload.requestId) !== String(state.historyRequest)) return;
+      state.historyResults = payload.conversations || [];
+      $("#historySearchHint").textContent = `找到 ${state.historyResults.length} 条对话 · 全文搜索`;
+      renderConversations();
+    },
+    onHistorySearchError(message) { $("#historySearchHint").textContent = message || "搜索失败，请重试"; },
+    onConversationMetadataUpdated(json) {
+      const conversation = JSON.parse(json).conversation;
+      const item = state.conversations.find((entry) => entry.id === conversation?.id);
+      if (item) Object.assign(item, { pinned: conversation.pinned, project: conversation.project });
+      if (conversation?.id === state.activeId) applyConversation(conversation);
+      renderConversations();
+      persistConversationList();
+      toast("已同步对话设置");
+    },
+    onConversationMetadataError(message) { toast(message || "同步失败，请重试"); },
+    onWorkspaceOverview(json) {
+      const payload = JSON.parse(json);
+      const labels = { active: "运行中", inactive: "未运行", available: "可用", configured: "已配置", missing: "未配置", unknown: "待检查", connected: "已连接", error: "检查失败", running: "运行中" };
+      const section = (title, rows) => `<section class="workspace-section"><h3>${escapeHtml(title)}</h3>${(rows || []).map((row) => `<article><div><strong>${escapeHtml(row.name || row.id)}</strong><small>${escapeHtml(row.description || row.role || row.detail || "")}</small>${row.workDir ? `<code>${escapeHtml(row.workDir)}</code>` : ""}</div>${row.status ? `<span>${escapeHtml(labels[row.status] || row.status)}</span>` : ""}</article>`).join("") || '<p>暂无信息</p>'}</section>`;
+      $("#workspaceOverviewContent").innerHTML = section("项目", payload.projects) + section("服务器用途", payload.servers) + section("服务", payload.services) + section("服务连接", payload.connections) + `<p class="workspace-checked">核实时间：${escapeHtml(payload.checkedAt ? new Date(payload.checkedAt).toLocaleString() : "未知")}<br>${escapeHtml(payload.notice || "")}</p>`;
+    },
+    onWorkspaceOverviewError(message) { $("#workspaceOverviewContent").textContent = message || "检查失败，请重试"; },
     onAppVisibility(visible) {
       setAppVisible(visible);
     },
@@ -3162,7 +3392,11 @@
       if (state.activeId) bridge()?.requestConversation?.(state.activeId);
     },
     onMessageSent(json) {
-      state.active = JSON.parse(json).conversation;
+      const payload = JSON.parse(json);
+      if (payload.clientRequestId && payload.clientRequestId !== state.sendRequest?.id) return;
+      const conversation = payload.conversation;
+      if (conversation?.id !== state.activeId) { state.transmitting = false; bridge()?.requestConversations?.(); return; }
+      state.active = conversation;
       persistConversation(state.active);
       state.transmitting = false;
       state.optimisticMessage = null;
@@ -3171,13 +3405,16 @@
         $("#messageInput").style.height = "";
       }
       state.lastSubmittedText = "";
-      state.attachments.clear();
+      for (const id of state.sendRequest?.fileIds || []) state.attachments.delete(id);
       state.pendingSend = null;
+      state.sendRequest = null;
+      saveDraft();
       renderAttachments();
       renderMessages();
       bridge()?.requestConversations?.();
     },
-    onMessageSendError(message) {
+    onMessageSendError(message, clientRequestId) {
+      if (clientRequestId && clientRequestId !== state.sendRequest?.id) return;
       state.pendingSend = null;
       state.transmitting = false;
       if (state.optimisticMessage) state.optimisticMessage.status = "failed";
@@ -3187,6 +3424,7 @@
     },
     onSettingsUpdated(json) {
       const conversation = JSON.parse(json).conversation;
+      if (conversation?.id !== state.activeId) return;
       state.active = conversation;
       state.model = conversation.model;
       state.reasoning = conversation.reasoning;
@@ -3315,7 +3553,7 @@
     },
     onUploadFinished(id, ok, message, responseJson) {
       const file = state.attachments.get(id);
-      if (!file || !state.pendingSend) return;
+      if (!file || !state.pendingSend?.waiting.has(id)) return;
       if (!ok) {
         file.state = "error";
         file.label = "上传失败";
@@ -3328,7 +3566,7 @@
       }
       try {
         const uploadId = JSON.parse(responseJson).file.id;
-        state.pendingSend.uploadedIds.push(uploadId);
+        state.sendRequest.uploadedByFile[id] = uploadId;
       } catch {
         this.onMessageSendError("服务器没有返回附件编号");
         return;
@@ -3366,6 +3604,8 @@
   };
 
   function beginNewConversation(codexProfile = null) {
+    if (state.transmitting) { toast("消息正在送达，完成后即可新建对话"); return; }
+    saveDraft();
     const selectedProfile = codexProfile || state.allowedCodexProfiles[0] || "default";
     state.activeId = null;
     state.active = null;
@@ -3375,6 +3615,7 @@
     localStorage.setItem("wit_codex_profile", state.codexProfile);
     localStorage.removeItem("wit_active_conversation");
     resetComposer();
+    restoreDraft();
     updateModelControls();
     renderMessages();
     state.transmitting = true;
@@ -3390,7 +3631,7 @@
 
   function closeArchiveDialog() {
     $("#dialogLayer").classList.remove("open");
-    $("#dialogLayer").setAttribute("aria-hidden", "false");
+    $("#dialogLayer").setAttribute("aria-hidden", "true");
   }
 
   $("#menuButton").addEventListener("click", openDrawer);
@@ -3410,14 +3651,53 @@
   });
   $("#morePinButton").addEventListener("click", () => {
     if (!state.activeId) { toast("当前没有可置顶的对话"); return; }
-    const pinned = new Set(JSON.parse(localStorage.getItem("wit_pinned_conversations") || "[]"));
+    const pinned = pinnedIds();
     const added = !pinned.has(state.activeId);
+    if (state.workspaceFeatures) {
+      bridge()?.updateConversationMetadata?.(state.activeId, JSON.stringify({ pinned: added }));
+      setChatMoreMenu(false);
+      return;
+    }
     if (added) pinned.add(state.activeId); else pinned.delete(state.activeId);
-    localStorage.setItem("wit_pinned_conversations", JSON.stringify([...pinned]));
+    try {
+      localStorage.setItem(`wit_pinned_conversations:${state.cacheScope}`, JSON.stringify([...pinned]));
+    } catch { toast("设备存储不可用，未能保存置顶"); return; }
     renderConversations();
     setChatMoreMenu(false);
     toast(added ? "已置顶这条对话" : "已取消置顶");
   });
+  $("#moreGroupButton").addEventListener("click", () => {
+    setChatMoreMenu(false);
+    if (!state.activeId) return;
+    if (!state.workspaceFeatures) { toast("当前客户端暂不支持项目分组"); return; }
+    const project = window.prompt("项目分组名称（留空取消分组，不更改工作目录）", state.active?.project || "");
+    if (project === null) return;
+    if (project.trim().length > 80) { toast("分组名称请保持在 80 字以内"); return; }
+    bridge()?.updateConversationMetadata?.(state.activeId, JSON.stringify({ project: project.trim() }));
+  });
+  $("#moreNotifyButton").setAttribute("aria-pressed", String(completionReminder));
+  $("#completionNotifyLabel").textContent = completionReminder ? "已开启" : "已关闭";
+  $("#moreNotifyButton").addEventListener("click", () => {
+    completionReminder = !completionReminder;
+    try { localStorage.setItem("witt_completion_reminder", completionReminder ? "1" : "0"); } catch {}
+    $("#moreNotifyButton").setAttribute("aria-pressed", String(completionReminder));
+    $("#completionNotifyLabel").textContent = completionReminder ? "已开启" : "已关闭";
+    toast(completionReminder ? "已开启前台完成提醒，不含后台推送" : "已关闭完成提醒");
+  });
+  $("#historySearch").addEventListener("input", () => { clearTimeout(historySearchTimer); historySearchTimer = setTimeout(refreshHistorySearch, 300); });
+  $("#historyProject").addEventListener("change", refreshHistorySearch);
+  $("#historyAttachments").addEventListener("change", refreshHistorySearch);
+  $("#loadOlderMessages").addEventListener("click", () => {
+    if (state.loadingOlder || !state.active?.hasMore || !state.workspaceFeatures) return;
+    state.loadingOlder = true;
+    renderTaskStatus();
+    bridge()?.requestConversationPage?.(state.activeId, String(state.active.messageOffset), 40);
+  });
+  $("#workspaceOverviewButton").addEventListener("click", openWorkspaceOverview);
+  $("#closeWorkspace").addEventListener("click", closeWorkspaceOverview);
+  $("#workspaceBackdrop").addEventListener("click", closeWorkspaceOverview);
+  $("#refreshWorkspace").addEventListener("click", requestWorkspaceOverview);
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeWorkspaceOverview(); });
   $("#closeDrawer").addEventListener("click", closeDrawer);
   $("#drawerBackdrop").addEventListener("click", closeDrawer);
   $("#profileButton").addEventListener("click", openProfile);
@@ -3807,6 +4087,8 @@
     event.target.style.height = "auto";
     event.target.style.height = `${Math.min(128, event.target.scrollHeight)}px`;
     refreshActionButton();
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = setTimeout(saveDraft, 250);
   });
   $("#messageInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {

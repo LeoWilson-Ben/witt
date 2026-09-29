@@ -149,11 +149,14 @@ service.handleServerRequest(conversationId, messageId, {
 conversation = service.readConversation(conversationId);
 approval = conversation.messages[1].stream.findLast(
   (entry) => entry.kind === "approval" && entry.status === "pending");
-assert.equal(approval.approvalType, "connector");
-assert.equal(approval.approvalOptions.length, 3);
+assert.equal(approval.approvalType, "user_input");
+assert.equal(approval.approvalOptions.length, 0);
+assert.equal(approval.approvalQuestions.length, 1);
+assert.equal(approval.approvalQuestions[0].options.length, 3);
 assert.match(approval.title, /Figma/);
 service.resolveApproval(
-  { body: { choiceId: "input-1" } }, {}, conversationId, approval.approvalId);
+  { body: { answers: { "figma-approval": { answers: ["Accept"] } } } },
+  {}, conversationId, approval.approvalId);
 assert.deepEqual(responses.at(-1), {
   id: 43,
   result: { answers: { "figma-approval": { answers: ["Accept"] } } },

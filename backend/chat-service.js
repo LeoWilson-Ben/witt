@@ -5,16 +5,18 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { AppServerClient, sharedAppServer } = require("./app-server-client");
 const { ConversationStore } = require("./sqlite-store");
+const { workspaceOverview } = require("./workspace-overview");
 
 const ID_PATTERN = /^[a-f0-9-]{36}$/;
 const DEEPSEEK_MODELS = new Set(["deepseek-v4-pro", "deepseek-v4-flash"]);
 const ADMIN_MODELS = new Set([
+  "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
   "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", ...DEEPSEEK_MODELS,
 ]);
 const NON_ADMIN_MODELS = new Set(["gpt-5.5", ...DEEPSEEK_MODELS]);
 const ALL_MODELS = new Set([...ADMIN_MODELS, ...NON_ADMIN_MODELS]);
 const QUOTA_EXHAUSTED_MESSAGE = "Your quota has been exhausted. Please try again later.";
-const ALLOWED_REASONING = new Set(["low", "medium", "high", "xhigh"]);
+const ALLOWED_REASONING = new Set(["low", "medium", "high", "xhigh", "max", "ultra"]);
 const ALLOWED_ACCESS = new Set(["read-only", "workspace-write", "danger-full-access"]);
 const MAX_ARTIFACT_BYTES = 500 * 1024 * 1024;
 const MAX_INLINE_IMAGE_BYTES = 25 * 1024 * 1024;
@@ -52,7 +54,7 @@ class ChatService {
     this.readJsonBody = options.readJsonBody;
     this.allowedModels = Object.hasOwn(options, "allowedModels")
       ? options.allowedModels : ADMIN_MODELS;
-    this.defaultModel = options.defaultModel || "gpt-5.6-sol";
+    this.defaultModel = options.defaultModel || "gpt-6-astra";
     this.quotaExhausted = Boolean(options.quotaExhausted);
     this.codexProfiles = options.codexProfiles || {
       default: {
@@ -67,6 +69,9 @@ class ChatService {
         .filter((profile) => this.codexProfiles[profile]));
     if (!this.allowedCodexProfiles.size) this.allowedCodexProfiles.add("default");
     this.defaultCodexProfile = [...this.allowedCodexProfiles][0];
+    // Keep app-server notifications scoped to this user's ChatService. Multiple users may use
+    // the same Codex profile, but their active turns must never share an EventEmitter.
+    this.clientScope = options.clientScope || crypto.randomUUID();
     this.imageDir = options.imageDir || path.join(path.dirname(this.chatDir), "chat-images");
     this.previewDir = path.join(this.dataDir, ".witt-previews");
     this.deliveryRoots = (options.deliveryRoots || [
@@ -97,20 +102,23 @@ class ChatService {
 
   clientFor(profile, model = this.defaultModel) {
     const deepseek = DEEPSEEK_MODELS.has(model);
+    const configOverrides = ["features.default_mode_request_user_input=true"];
+    if (deepseek) configOverrides.push(
+      'model_provider="witt-deepseek"',
+      'model_providers.witt-deepseek.name="DeepSeek through Witt"',
+      'model_providers.witt-deepseek.base_url="http://127.0.0.1:33111/v1"',
+      'model_providers.witt-deepseek.wire_api="responses"',
+      "model_providers.witt-deepseek.request_max_retries=1",
+      "model_providers.witt-deepseek.stream_max_retries=2",
+      "model_providers.witt-deepseek.stream_idle_timeout_ms=300000",
+    );
     const client = sharedAppServer({
       codexBin: this.codexBin,
       cwd: profile.workDir,
       home: "/home/ubuntu",
       codexHome: profile.codexHome,
-      configOverrides: deepseek ? [
-        'model_provider="witt-deepseek"',
-        'model_providers.witt-deepseek.name="DeepSeek through Witt"',
-        'model_providers.witt-deepseek.base_url="http://127.0.0.1:33111/v1"',
-        'model_providers.witt-deepseek.wire_api="responses"',
-        "model_providers.witt-deepseek.request_max_retries=1",
-        "model_providers.witt-deepseek.stream_max_retries=2",
-        "model_providers.witt-deepseek.stream_idle_timeout_ms=300000",
-      ] : [],
+      configOverrides,
+      clientScope: this.clientScope,
     });
     if (!this.boundClients.has(client)) {
       this.boundClients.add(client);
@@ -218,8 +226,9 @@ class ChatService {
     }
   }
 
-  subscribeConversation(req, res, conversationId) {
-    const conversation = this.readConversation(conversationId);
+  subscribeConversation(req, res, conversationId, limit = null) {
+    const conversation = limit === null ? this.readConversation(conversationId)
+      : this.store.loadPage(conversationId, { limit });
     if (!conversation || conversation.archived) {
       this.sendJson(res, 404, { error: "对话不存在" });
       return;
@@ -275,8 +284,12 @@ class ChatService {
 
   publicMessage(message) {
     const renderedImageIds = new Set();
+    const { senderDeviceId: ignoredSenderDeviceId,
+      clientRequestId: ignoredClientRequestId, requestFingerprint: ignoredFingerprint,
+      ...publicFields } = message;
     return {
-      ...message,
+      ...publicFields,
+      ...(message.senderDeviceId ? { senderDeviceLabel: this.deviceLabel(message.senderDeviceId) } : {}),
       artifacts: (message.artifacts || []).map((storedArtifact) => {
         const previewToken = this.issueArtifactPreviewToken(message.id, storedArtifact);
         const { sourcePath: ignored, ...artifact } = storedArtifact;
@@ -416,15 +429,35 @@ class ChatService {
 
   publicConversation(conversation, includeMessages = true) {
     const profile = this.profileFor(conversation);
+    const messages = conversation.messages || [];
+    const active = this.active?.conversationId === conversation.id ? this.active : null;
+    const busy = conversation.busy ?? messages.some((message) =>
+      message.role === "assistant" && ["queued", "running"].includes(message.status));
+    const lastAssistant = messages.findLast((message) => message.role === "assistant");
+    const waiting = Boolean(active?.pendingApprovals?.size) || (conversation.awaitingConfirmation ??
+      lastAssistant?.stream?.some((entry) => entry.kind === "approval" && entry.status === "pending"));
+    const lastStatus = conversation.lastAssistantStatus ?? lastAssistant?.status;
+    const taskState = waiting ? "awaiting_confirmation" : busy ? "running" :
+      lastStatus === "failed" ? "failed" : lastStatus === "interrupted" ? "interrupted" :
+      messages.length || conversation.totalMessages ? "completed" : "idle";
     const result = {
       id: conversation.id,
       title: conversation.title,
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
       archived: Boolean(conversation.archived),
+      pinned: Boolean(conversation.pinned),
+      project: String(conversation.project || ""),
+      hasAttachments: conversation.hasAttachments ?? messages.some((message) =>
+        message.attachments?.length || message.artifacts?.length),
+      taskStatus: { state: taskState, label: {
+        awaiting_confirmation: "等你确认", running: "处理中", failed: "执行失败",
+        completed: "已结束", interrupted: "已暂停", idle: "尚未开始",
+      }[taskState] },
+      activeDeviceLabel: active?.ownerDeviceId ? this.deviceLabel(active.ownerDeviceId) : null,
       codexProfile: profile.id,
       codexProfileLabel: profile.label,
-      codexProfileAllowed: this.allowedCodexProfiles.has(profile.id),
+      codexProfileAllowed: this.profileAllowed(conversation),
       hasCodexContext: Boolean(conversation.codexThreadId),
       model: this.modelAllowed(conversation.model, profile.id)
         ? conversation.model : this.defaultModel,
@@ -442,15 +475,21 @@ class ChatService {
         contextWindow: Math.max(0, Number(conversation.contextUsage.contextWindow || 0)),
         updatedAt: conversation.contextUsage.updatedAt || null,
       } : null),
-      busy: conversation.messages.some((message) =>
-        message.role === "assistant" &&
-        (message.status === "queued" || message.status === "running")),
-      lastMessage: conversation.messages.at(-1)?.text || "",
+      busy,
+      lastMessage: conversation.lastMessage ?? messages.at(-1)?.text ?? "",
     };
     if (includeMessages) {
-      result.messages = conversation.messages.map((message) => this.publicMessage(message));
+      result.messages = messages.map((message) => this.publicMessage(message));
+      result.messageOffset = conversation.messageOffset || 0;
+      result.totalMessages = conversation.totalMessages ?? messages.length;
+      result.hasMore = result.messageOffset > 0;
     }
     return result;
+  }
+
+  deviceLabel(deviceId) {
+    // Account-scoped display fingerprint, never a login/device identifier.
+    return `设备 ${crypto.createHash("sha256").update(`${this.chatDir}\0${deviceId}`).digest("hex").slice(0, 6).toUpperCase()}`;
   }
 
   publicConversationDelta(conversation) {
@@ -700,7 +739,8 @@ class ChatService {
   }
 
   profileAllowed(conversation) {
-    return this.allowedCodexProfiles.has(this.profileFor(conversation).id);
+    const requested = String(conversation?.codexProfile || "default");
+    return Boolean(this.codexProfiles[requested]) && this.allowedCodexProfiles.has(requested);
   }
 
   createConversation(title = "新对话", model = this.defaultModel, reasoning = "medium",
@@ -859,14 +899,33 @@ class ChatService {
     return client;
   }
 
-  handle(req, res, url) {
+  handle(req, res, url, principal = {}) {
     if (!url.pathname.startsWith("/chat/")) return false;
+    const deviceId = String(principal.deviceId || "legacy");
 
     if (req.method === "GET" && url.pathname === "/chat/conversations") {
-      const conversations = this.allConversations()
+      const query = String(url.searchParams.get("q") || "").trim().slice(0, 200);
+      const project = url.searchParams.get("project");
+      const entries = query ? this.store.search(query, { limit: 100 }) : this.store.listMetadata();
+      const conversations = entries
         .filter((conversation) => !conversation.archived)
-        .map((conversation) => this.publicConversation(conversation, false));
-      this.sendJson(res, 200, { activeConversationId: this.active?.conversationId || null, conversations });
+        .filter((conversation) => project === null || String(conversation.project || "") === project)
+        .filter((conversation) => url.searchParams.get("attachments") !== "1" || conversation.hasAttachments)
+        .map((conversation) => ({ ...this.publicConversation(conversation, false),
+          ...(query ? { matchingMessageId: conversation.matchingMessageId,
+            searchSnippet: conversation.snippet } : {}) }))
+        .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt));
+      const activeConversationId = this.active?.ownerDeviceId === deviceId
+        ? this.active.conversationId : null;
+      this.sendJson(res, 200, { activeConversationId, conversations,
+        currentDeviceLabel: this.deviceLabel(deviceId) });
+      return true;
+    }
+
+    if (req.method === "GET" && url.pathname === "/chat/workspace-overview") {
+      Promise.resolve().then(() => workspaceOverview({ workDir: this.codexWorkDir, dataDir: this.dataDir }))
+        .then((payload) => this.sendJson(res, 200, payload))
+        .catch(() => this.sendJson(res, 503, { error: "暂时无法读取项目与服务状态" }));
       return true;
     }
 
@@ -904,8 +963,24 @@ class ChatService {
     }
 
     const messageMatch = url.pathname.match(/^\/chat\/conversations\/([a-f0-9-]{36})\/messages$/);
+    if (req.method === "GET" && messageMatch) {
+      const before = url.searchParams.get("before");
+      const limit = url.searchParams.get("limit");
+      if ((before !== null && !/^\d+$/.test(before)) ||
+          (limit !== null && !/^[1-9]\d*$/.test(limit))) {
+        this.sendJson(res, 400, { error: "分页参数无效" });
+        return true;
+      }
+      const conversation = this.store.loadPage(messageMatch[1], {
+        ...(before !== null ? { before: Number(before) } : {}),
+        limit: Math.min(100, Number(limit || 40)),
+      });
+      if (!conversation || conversation.archived) this.sendJson(res, 404, { error: "对话不存在" });
+      else this.sendJson(res, 200, { conversation: this.publicConversation(conversation) });
+      return true;
+    }
     if (req.method === "POST" && messageMatch) {
-      this.createMessage(req, res, messageMatch[1]);
+      this.createMessage(req, res, messageMatch[1], deviceId);
       return true;
     }
 
@@ -923,7 +998,12 @@ class ChatService {
     const eventsMatch = url.pathname.match(
       /^\/chat\/conversations\/([a-f0-9-]{36})\/events$/);
     if (req.method === "GET" && eventsMatch) {
-      this.subscribeConversation(req, res, eventsMatch[1]);
+      const limit = url.searchParams.get("limit");
+      if (limit !== null && !/^[1-9]\d*$/.test(limit)) {
+        this.sendJson(res, 400, { error: "分页参数无效" });
+        return true;
+      }
+      this.subscribeConversation(req, res, eventsMatch[1], limit === null ? null : Math.min(100, Number(limit)));
       return true;
     }
 
@@ -948,7 +1028,7 @@ class ChatService {
     const interruptMatch = url.pathname.match(
       /^\/chat\/conversations\/([a-f0-9-]{36})\/interrupt$/);
     if (req.method === "POST" && interruptMatch) {
-      this.interruptConversation(res, interruptMatch[1]);
+      this.interruptConversation(res, interruptMatch[1], deviceId);
       return true;
     }
 
@@ -969,20 +1049,26 @@ class ChatService {
     const reviewMatch = url.pathname.match(
       /^\/chat\/conversations\/([a-f0-9-]{36})\/review$/);
     if (req.method === "POST" && reviewMatch) {
-      this.startReview(req, res, reviewMatch[1]);
+      this.startReview(req, res, reviewMatch[1], deviceId);
       return true;
     }
 
     const approvalMatch = url.pathname.match(
       /^\/chat\/conversations\/([a-f0-9-]{36})\/approvals\/([a-f0-9-]{36})$/);
     if (req.method === "POST" && approvalMatch) {
-      this.resolveApproval(req, res, approvalMatch[1], approvalMatch[2]);
+      this.resolveApproval(req, res, approvalMatch[1], approvalMatch[2], deviceId);
       return true;
     }
 
     const conversationMatch = url.pathname.match(/^\/chat\/conversations\/([a-f0-9-]{36})$/);
     if (req.method === "GET" && conversationMatch) {
-      const conversation = this.readConversation(conversationMatch[1]);
+      const limit = url.searchParams.get("limit");
+      if (limit !== null && !/^[1-9]\d*$/.test(limit)) {
+        this.sendJson(res, 400, { error: "分页参数无效" });
+        return true;
+      }
+      const conversation = limit === null ? this.readConversation(conversationMatch[1])
+        : this.store.loadPage(conversationMatch[1], { limit: Math.min(100, Number(limit)) });
       if (!conversation || conversation.archived) {
         this.sendJson(res, 404, { error: "对话不存在" });
         return true;
@@ -1080,7 +1166,7 @@ class ChatService {
     })();
   }
 
-  startReview(req, res, conversationId) {
+  startReview(req, res, conversationId, deviceId = "legacy") {
     this.readJsonBody(req, 8 * 1024, (error, body) => {
       if (error) { this.sendJson(res, 400, { error: error.message }); return; }
       const conversation = this.readConversation(conversationId);
@@ -1124,16 +1210,13 @@ class ChatService {
           conversation.messages.push(assistant);
           conversation.updatedAt = now;
           this.writeConversation(conversation);
-          const timeout = setTimeout(() => {
-            if (this.active?.messageId === assistant.id) this.failActive("代码审查超时，已停止");
-          }, 30 * 60 * 1000);
-          timeout.unref();
           this.active = {
             conversationId, messageId: assistant.id, userId: null, client,
+            ownerDeviceId: deviceId,
             threadId: conversation.codexThreadId, turnId: null, turnStarted: false,
             finalResponse: "", finished: false, pendingSteers: [],
             pendingApprovals: new Map(), codexHome: this.profileFor(conversation).codexHome,
-            timeout, mode: "review",
+            mode: "review",
           };
           const result = await client.request("review/start", {
             threadId: conversation.codexThreadId, delivery: "inline", target,
@@ -1161,6 +1244,23 @@ class ChatService {
       const conversation = this.readConversation(conversationId);
       if (!conversation || conversation.archived) {
         this.sendJson(res, 404, { error: "对话不存在" });
+        return;
+      }
+      const hasPinned = Object.hasOwn(body || {}, "pinned");
+      const hasProject = Object.hasOwn(body || {}, "project");
+      if ((hasPinned && typeof body.pinned !== "boolean") ||
+          (hasProject && (typeof body.project !== "string" || body.project.length > 80 || /[\x00-\x1f]/.test(body.project)))) {
+        this.sendJson(res, 400, { error: "置顶或项目分组格式无效" });
+        return;
+      }
+      const metadataOnly = (hasPinned || hasProject) && Object.keys(body).every((key) =>
+        key === "pinned" || key === "project");
+      if (metadataOnly) {
+        if (hasPinned) conversation.pinned = body.pinned;
+        if (hasProject) conversation.project = body.project.trim();
+        conversation.updatedAt = new Date().toISOString();
+        this.writeConversation(conversation);
+        this.sendJson(res, 200, { conversation: this.publicConversation(conversation) });
         return;
       }
       const requestedModel = body?.model == null
@@ -1226,13 +1326,15 @@ class ChatService {
       conversation.accessMode = requestedAccess;
       conversation.workDir = requestedWorkDir;
       conversation.codexProfile = requestedProfile.id;
+      if (hasPinned) conversation.pinned = body.pinned;
+      if (hasProject) conversation.project = body.project.trim();
       conversation.updatedAt = new Date().toISOString();
       this.writeConversation(conversation);
       this.sendJson(res, 200, { conversation: this.publicConversation(conversation) });
     });
   }
 
-  createMessage(req, res, conversationId) {
+  createMessage(req, res, conversationId, deviceId = "legacy") {
     this.readJsonBody(req, 64 * 1024, (error, body) => {
       if (error) {
         this.sendJson(res, 400, { error: error.message });
@@ -1243,10 +1345,6 @@ class ChatService {
         this.sendJson(res, 404, { error: "对话不存在" });
         return;
       }
-      if (this.quotaExhausted) {
-        this.sendJson(res, 429, { error: QUOTA_EXHAUSTED_MESSAGE });
-        return;
-      }
       if (!this.profileAllowed(conversation)) {
         this.sendJson(res, 403, { error: "该对话属于未授权的 Codex 账号，请新建玄遇对话" });
         return;
@@ -1255,6 +1353,30 @@ class ChatService {
       const attachmentIds = Array.isArray(body?.attachmentIds)
         ? [...new Set(body.attachmentIds.map(String))].slice(0, 8)
         : [];
+      const clientRequestId = String(body?.clientRequestId || "");
+      if (clientRequestId && !/^[a-zA-Z0-9_-]{8,128}$/.test(clientRequestId)) {
+        this.sendJson(res, 400, { error: "消息请求标识无效" });
+        return;
+      }
+      const requestFingerprint = crypto.createHash("sha256")
+        .update(JSON.stringify({ text, attachmentIds })).digest("hex");
+      if (clientRequestId) {
+        const duplicate = conversation.messages.find((message) => message.role === "user" &&
+          message.senderDeviceId === deviceId && message.clientRequestId === clientRequestId);
+        if (duplicate) {
+          if (duplicate.requestFingerprint !== requestFingerprint) {
+            this.sendJson(res, 409, { error: "该发送标识已用于另一条消息，请重新发送" });
+          } else {
+            this.sendJson(res, 200, { conversation: this.publicConversation(conversation),
+              messageId: duplicate.id, duplicate: true, steered: Boolean(duplicate.steeredInto) });
+          }
+          return;
+        }
+      }
+      if (this.quotaExhausted) {
+        this.sendJson(res, 429, { error: QUOTA_EXHAUSTED_MESSAGE });
+        return;
+      }
       const attachments = attachmentIds.map((id) => this.readUpload(id)).filter(Boolean);
       if (!text && !attachments.length) {
         this.sendJson(res, 400, { error: "请输入消息或添加附件" });
@@ -1269,11 +1391,14 @@ class ChatService {
         id: crypto.randomUUID(),
         role: "user",
         text,
+        senderDeviceId: deviceId,
+        ...(clientRequestId ? { clientRequestId, requestFingerprint } : {}),
         attachments: attachments.map(({ path: ignored, ...attachment }) => attachment),
         createdAt: now,
         status: "queued",
       };
-      const activeAssistant = this.active?.conversationId === conversation.id
+      const activeAssistant = this.active?.conversationId === conversation.id &&
+          this.active?.ownerDeviceId === deviceId
         ? conversation.messages.find((message) =>
           message.id === this.active.messageId && message.role === "assistant")
         : null;
@@ -1287,6 +1412,7 @@ class ChatService {
         this.addActivity(activeAssistant, "steer", "已接收补充要求，正在调整处理方向", "completed");
         conversation.updatedAt = now;
         this.writeConversation(conversation);
+        if (clientRequestId) this.store.save(conversation, { immediate: true });
         const inputs = this.buildInputs(conversation, userMessage, attachments, false);
         const pending = !this.active.turnId || !this.active.turnStarted;
         this.sendJson(res, 202, {
@@ -1319,6 +1445,7 @@ class ChatService {
       }
       conversation.updatedAt = now;
       this.writeConversation(conversation);
+      if (clientRequestId) this.store.save(conversation, { immediate: true });
       this.sendJson(res, 202, {
         conversation: this.publicConversation(conversation),
         messageId: userMessage.id,
@@ -1431,22 +1558,45 @@ class ChatService {
     });
     try {
       await client.start();
-      const result = await client.request("account/rateLimitResetCredit/consume", {
-        idempotencyKey: crypto.randomUUID(),
-      });
+      const latestLimits = await client.request("account/rateLimits/read", {});
+      const resetCredits = latestLimits?.rateLimitResetCredits;
+      const availableCount = Math.max(0, Number(resetCredits?.availableCount || 0));
+      if (!availableCount) {
+        this.usageCache.delete(profile.id);
+        this.sendJson(res, 409, {
+          error: "该账号当前没有可用的重置额度，额度信息已刷新",
+          code: "RATE_LIMIT_RESET_UNAVAILABLE",
+        });
+        return;
+      }
+      const availableCredit = Array.isArray(resetCredits?.credits)
+        ? resetCredits.credits.find((credit) => credit?.status === "available" && credit?.id)
+        : null;
+      const params = { idempotencyKey: crypto.randomUUID() };
+      if (availableCredit) params.creditId = String(availableCredit.id);
+      const result = await client.request("account/rateLimitResetCredit/consume", params);
       this.usageCache.delete(profile.id);
       this.sendJson(res, 200, {
         outcome: String(result?.outcome || "noCredit"),
         codexProfile: profile.id,
       });
     } catch (error) {
-      this.sendJson(res, 502, { error: `无法使用重置额度：${String(error.message || error).slice(0, 160)}` });
+      this.usageCache.delete(profile.id);
+      const detail = String(error.message || error);
+      if (/\b429\b|Too Many Requests/i.test(detail)) {
+        this.sendJson(res, 409, {
+          error: "重置额度状态已变化或兑换暂时受限，额度信息已刷新，请稍后再试",
+          code: "RATE_LIMIT_RESET_REJECTED",
+        });
+      } else {
+        this.sendJson(res, 502, { error: `无法使用重置额度：${detail.slice(0, 160)}` });
+      }
     } finally {
       client.close();
     }
   }
 
-  interruptConversation(res, conversationId) {
+  interruptConversation(res, conversationId, deviceId = "legacy") {
     const conversation = this.readConversation(conversationId);
     if (!conversation || conversation.archived) {
       this.sendJson(res, 404, { error: "对话不存在" });
@@ -1455,6 +1605,10 @@ class ChatService {
     const current = this.active;
     if (!current || current.conversationId !== conversationId || current.finished) {
       this.sendJson(res, 409, { error: "当前对话没有正在执行的任务" });
+      return;
+    }
+    if (current.ownerDeviceId && current.ownerDeviceId !== deviceId) {
+      this.sendJson(res, 409, { error: "这一轮由另一台设备发起，不能从当前设备暂停" });
       return;
     }
     current.interruptRequested = true;
@@ -1552,7 +1706,9 @@ class ChatService {
   }
 
   recover() {
-    for (const conversation of this.allConversations()) {
+    for (const metadata of this.store.listMetadata()) {
+      const conversation = this.readConversation(metadata.id);
+      if (!conversation) continue;
       let changed = false;
       for (let index = 0; index < conversation.messages.length; index += 1) {
         const message = conversation.messages[index];
@@ -1613,8 +1769,10 @@ class ChatService {
   }
 
   nextQueued() {
-    for (const conversation of this.allConversations().reverse()) {
-      if (conversation.archived) continue;
+    for (const metadata of this.store.listMetadata().reverse()) {
+      if (metadata.archived || !metadata.busy) continue;
+      const conversation = this.readConversation(metadata.id);
+      if (!conversation) continue;
       const assistant = conversation.messages.find((message) =>
         message.role === "assistant" && message.status === "queued");
       if (!assistant) continue;
@@ -1670,21 +1828,9 @@ class ChatService {
       ];
     }
     if (method === "item/tool/requestUserInput") {
-      const questions = Array.isArray(params.questions) ? params.questions : [];
-      if (questions.length !== 1 || !Array.isArray(questions[0]?.options) ||
-          !questions[0].options.length) return [];
-      const question = questions[0];
-      return question.options.slice(0, 12).map((option, index) => {
-        const label = String(option?.label || `选项 ${index + 1}`).slice(0, 120);
-        const declined = /decline|cancel|reject|deny|拒绝|取消|不允许/i.test(label);
-        return makeChoice(
-          `input-${index + 1}`,
-          label,
-          String(option?.description || "提交此选择").slice(0, 300),
-          { answers: { [String(question.id || "answer")]: { answers: [label] } } },
-          declined ? "declined" : "accepted",
-        );
-      });
+      // User questions always use the structured form so the client can add a
+      // free-form "Other" answer and render multiple questions consistently.
+      return [];
     }
     if (method === "mcpServer/elicitation/request") {
       const properties = params.requestedSchema?.properties;
@@ -1792,9 +1938,9 @@ class ChatService {
       const questions = (Array.isArray(params.questions) ? params.questions : [])
         .slice(0, 3).map((question, index) => ({
           id: String(question?.id || `question-${index + 1}`).slice(0, 120),
-          header: compact(question?.header || "连接器确认", 120),
+          header: compact(question?.header || `问题 ${index + 1}`, 120),
           question: compact(question?.question || "请选择如何继续", 500),
-          isOther: Boolean(question?.isOther),
+          allowOther: Array.isArray(question?.options) && question.options.length > 0,
           isSecret: Boolean(question?.isSecret),
           options: Array.isArray(question?.options)
             ? question.options.slice(0, 12).map((option) => ({
@@ -1803,9 +1949,9 @@ class ChatService {
             })) : null,
         }));
       return {
-        approvalType: "connector",
-        title: questions[0]?.header || "允许连接器执行操作？",
-        reason: questions.length === 1 ? questions[0].question : "连接器需要你的输入才能继续。",
+        approvalType: "user_input",
+        title: questions.length === 1 ? questions[0]?.header : "需要你的选择",
+        reason: questions.length > 1 ? "回答以下问题后，Witt 会继续当前任务。" : "",
         approvalQuestions: questions,
       };
     }
@@ -1895,18 +2041,28 @@ class ChatService {
       })),
       ...this.approvalPresentation(request.method, request.params || {}),
     });
-    this.addActivity(assistant, "approval", "等待你确认权限", "running");
+    this.addActivity(
+      assistant,
+      "approval",
+      request.method === "item/tool/requestUserInput" ? "等待你的选择" : "等待你确认权限",
+      "running",
+    );
     conversation.updatedAt = new Date().toISOString();
     this.writeConversation(conversation);
   }
 
-  resolveApproval(req, res, conversationId, approvalId) {
+  resolveApproval(req, res, conversationId, approvalId, deviceId = "legacy") {
     this.readJsonBody(req, 8 * 1024, (error, body) => {
       if (error) {
         this.sendJson(res, 400, { error: error.message });
         return;
       }
       const current = this.active;
+      if (current?.conversationId === conversationId && current.ownerDeviceId &&
+          current.ownerDeviceId !== deviceId) {
+        this.sendJson(res, 409, { error: "这一轮由另一台设备发起，请在原设备上确认" });
+        return;
+      }
       const pending = current?.conversationId === conversationId
         ? current.pendingApprovals?.get(approvalId) : null;
       if (!pending) {
@@ -1927,7 +2083,11 @@ class ChatService {
       if (!choice && (pending.method === "item/tool/requestUserInput" ||
           pending.method === "mcpServer/elicitation/request")) {
         let payload;
-        try { payload = JSON.parse(requestedChoice); } catch {}
+        if (body?.answers && typeof body.answers === "object") {
+          payload = { answers: body.answers };
+        } else {
+          try { payload = JSON.parse(requestedChoice); } catch {}
+        }
         if (pending.method === "item/tool/requestUserInput") {
           const answers = payload?.answers;
           const questions = Array.isArray(pending.params?.questions) ? pending.params.questions : [];
@@ -1939,7 +2099,7 @@ class ChatService {
           if (valid) {
             response = { answers };
             outcome = "accepted";
-            resolutionLabel = "已提交连接器选择";
+            resolutionLabel = "已提交选择";
           }
         } else {
           const action = payload?.action;
@@ -1957,7 +2117,10 @@ class ChatService {
         }
       }
       if (!response) {
-        this.sendJson(res, 400, { error: "请选择当前请求提供的操作" });
+        this.sendJson(res, 400, {
+          error: pending.method === "item/tool/requestUserInput"
+            ? "请完成所有问题" : "请选择当前请求提供的操作",
+        });
         return;
       }
       const conversation = this.readConversation(conversationId);
@@ -1998,7 +2161,7 @@ class ChatService {
       `Witt 附件目录：${this.dataDir}`,
       "记住用户在本线程中的上下文，回答使用简洁自然的中文。",
       "只处理用户明确要求的任务，保留现有数据和未提交修改。",
-      "不要输出、读取或回传登录凭据、Token、私钥和密码。",
+      "禁止展示、记录或回传凭据原文。用户明确授权时，允许认证程序使用指定的本地凭据文件完成认证，不将凭据或生成的 Token 输出到聊天及日志",
       "访问范围由本对话的权限设置决定。删除数据、对外发送消息等不可逆或对外动作仍需先向用户说明。",
       "Witt 已经获得本机通用 Root 权限；需要完成用户要求时，可以直接使用 `sudo -n`、systemctl 和系统目录。",
       "修改服务代码后先完成语法或构建校验，再重启对应服务并检查健康状态。",
@@ -2106,6 +2269,7 @@ class ChatService {
       conversationId: conversation.id,
       messageId: assistant.id,
       userId: user.id,
+      ownerDeviceId: user.senderDeviceId || null,
       client,
       threadId: conversation.codexThreadId,
       turnId: null,
@@ -2117,13 +2281,6 @@ class ChatService {
       previewMessageBuffers: new Map(),
       codexHome: profile.codexHome,
     };
-    const timeout = setTimeout(() => {
-      if (this.active?.messageId === assistant.id) {
-        this.failActive("本轮处理超过 30 分钟，已停止");
-      }
-    }, 30 * 60 * 1000);
-    timeout.unref();
-    this.active.timeout = timeout;
     try {
       await client.start();
       if (!this.active || this.active.messageId !== assistant.id) return;
@@ -2635,7 +2792,9 @@ class ChatService {
   }
 
   previewArtifactForToken(res, entry) {
-    for (const conversation of this.allConversations()) {
+    const ownerId = this.store.findConversationIdByMessageId(entry.messageId);
+    const owner = ownerId ? this.readConversation(ownerId) : null;
+    for (const conversation of owner ? [owner] : []) {
       const message = conversation.messages.find((item) => item.id === entry.messageId);
       const candidates = [
         ...(message?.artifacts || []),
@@ -2653,7 +2812,9 @@ class ChatService {
   }
 
   artifactForToken(entry) {
-    for (const conversation of this.allConversations()) {
+    const ownerId = this.store.findConversationIdByMessageId(entry.messageId);
+    const owner = ownerId ? this.readConversation(ownerId) : null;
+    for (const conversation of owner ? [owner] : []) {
       const message = conversation.messages.find((item) => item.id === entry.messageId);
       const candidates = [
         ...(message?.artifacts || []),

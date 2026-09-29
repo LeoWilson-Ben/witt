@@ -1,0 +1,256 @@
+/* Final dark-mode compatibility layer for the Claude-style surface overrides. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --night-text: #eeeae2;
+  --night-text-soft: #c9c4ba;
+  --night-muted: #9e988e;
+  --night-surface: #252420;
+  --night-raised: #2d2c27;
+  --night-soft: #35332e;
+  --night-line: #46423b;
+}
+
+:root[data-theme="dark"] body,
+:root[data-theme="dark"] .app-shell,
+:root[data-theme="dark"] .chat-stage,
+:root[data-theme="dark"] .messages,
+:root[data-theme="dark"] .message,
+:root[data-theme="dark"] .assistant-text,
+:root[data-theme="dark"] .stream-message,
+:root[data-theme="dark"] .stream-message.final {
+  color: var(--night-text) !important;
+}
+
+:root[data-theme="dark"] .assistant-text p,
+:root[data-theme="dark"] .assistant-text li,
+:root[data-theme="dark"] .assistant-text h1,
+:root[data-theme="dark"] .assistant-text h2,
+:root[data-theme="dark"] .assistant-text h3,
+:root[data-theme="dark"] .stream-message p,
+:root[data-theme="dark"] .stream-message li,
+:root[data-theme="dark"] .stream-message h1,
+:root[data-theme="dark"] .stream-message h2,
+:root[data-theme="dark"] .stream-message h3 {
+  color: inherit !important;
+}
+
+:root[data-theme="dark"] .stream-message.commentary,
+:root[data-theme="dark"] .message time,
+:root[data-theme="dark"] .composer-hint,
+:root[data-theme="dark"] .composer-meta,
+:root[data-theme="dark"] .composer-model #reasoningLabel {
+  color: var(--night-muted) !important;
+}
+
+:root[data-theme="dark"] .assistant-text a,
+:root[data-theme="dark"] .stream-message a {
+  color: #e8a287 !important;
+}
+
+:root[data-theme="dark"] .assistant-text code,
+:root[data-theme="dark"] .stream-message code,
+:root[data-theme="dark"] .inline-code {
+  color: #efb099 !important;
+  background: #38302b !important;
+}
+
+:root[data-theme="dark"] .assistant-text pre,
+:root[data-theme="dark"] .stream-message pre,
+:root[data-theme="dark"] .detail-block pre {
+  color: #e4e0d8 !important;
+  border-color: #46443e !important;
+  background: #191917 !important;
+}
+
+:root[data-theme="dark"] .welcome h1,
+:root[data-theme="dark"] .welcome h1 em {
+  color: var(--night-text) !important;
+}
+:root[data-theme="dark"] .welcome > p,
+:root[data-theme="dark"] .lumora-badge {
+  color: var(--night-muted) !important;
+}
+:root[data-theme="dark"] .suggestions button {
+  color: var(--night-text) !important;
+  border-color: var(--night-line) !important;
+  background: #292824 !important;
+}
+:root[data-theme="dark"] .suggestions button > span {
+  color: #e49a7f !important;
+  background: #3c302b !important;
+}
+:root[data-theme="dark"] .suggestions button small,
+:root[data-theme="dark"] .suggestions button > i {
+  color: var(--night-muted) !important;
+}
+
+:root[data-theme="dark"] .completed-process,
+:root[data-theme="dark"] .activity,
+:root[data-theme="dark"] .stream-action,
+:root[data-theme="dark"] .stream-action-group {
+  color: var(--night-text-soft) !important;
+  border-color: var(--night-line) !important;
+  background: var(--night-raised) !important;
+}
+:root[data-theme="dark"] .completed-process-mark,
+:root[data-theme="dark"] .stream-action > span,
+:root[data-theme="dark"] .stream-group-icon {
+  color: #d9a088 !important;
+  background: #3a312c !important;
+}
+:root[data-theme="dark"] .completed-process-copy strong,
+:root[data-theme="dark"] .stream-group-copy strong {
+  color: var(--night-text) !important;
+}
+:root[data-theme="dark"] .completed-process-copy small,
+:root[data-theme="dark"] .completed-runtime,
+:root[data-theme="dark"] .stream-group-copy small {
+  color: var(--night-muted) !important;
+}
+
+:root[data-theme="dark"] .composer textarea,
+:root[data-theme="dark"] .local-ssh-field input {
+  color: var(--night-text) !important;
+}
+:root[data-theme="dark"] .composer textarea::placeholder,
+:root[data-theme="dark"] .local-ssh-field input::placeholder {
+  color: #817c73 !important;
+  opacity: 1 !important;
+}
+:root[data-theme="dark"] .attach-button,
+:root[data-theme="dark"] .voice-button,
+:root[data-theme="dark"] .composer-model {
+  color: var(--night-text-soft) !important;
+  background-color: var(--night-soft) !important;
+}
+:root[data-theme="dark"] .attachment-menu,
+:root[data-theme="dark"] .quick-model-menu {
+  color: var(--night-text) !important;
+  border-color: var(--night-line) !important;
+  background: var(--night-raised) !important;
+}
+:root[data-theme="dark"] .attachment-menu-icon {
+  color: var(--night-text-soft) !important;
+  background: var(--night-soft) !important;
+}
+
+:root[data-theme="dark"] .chat-more-menu,
+:root[data-theme="dark"] .chat-more-item {
+  color: var(--night-text) !important;
+}
+:root[data-theme="dark"] .chat-more-menu > p,
+:root[data-theme="dark"] .chat-more-item small {
+  color: var(--night-muted) !important;
+}
+:root[data-theme="dark"] .chat-more-item:active {
+  background: var(--night-soft) !important;
+}
+
+:root[data-theme="dark"] .drawer-head h2,
+:root[data-theme="dark"] .conversation-open strong,
+:root[data-theme="dark"] .drawer-profile strong,
+:root[data-theme="dark"] .drawer-theme b {
+  color: var(--night-text) !important;
+}
+:root[data-theme="dark"] .conversation-open small,
+:root[data-theme="dark"] .drawer-profile small,
+:root[data-theme="dark"] .drawer-history-head,
+:root[data-theme="dark"] .drawer-footer {
+  color: var(--night-muted) !important;
+}
+:root[data-theme="dark"] .conversation-mark,
+:root[data-theme="dark"] .drawer-new > svg {
+  color: #d09a83 !important;
+  background: #3a302b !important;
+}
+:root[data-theme="dark"] .drawer-new,
+:root[data-theme="dark"] .drawer-footer button {
+  color: var(--night-text) !important;
+  border-color: var(--night-line) !important;
+  background: var(--night-raised) !important;
+}
+:root[data-theme="dark"] .drawer-new small {
+  color: var(--night-muted) !important;
+}
+
+:root[data-theme="dark"] .sheet-panel,
+:root[data-theme="dark"] .settings-panel,
+:root[data-theme="dark"] .delivery-panel,
+:root[data-theme="dark"] .project-panel,
+:root[data-theme="dark"] .profile-panel,
+:root[data-theme="dark"] .codex-account-panel {
+  color: var(--night-text) !important;
+  background: var(--night-surface) !important;
+}
+:root[data-theme="dark"] .sheet-head {
+  background: linear-gradient(var(--night-surface) 78%, transparent) !important;
+}
+:root[data-theme="dark"] .sheet-head h2,
+:root[data-theme="dark"] .sheet-panel h3,
+:root[data-theme="dark"] .sheet-panel strong,
+:root[data-theme="dark"] .sheet-panel label {
+  color: var(--night-text) !important;
+}
+:root[data-theme="dark"] .sheet-panel p,
+:root[data-theme="dark"] .sheet-panel small,
+:root[data-theme="dark"] .local-ssh-field > span:first-child {
+  color: var(--night-muted) !important;
+}
+:root[data-theme="dark"] .icon-button {
+  color: var(--night-text-soft) !important;
+  background: var(--night-soft) !important;
+}
+:root[data-theme="dark"] .model-options > button,
+:root[data-theme="dark"] .reasoning-options button,
+:root[data-theme="dark"] .access-options button,
+:root[data-theme="dark"] .project-options button,
+:root[data-theme="dark"] .codex-account-card,
+:root[data-theme="dark"] .delivery-file {
+  color: var(--night-text) !important;
+  border-color: var(--night-line) !important;
+  background: var(--night-raised) !important;
+}
+:root[data-theme="dark"] .model-options > button.selected,
+:root[data-theme="dark"] .reasoning-options button.selected,
+:root[data-theme="dark"] .access-options button.selected,
+:root[data-theme="dark"] .project-options button.selected {
+  color: #f4dfd5 !important;
+  border-color: #805b4b !important;
+  background: #41312a !important;
+}
+
+:root[data-theme="dark"] .artifact-handoff {
+  color: var(--night-text) !important;
+  border-color: var(--night-line) !important;
+  background: var(--night-raised) !important;
+}
+:root[data-theme="dark"] .artifact-handoff-icon {
+  color: #e3a087 !important;
+  background: #3d302a !important;
+}
+:root[data-theme="dark"] .artifact-workspace,
+:root[data-theme="dark"] .artifact-workspace-head,
+:root[data-theme="dark"] .artifact-toolbar,
+:root[data-theme="dark"] .artifact-loading {
+  color: var(--night-text) !important;
+  background: var(--night-surface) !important;
+}
+:root[data-theme="dark"] .artifact-view-tabs {
+  color: var(--night-text-soft) !important;
+  background: var(--night-soft) !important;
+}
+:root[data-theme="dark"] .artifact-view-tabs button.active {
+  color: var(--night-text) !important;
+  background: #45413a !important;
+}
+
+:root[data-theme="dark"] .boot-screen {
+  color: var(--night-text) !important;
+  background: #1f1f1c !important;
+}
+:root[data-theme="dark"] .boot-wordmark {
+  color: var(--night-text) !important;
+}
+:root[data-theme="dark"] .boot-track {
+  background: #3b3933 !important;
+}

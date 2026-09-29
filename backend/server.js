@@ -10,6 +10,7 @@ const {
   ChatService, NON_ADMIN_MODELS, servePublicArtifactPreview, servePublicArtifactSource,
 } = require("./chat-service");
 const { CodexAccountService } = require("./codex-account-service");
+const { claimStandby } = require("./failover");
 
 const host = "127.0.0.1";
 const port = Number(process.env.DROP_VAULT_PORT || 3003);
@@ -34,6 +35,18 @@ const codexProfiles = {
     label: "子账号",
     codexHome: "/home/ubuntu/.codex-xuanyu",
     workDir: "/data/xuanyu-build-console",
+  },
+  account4: {
+    id: "account4",
+    label: "账号 4",
+    codexHome: "/home/ubuntu/.codex-account-4",
+    workDir: "/home/ubuntu",
+  },
+  account5: {
+    id: "account5",
+    label: "账号 5",
+    codexHome: "/home/ubuntu/.codex-account-5",
+    workDir: "/home/ubuntu",
   },
 };
 const licreBuildDir = "/data/builds";
@@ -232,7 +245,7 @@ function chatFor(principal) {
     sendJson,
     readJsonBody,
     allowedModels: principal.admin || principal.unrestrictedModels ? null : NON_ADMIN_MODELS,
-    defaultModel: principal.admin || principal.unrestrictedModels ? "gpt-5.6-sol" : "gpt-5.5",
+    defaultModel: principal.admin || principal.unrestrictedModels ? "gpt-6-astra" : "gpt-5.5",
     quotaExhausted: !principal.admin && !principal.unrestrictedModels,
     codexProfiles,
     allowedCodexProfiles: principal.admin
@@ -279,7 +292,7 @@ function runNextTask() {
     `固定工作目录：${codexWorkDir}`,
     `Witt 文件目录：${dataDir}`,
     "只处理用户这条消息明确要求的任务；保留现有数据和未提交修改。",
-    "不要输出、读取或回传登录凭据、Token、私钥和密码。",
+    "禁止展示、记录或回传凭据原文。用户明确授权时，允许认证程序使用指定的本地凭据文件完成认证，不将凭据或生成的 Token 输出到聊天及日志。",
     "如果任务需要超出上述项目目录的写入、对外发送消息、删除数据或其他高风险操作，只说明需要用户确认，不要执行。",
     "",
     `用户通过 Witt 发来的消息：${task.prompt}`,
@@ -463,23 +476,68 @@ function createTask(req, res) {
   });
 }
 
-function sendFile(res, file, contentType, downloadName = null) {
+function sendFile(res, file, contentType, downloadName = null, req = null) {
   fs.stat(file, (error, stats) => {
     if (error || !stats.isFile()) {
       sendJson(res, 404, { error: "文件不存在" });
       return;
     }
+    const etag = `"${stats.size.toString(16)}-${Math.floor(stats.mtimeMs).toString(16)}"`;
+    const lastModified = stats.mtime.toUTCString();
     const headers = {
+      "Accept-Ranges": "bytes",
       "Cache-Control": "no-store",
-      "Content-Length": stats.size,
       "Content-Type": contentType,
+      ETag: etag,
+      "Last-Modified": lastModified,
       "X-Content-Type-Options": "nosniff",
     };
     if (downloadName) {
       headers["Content-Disposition"] = `attachment; filename="${downloadName}"`;
     }
-    res.writeHead(200, headers);
-    const input = fs.createReadStream(file);
+    let start = 0;
+    let end = stats.size - 1;
+    let partial = false;
+    const requestedRange = req?.headers?.range;
+    const ifRange = req?.headers?.["if-range"];
+    let rangeAllowed = Boolean(requestedRange);
+    if (rangeAllowed && ifRange) {
+      const ifRangeDate = Date.parse(ifRange);
+      rangeAllowed = ifRange === etag ||
+        (Number.isFinite(ifRangeDate) && stats.mtimeMs <= ifRangeDate + 999);
+    }
+    if (rangeAllowed) {
+      const match = /^bytes=(\d*)-(\d*)$/.exec(requestedRange);
+      if (!match || (!match[1] && !match[2])) {
+        res.writeHead(416, { ...headers, "Content-Range": `bytes */${stats.size}` });
+        res.end();
+        return;
+      }
+      if (!match[1]) {
+        const suffixLength = Number(match[2]);
+        if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
+          res.writeHead(416, { ...headers, "Content-Range": `bytes */${stats.size}` });
+          res.end();
+          return;
+        }
+        start = Math.max(0, stats.size - suffixLength);
+      } else {
+        start = Number(match[1]);
+        if (match[2]) end = Number(match[2]);
+      }
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+          start < 0 || start >= stats.size || end < start) {
+        res.writeHead(416, { ...headers, "Content-Range": `bytes */${stats.size}` });
+        res.end();
+        return;
+      }
+      end = Math.min(end, stats.size - 1);
+      partial = true;
+      headers["Content-Range"] = `bytes ${start}-${end}/${stats.size}`;
+    }
+    headers["Content-Length"] = partial ? end - start + 1 : stats.size;
+    res.writeHead(partial ? 206 : 200, headers);
+    const input = fs.createReadStream(file, partial ? { start, end } : undefined);
     input.on("error", () => res.destroy());
     input.pipe(res);
   });
@@ -565,15 +623,15 @@ function handleLicre(req, res, url) {
     return true;
   }
   if (url.pathname === "/licre/licre-update.json") {
-    sendFile(res, path.join(licreConsoleDir, "licre-update.json"), "application/json; charset=utf-8");
+    sendFile(res, path.join(licreConsoleDir, "licre-update.json"), "application/json; charset=utf-8", null, req);
     return true;
   }
   if (url.pathname === "/licre/LiCre.apk") {
-    sendFile(res, path.join(licreBuildDir, "LiCre.apk"), "application/vnd.android.package-archive", "LiCre.apk");
+    sendFile(res, path.join(licreBuildDir, "LiCre.apk"), "application/vnd.android.package-archive", "LiCre.apk", req);
     return true;
   }
   if (url.pathname === "/licre/Xuanyu-app-release.apk") {
-    sendFile(res, path.join(licreBuildDir, "Xuanyu-app-release.apk"), "application/vnd.android.package-archive", "Xuanyu-app-release.apk");
+    sendFile(res, path.join(licreBuildDir, "Xuanyu-app-release.apk"), "application/vnd.android.package-archive", "Xuanyu-app-release.apk", req);
     return true;
   }
   const release = url.pathname.match(/^\/licre\/releases\/([0-9a-f]{40})\/app-release\.apk$/);
@@ -583,6 +641,7 @@ function handleLicre(req, res, url) {
       path.join(licreBuildDir, "releases", release[1], "app-release.apk"),
       "application/vnd.android.package-archive",
       "app-release.apk",
+      req,
     );
     return true;
   }
@@ -635,12 +694,20 @@ http.createServer((req, res) => {
     sendJson(res, 401, { error: "未授权" });
     return;
   }
-  if (url.pathname === "/codex/accounts") {
-    if (!principal.admin || req.method !== "GET") {
-      sendJson(res, 403, { error: "仅管理员可管理 Codex 账号" });
+  if (url.pathname === "/failover/claim") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "请求方式不支持" });
       return;
     }
-    codexAccountService.list(res);
+    claimStandby().then(({ status, body }) => sendJson(res, status, body));
+    return;
+  }
+  if (url.pathname === "/codex/accounts") {
+    if (req.method !== "GET") {
+      sendJson(res, 405, { error: "请求方式不支持" });
+      return;
+    }
+    codexAccountService.list(res, principal.admin ? null : (principal.codexProfiles || ["default"]));
     return;
   }
   const codexLoginMatch = url.pathname.match(
@@ -671,7 +738,7 @@ http.createServer((req, res) => {
     url.pathname = "/chat/usage/reset";
   }
   if (imageRequest && userChat.handlePublicImage(req, res, url)) return;
-  if (userChat.handle(req, res, url)) return;
+  if (userChat.handle(req, res, url, principal)) return;
   if (req.method === "GET" && url.pathname === "/files") {
     listFiles(res, url, filesFor(principal));
     return;

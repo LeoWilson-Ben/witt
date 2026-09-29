@@ -8,6 +8,8 @@ const { DatabaseSync, backup } = require("node:sqlite");
 const sourceRoot = path.resolve(process.env.DROP_VAULT_ROOT || "/data/drop-vault");
 const backupRoot = path.resolve(process.env.DROP_VAULT_BACKUP_ROOT ||
   path.join(sourceRoot, "backups", "snapshots"));
+const backupRetention = Math.max(1,
+  Number.parseInt(process.env.WITT_BACKUP_RETENTION || "7", 10) || 7);
 
 function digest(file) {
   const hash = crypto.createHash("sha256");
@@ -31,6 +33,18 @@ function walk(directory, output = []) {
     else if (entry.isFile() && !/-(wal|shm)$/.test(entry.name)) output.push(absolute);
   }
   return output;
+}
+
+function pruneBackups() {
+  fs.mkdirSync(backupRoot, { recursive: true, mode: 0o700 });
+  const snapshots = fs.readdirSync(backupRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(backupRoot, entry.name))
+    .filter((directory) => fs.existsSync(path.join(directory, "COMPLETE")))
+    .sort((left, right) => path.basename(right).localeCompare(path.basename(left)));
+  const expired = snapshots.slice(backupRetention);
+  for (const directory of expired) fs.rmSync(directory, { recursive: true, force: true });
+  process.stdout.write(`retained ${Math.min(snapshots.length, backupRetention)} snapshots, removed ${expired.length}\n`);
 }
 
 async function createBackup() {
@@ -59,6 +73,7 @@ async function createBackup() {
     `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
   fs.writeFileSync(path.join(destination, "COMPLETE"), `${manifest.createdAt}\n`, { mode: 0o600 });
   process.stdout.write(`${destination}\n`);
+  pruneBackups();
 }
 
 function verifyBackup(directory) {
@@ -74,4 +89,5 @@ function verifyBackup(directory) {
 }
 
 if (process.argv[2] === "verify") verifyBackup(path.resolve(process.argv[3] || ""));
+else if (process.argv[2] === "prune") pruneBackups();
 else createBackup().catch((error) => { console.error(error.message); process.exitCode = 1; });

@@ -54,10 +54,12 @@ class CodexAccountService {
     }
   }
 
-  async list(res) {
+  async list(res, allowedProfileIds = null) {
     try {
       const accounts = [];
-      for (const profile of Object.values(this.profiles)) {
+      const allowed = Array.isArray(allowedProfileIds) ? new Set(allowedProfileIds) : null;
+      for (const profile of Object.values(this.profiles)
+        .filter((item) => !allowed || allowed.has(item.id))) {
         accounts.push(await this.readProfile(profile));
       }
       this.sendJson(res, 200, { accounts });

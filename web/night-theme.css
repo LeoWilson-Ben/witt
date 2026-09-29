@@ -44,7 +44,7 @@
   min-width: 0;
   padding: 3px;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr) !important;
   gap: 2px;
   border-radius: 10px;
   background: rgba(224, 229, 238, .72);
@@ -68,6 +68,12 @@
   background: #fff;
   box-shadow: 0 3px 9px rgba(47, 62, 92, .1);
 }
+.night-mode-toggle { position: relative; }
+.night-mode-toggle svg { transition: opacity .18s ease, transform .22s ease; }
+.night-mode-toggle .night-icon-sun { position: absolute; opacity: 0; transform: rotate(-35deg) scale(.72); }
+:root[data-theme="dark"] .night-mode-toggle .night-icon-moon { opacity: 0; transform: rotate(30deg) scale(.72); }
+:root[data-theme="dark"] .night-mode-toggle .night-icon-sun { opacity: 1; transform: none; }
+:root[data-theme="dark"] .compact-nav-actions .night-mode-toggle { color: #e5b96d !important; background: rgba(43, 41, 34, .92) !important; }
 .drawer.open .drawer-theme { animation: drawer-rise .35s .21s both; }
 
 :root[data-theme="dark"] body {

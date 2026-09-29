@@ -7,6 +7,7 @@ const { AuthStore } = require("./sqlite-store");
 
 const ID = /^[a-f0-9-]{36}$/;
 const TOKEN_BYTES = 32;
+const CODEX_PROFILE_IDS = new Set(["default", "xuanyu", "account4", "account5"]);
 
 function now() { return new Date().toISOString(); }
 function randomToken() { return crypto.randomBytes(TOKEN_BYTES).toString("base64url"); }
@@ -100,7 +101,7 @@ class AuthService {
       admin: Boolean(device.admin),
       label: device.label,
       codexProfiles: Array.isArray(policy?.codexProfiles)
-        ? policy.codexProfiles.filter((item) => item === "default" || item === "xuanyu") : null,
+        ? policy.codexProfiles.filter((item) => CODEX_PROFILE_IDS.has(item)) : null,
       unrestrictedModels: Boolean(policy?.unrestrictedModels),
     };
   }
@@ -113,7 +114,7 @@ class AuthService {
     }
     const profiles = Array.isArray(input.codexProfiles)
       ? [...new Set(input.codexProfiles.map(String))]
-        .filter((item) => item === "default" || item === "xuanyu")
+        .filter((item) => CODEX_PROFILE_IDS.has(item))
       : [];
     if (!profiles.length) throw new Error("至少需要允许一个 Codex 账号");
     store.userPolicies = store.userPolicies || {};

@@ -45,6 +45,36 @@
   box-shadow: 0 9px 20px rgba(86, 70, 220, .26);
 }
 
+.approval-question-mark {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: #fff;
+  background: linear-gradient(145deg, #0f9fd8, #5170e7);
+  box-shadow: 0 9px 20px rgba(40, 126, 211, .24);
+  font: 800 21px/1 ui-rounded, system-ui, sans-serif;
+}
+
+.approval-question-mark::before { content: "?"; }
+
+.approval-question-mark i {
+  position: absolute;
+  inset: -4px;
+  border: 1px solid rgba(48, 139, 221, .28);
+  border-radius: 17px;
+  animation: approval-orbit 2.2s ease-out infinite;
+}
+
+.approval-card.user-input {
+  border-color: rgba(39, 139, 214, .18);
+  background:
+    radial-gradient(circle at 92% 0, rgba(55, 157, 224, .14), transparent 38%),
+    linear-gradient(145deg, rgba(255, 255, 255, .98), rgba(244, 249, 255, .95));
+}
+
 .approval-shield::before {
   content: "";
   width: 15px;
@@ -197,7 +227,9 @@
   font: inherit;
 }
 
-.approval-other-input { margin-top: 6px; }
+.approval-other-wrap { padding-top: 2px; }
+.approval-other-wrap[hidden] { display: none; }
+.approval-other-input { margin-top: 0; }
 .approval-schema-field { display: grid; gap: 7px; }
 .approval-schema-field > span { display: grid; gap: 2px; }
 .approval-switch { display: flex; align-items: center; gap: 7px; color: #514a66; font-size: 11px; }
@@ -381,7 +413,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .approval-card.pending,
-  .approval-shield i {
+  .approval-shield i,
+  .approval-question-mark i {
     animation: none;
   }
 }
