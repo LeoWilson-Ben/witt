@@ -61,11 +61,12 @@ fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(taskDir, { recursive: true });
 fs.mkdirSync(usersDir, { recursive: true, mode: 0o700 });
 
-function sendJson(res, status, body) {
+function sendJson(res, status, body, extraHeaders = {}) {
   res.writeHead(status, {
     "Cache-Control": "no-store",
     "Content-Type": "application/json; charset=utf-8",
     "X-Content-Type-Options": "nosniff",
+    ...extraHeaders,
   });
   res.end(JSON.stringify(body));
 }
@@ -225,11 +226,31 @@ function userDirectory(userId) {
 function principalFor(req) {
   const principal = authService.authenticate(req.headers.authorization);
   if (principal) return principal;
+  const cookies = String(req.headers.cookie || "").split(";");
+  const session = cookies.find((item) => item.trim().startsWith("witt_session="));
+  if (session) {
+    const value = session.trim().slice("witt_session=".length);
+    try {
+      const browserPrincipal = authService.authenticateToken(decodeURIComponent(value));
+      if (browserPrincipal) return browserPrincipal;
+    } catch {}
+  }
   // The legacy client is accepted only until the owner initializes access.
   if (!authService.initialized() && authorized(req)) {
     return { userId: "legacy", deviceId: "legacy", admin: true, legacy: true, label: "旧版管理员" };
   }
   return null;
+}
+
+function browserCookieRequest(req) {
+  return !String(req.headers.authorization || "").startsWith("Bearer ") &&
+    String(req.headers.cookie || "").split(";")
+      .some((item) => item.trim().startsWith("witt_session="));
+}
+
+function browserOriginAllowed(req) {
+  const protocol = String(req.headers["x-forwarded-proto"] || "http").split(",")[0].trim();
+  return req.headers.origin === `${protocol}://${req.headers.host}`;
 }
 
 function chatFor(principal) {
@@ -689,6 +710,12 @@ http.createServer((req, res) => {
   const legacyAuthorized = authorized(req);
   const imageRequest = /^\/chat-images\/[a-f0-9-]{36}$/.test(url.pathname);
   let principal = principalFor(req);
+  if (!["GET", "HEAD", "OPTIONS"].includes(req.method) &&
+      url.pathname !== "/auth/activate" && browserCookieRequest(req) &&
+      !browserOriginAllowed(req)) {
+    sendJson(res, 403, { error: "请求来源无效，请刷新页面后重试" });
+    return;
+  }
   if (authService.handle(req, res, url, principal, legacyAuthorized)) return;
   if (!principal) {
     sendJson(res, 401, { error: "未授权" });

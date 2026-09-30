@@ -176,7 +176,18 @@ class AuthService {
     }
     if (req.method === "POST" && url.pathname === "/auth/activate") {
       this.readJsonBody(req, 8 * 1024, (error, body) => {
-        try { if (error) throw error; const result = this.activate(body); this.sendJson(res, 201, { token: result.token, principal: this.publicDevice(result.device) }); }
+        try {
+          if (error) throw error;
+          const result = this.activate(body);
+          const browser = req.headers["x-witt-client"] === "browser";
+          const headers = browser ? {
+            "Set-Cookie": `witt_session=${encodeURIComponent(result.token)}; Path=/vault-api/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict`,
+          } : {};
+          this.sendJson(res, 201, {
+            ...(!browser ? { token: result.token } : {}),
+            principal: this.publicDevice(result.device),
+          }, headers);
+        }
         catch (err) { this.sendJson(res, 400, { error: err.message || "无法激活设备" }); }
       }); return true;
     }

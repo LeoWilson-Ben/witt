@@ -6,7 +6,7 @@
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-3c873a.svg)](https://nodejs.org/)
 [![Android 8+](https://img.shields.io/badge/Android-8%2B-3ddc84.svg)](android/)
 
-Witt 是一个自托管的移动 Codex 客户端，由轻量 Node.js 后端、响应式 Web 界面和 Android WebView 外壳组成。它把 Codex App Server 的连续会话、执行进度、审批、附件、图片、交付文件和多账号能力整合到手机端，同时让代码、会话和文件继续留在自己的服务器上。
+Witt 是一个自托管的 Codex 客户端，由轻量 Node.js 后端、可直接登录的响应式 Web 界面和 Android WebView 外壳组成。它把 Codex App Server 的连续会话、执行进度、审批、附件、图片、交付文件和多账号能力整合到浏览器与手机端，同时让代码、会话和文件继续留在自己的服务器上。
 
 Witt is a self-hosted mobile client for Codex. It combines a dependency-light Node.js service, a responsive web UI, and an Android shell while keeping conversations and project data on infrastructure you control.
 
@@ -22,6 +22,7 @@ Witt is a self-hosted mobile client for Codex. It combines a dependency-light No
 - 对话分支、上下文压缩和代码审查
 - 图片、文档及大文件附件上传，生成图片、交付文件下载和隔离式交互预览
 - 邀请码激活、独立设备凭据、设备停用和管理员能力
+- ChatGPT 风格桌面网页版，使用 HttpOnly 安全会话 Cookie
 - 默认账号与子账号隔离，会话、项目和额度互不混用
 - SQLite 持久化、WAL、定时备份及 JSON 旧数据迁移
 - 浅色、深色和动态主题，兼容横屏与移动端安全区

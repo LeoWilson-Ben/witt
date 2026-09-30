@@ -1,0 +1,231 @@
+/* Browser workspace: familiar ChatGPT-style desktop shell. Android WebView never receives web-browser. */
+body.web-browser {
+  --web-sidebar: #f9f9f9;
+  --web-canvas: #fff;
+  --web-hover: #ececec;
+  --web-text: #0d0d0d;
+  --web-muted: #676767;
+  --web-line: #e5e5e5;
+  color: var(--web-text) !important;
+  background: var(--web-canvas) !important;
+}
+
+body.web-browser .app-shell {
+  width: 100% !important;
+  max-width: none !important;
+  background: var(--web-canvas) !important;
+}
+body.web-browser #localSshButton { display: none !important; }
+body.web-browser .compact-nav {
+  min-height: 56px !important;
+  padding: 8px 14px !important;
+  border: 0 !important;
+  background: color-mix(in srgb, var(--web-canvas) 92%, transparent) !important;
+  backdrop-filter: blur(14px) !important;
+}
+body.web-browser .compact-nav-button {
+  color: var(--web-text) !important;
+  background: transparent !important;
+}
+body.web-browser .chat-stage {
+  padding-inline: 24px !important;
+  background: var(--web-canvas) !important;
+  scrollbar-color: #c8c8c8 transparent;
+}
+body.web-browser .messages,
+body.web-browser .task-status-strip,
+body.web-browser .history-load {
+  width: min(100%, 768px) !important;
+  max-width: 768px !important;
+  margin-inline: auto !important;
+}
+body.web-browser .messages {
+  padding: 26px 0 28px !important;
+  gap: 30px !important;
+}
+body.web-browser .message.user .bubble {
+  max-width: min(78%, 620px) !important;
+  padding: 10px 16px !important;
+  border: 0 !important;
+  border-radius: 18px !important;
+  color: var(--web-text) !important;
+  background: #f4f4f4 !important;
+  box-shadow: none !important;
+}
+body.web-browser .message.user .bubble p,
+body.web-browser .user-message-rich,
+body.web-browser .assistant-text,
+body.web-browser .stream-message {
+  font-size: 15px !important;
+  line-height: 1.72 !important;
+}
+body.web-browser .assistant-text,
+body.web-browser .stream-message.final {
+  color: var(--web-text) !important;
+}
+body.web-browser .welcome {
+  width: min(100%, 768px) !important;
+  min-height: 100% !important;
+  margin: auto !important;
+  justify-content: center !important;
+  padding: 50px 0 90px !important;
+}
+body.web-browser .welcome-mark > span {
+  color: var(--web-text) !important;
+  font-family: inherit !important;
+  font-size: 42px !important;
+  font-weight: 650 !important;
+}
+body.web-browser .welcome-mark > i,
+body.web-browser .welcome-mark > b,
+body.web-browser .lumora-badge {
+  display: none !important;
+}
+body.web-browser .welcome h1 {
+  margin: 12px 0 8px !important;
+  color: var(--web-text) !important;
+  font-family: inherit !important;
+  font-size: clamp(28px, 4vw, 34px) !important;
+  font-weight: 600 !important;
+  letter-spacing: -.035em !important;
+}
+body.web-browser .welcome > p {
+  color: var(--web-muted) !important;
+  font-size: 14px !important;
+}
+body.web-browser .suggestions {
+  max-width: 680px !important;
+  grid-template-columns: repeat(3, 1fr) !important;
+  gap: 10px !important;
+}
+body.web-browser .suggestions button {
+  min-height: 116px !important;
+  padding: 15px !important;
+  border: 1px solid var(--web-line) !important;
+  border-radius: 14px !important;
+  color: var(--web-text) !important;
+  background: var(--web-canvas) !important;
+  box-shadow: none !important;
+}
+body.web-browser .suggestions button:hover { background: var(--web-hover) !important; }
+body.web-browser .suggestions button > span { display: none !important; }
+body.web-browser .suggestions button b { font-size: 14px !important; }
+body.web-browser .suggestions button small { color: var(--web-muted) !important; font-size: 12px !important; }
+
+body.web-browser .composer-wrap {
+  width: min(calc(100% - 32px), 800px) !important;
+  margin: 0 auto !important;
+  padding: 8px 0 14px !important;
+  border: 0 !important;
+  background: linear-gradient(to bottom, transparent, var(--web-canvas) 25%) !important;
+  backdrop-filter: none !important;
+}
+body.web-browser .composer-wrap::before { display: none !important; }
+body.web-browser .composer {
+  min-height: 104px !important;
+  padding: 10px 12px 9px !important;
+  border: 1px solid #d1d1d1 !important;
+  border-radius: 26px !important;
+  background: var(--web-canvas) !important;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.02), 0 8px 24px rgba(0,0,0,.08) !important;
+}
+body.web-browser .composer textarea {
+  min-height: 48px !important;
+  color: var(--web-text) !important;
+  font-size: 16px !important;
+}
+body.web-browser .attach-button { color: var(--web-text) !important; background: transparent !important; }
+body.web-browser .send-button {
+  color: var(--web-canvas) !important;
+  background: var(--web-text) !important;
+  box-shadow: none !important;
+}
+body.web-browser .composer-hint { color: var(--web-muted) !important; font-size: 11px !important; }
+
+@media (min-width: 900px) {
+  body.web-browser .app-shell { width: calc(100% - 260px) !important; margin-left: 260px !important; }
+  body.web-browser .drawer {
+    inset: 0 auto 0 0 !important;
+    width: 260px !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+  }
+  body.web-browser .drawer-backdrop { display: none !important; }
+  body.web-browser .drawer-panel {
+    width: 260px !important;
+    padding: 12px 10px !important;
+    color: var(--web-text) !important;
+    background: var(--web-sidebar) !important;
+    box-shadow: none !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  body.web-browser .drawer-head { min-height: 44px !important; padding: 2px 8px 8px !important; }
+  body.web-browser .drawer-head .eyebrow,
+  body.web-browser #closeDrawer { display: none !important; }
+  body.web-browser .drawer-head h2 {
+    margin: 0 !important;
+    font-family: inherit !important;
+    font-size: 20px !important;
+    font-weight: 650 !important;
+  }
+  body.web-browser .drawer-new {
+    min-height: 42px !important;
+    padding: 6px 8px !important;
+    grid-template-columns: 30px minmax(0,1fr) !important;
+    border: 0 !important;
+    border-radius: 9px !important;
+    color: var(--web-text) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  body.web-browser .drawer-new:hover,
+  body.web-browser .conversation-row:hover,
+  body.web-browser .drawer-profile:hover { background: var(--web-hover) !important; }
+  body.web-browser .drawer-new > svg {
+    width: 28px !important; height: 28px !important; padding: 5px !important;
+    color: var(--web-text) !important; background: transparent !important;
+  }
+  body.web-browser .drawer-new small,
+  body.web-browser .conversation-open small,
+  body.web-browser .conversation-mark { display: none !important; }
+  body.web-browser .drawer-history { border: 0 !important; background: transparent !important; box-shadow: none !important; }
+  body.web-browser .drawer-history-head { padding: 14px 8px 5px !important; color: var(--web-muted) !important; }
+  body.web-browser .history-controls { min-height: 0 !important; padding: 3px 4px 6px !important; }
+  body.web-browser .history-controls > div,
+  body.web-browser #historySearchHint { display: none !important; }
+  body.web-browser #historySearch {
+    height: 34px !important; border: 0 !important; border-radius: 8px !important;
+    color: var(--web-text) !important; background: transparent !important;
+  }
+  body.web-browser #historySearch:focus { background: var(--web-canvas) !important; outline: 1px solid var(--web-line) !important; }
+  body.web-browser .conversation-list { padding: 4px 0 !important; gap: 2px !important; }
+  body.web-browser .conversation-row { grid-template-columns: minmax(0,1fr) 30px !important; border-radius: 8px !important; }
+  body.web-browser .conversation-row.active { background: var(--web-hover) !important; box-shadow: none !important; }
+  body.web-browser .conversation-open { padding: 9px 10px !important; display: block !important; }
+  body.web-browser .conversation-open strong { color: var(--web-text) !important; font-size: 13px !important; font-weight: 450 !important; }
+  body.web-browser .drawer-tools .drawer-profile,
+  body.web-browser .drawer-theme {
+    border: 0 !important; border-radius: 9px !important;
+    color: var(--web-text) !important; background: transparent !important; box-shadow: none !important;
+  }
+  body.web-browser .compact-menu-button { visibility: hidden !important; }
+  body.web-browser .compact-nav { padding-inline: 22px !important; }
+}
+
+@media (max-width: 899px) {
+  body.web-browser .suggestions { grid-template-columns: 1fr !important; }
+  body.web-browser .suggestions button { min-height: 64px !important; }
+  body.web-browser .composer-wrap { width: calc(100% - 20px) !important; }
+}
+
+[data-theme="dark"] body.web-browser {
+  --web-sidebar: #171717;
+  --web-canvas: #212121;
+  --web-hover: #2f2f2f;
+  --web-text: #ececec;
+  --web-muted: #b4b4b4;
+  --web-line: #424242;
+}
+[data-theme="dark"] body.web-browser .message.user .bubble { background: #303030 !important; }
+[data-theme="dark"] body.web-browser .composer { border-color: #4a4a4a !important; }
