@@ -22,6 +22,8 @@ const MAX_ARTIFACT_BYTES = 500 * 1024 * 1024;
 const MAX_INLINE_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_INLINE_PREVIEW_BYTES = 5 * 1024 * 1024;
 const ARTIFACT_PREVIEW_TTL_MS = 15 * 60 * 1000;
+const DEFAULT_RECOVERY_MAX_AGE_MS = 30 * 60 * 1000;
+const DEFAULT_TURN_IDLE_TIMEOUT_MS = 20 * 60 * 1000;
 const IMAGE_ID_PATTERN = /^[a-f0-9-]{36}$/;
 const artifactPreviewTokens = new Map();
 
@@ -56,6 +58,12 @@ class ChatService {
       ? options.allowedModels : ADMIN_MODELS;
     this.defaultModel = options.defaultModel || "gpt-6-astra";
     this.quotaExhausted = Boolean(options.quotaExhausted);
+    this.recoveryMaxAgeMs = Number.isFinite(options.recoveryMaxAgeMs)
+      ? Math.max(0, options.recoveryMaxAgeMs)
+      : DEFAULT_RECOVERY_MAX_AGE_MS;
+    this.turnIdleTimeoutMs = Number.isFinite(options.turnIdleTimeoutMs)
+      ? Math.max(1_000, options.turnIdleTimeoutMs)
+      : DEFAULT_TURN_IDLE_TIMEOUT_MS;
     this.codexProfiles = options.codexProfiles || {
       default: {
         id: "default",
@@ -1706,6 +1714,7 @@ class ChatService {
   }
 
   recover() {
+    const recoveredAt = Date.now();
     for (const metadata of this.store.listMetadata()) {
       const conversation = this.readConversation(metadata.id);
       if (!conversation) continue;
@@ -1717,6 +1726,35 @@ class ChatService {
             entry.status = "expired";
             entry.resolvedAt = new Date().toISOString();
             changed = true;
+          }
+        }
+        if (message.role === "assistant" &&
+            (message.status === "queued" || message.status === "running")) {
+          const activityTime = Date.parse(message.status === "running"
+            ? conversation.updatedAt || message.startedAt || message.createdAt
+            : message.startedAt || message.createdAt);
+          if (Number.isFinite(activityTime) &&
+              recoveredAt - activityTime > this.recoveryMaxAgeMs) {
+            message.status = "interrupted";
+            message.completedAt = new Date(recoveredAt).toISOString();
+            message.text = message.text ||
+              "服务恢复时发现该任务已等待过久，已停止自动重试。请重新发送任务。";
+            for (const entry of message.stream || []) {
+              if (entry.status === "running" || entry.status === "pending") {
+                entry.status = "interrupted";
+              }
+            }
+            message.activity = [...(message.activity || []).filter(
+              (entry) => entry.status !== "running"), {
+              type: "pause", label: "历史任务已停止自动重试", status: "completed",
+            }].slice(-12);
+            const originalUser = conversation.messages.find(
+              (candidate) => candidate.id === message.replyTo && candidate.role === "user");
+            if (originalUser && ["queued", "running"].includes(originalUser.status)) {
+              originalUser.status = "completed";
+            }
+            changed = true;
+            continue;
           }
         }
         if (message.role === "assistant" && message.status === "running") {
@@ -2032,6 +2070,7 @@ class ChatService {
       params: request.params || {},
       choices: new Map(choices.map((choice) => [choice.id, choice])),
     });
+    this.armActiveIdleTimeout(current);
     this.upsertStream(assistant, `approval-${approvalId}`, {
       kind: "approval",
       approvalId,
@@ -2138,6 +2177,7 @@ class ChatService {
         return;
       }
       current.pendingApprovals.delete(approvalId);
+      this.armActiveIdleTimeout(current);
       entry.status = outcome;
       entry.resolutionLabel = resolutionLabel;
       entry.resolvedAt = new Date().toISOString();
@@ -2281,6 +2321,7 @@ class ChatService {
       previewMessageBuffers: new Map(),
       codexHome: profile.codexHome,
     };
+    this.armActiveIdleTimeout(this.active);
     try {
       await client.start();
       if (!this.active || this.active.messageId !== assistant.id) return;
@@ -2336,6 +2377,7 @@ class ChatService {
   handleNotification(conversationId, messageId, method, params) {
     if (!this.active || this.active.conversationId !== conversationId ||
         this.active.messageId !== messageId) return;
+    this.armActiveIdleTimeout(this.active);
     const conversation = this.readConversation(conversationId);
     if (!conversation) return;
     const assistant = conversation.messages.find((message) => message.id === messageId);
@@ -2564,11 +2606,33 @@ class ChatService {
     this.finishActive(false, "", error);
   }
 
+  armActiveIdleTimeout(current = this.active) {
+    if (!current || current.finished) return;
+    clearTimeout(current.timeout);
+    current.timeout = setTimeout(() => {
+      if (this.active !== current || current.finished) return;
+      if (current.pendingApprovals?.size) {
+        this.armActiveIdleTimeout(current);
+        return;
+      }
+      current.interruptRequested = true;
+      this.requestActiveInterrupt();
+      current.timeoutGrace = setTimeout(() => {
+        if (this.active !== current || current.finished) return;
+        current.client.close();
+        this.failActive("执行长时间没有进展，系统已自动结束本轮。请重试任务。");
+      }, 30_000);
+      current.timeoutGrace.unref();
+    }, this.turnIdleTimeoutMs);
+    current.timeout.unref();
+  }
+
   finishActive(success, response, error, interrupted = false) {
     const current = this.active;
     if (!current || current.finished) return;
     current.finished = true;
     clearTimeout(current.timeout);
+    clearTimeout(current.timeoutGrace);
     const conversation = this.readConversation(current.conversationId);
     if (!conversation) {
       this.active = null;

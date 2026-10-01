@@ -107,3 +107,28 @@ test("idempotency survives cache eviction and new device reusing the same key is
   assert.equal(other.status, 202);
   assert.equal(service.readConversation(value.id).messages.length, 4);
 });
+
+test("recovery interrupts stale work but keeps recent work queued", (t) => {
+  const { service } = fixture(t);
+  const value = service.createConversation();
+  const staleAt = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+  const recentAt = new Date().toISOString();
+  value.messages.push(
+    { id: crypto.randomUUID(), role: "user", status: "queued", text: "stale", createdAt: staleAt },
+    { id: crypto.randomUUID(), role: "assistant", status: "queued", text: "", createdAt: staleAt,
+      replyTo: null, stream: [{ id: "old", kind: "command", status: "running" }] },
+    { id: crypto.randomUUID(), role: "user", status: "queued", text: "recent", createdAt: recentAt },
+    { id: crypto.randomUUID(), role: "assistant", status: "queued", text: "", createdAt: recentAt,
+      replyTo: null, stream: [] },
+  );
+  value.messages[1].replyTo = value.messages[0].id;
+  value.messages[3].replyTo = value.messages[2].id;
+  service.writeConversation(value);
+  service.recover();
+  assert.equal(value.messages[0].status, "completed");
+  assert.equal(value.messages[1].status, "interrupted");
+  assert.match(value.messages[1].text, /停止自动重试/);
+  assert.equal(value.messages[1].stream[0].status, "interrupted");
+  assert.equal(value.messages[2].status, "queued");
+  assert.equal(value.messages[3].status, "queued");
+});
