@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { AuthService } = require("./auth-service");
+const { refreshChatAccess } = require("./chat-access-policy");
 const {
   ChatService, NON_ADMIN_MODELS, servePublicArtifactPreview, servePublicArtifactSource,
 } = require("./chat-service");
@@ -255,7 +256,15 @@ function browserOriginAllowed(req) {
 
 function chatFor(principal) {
   if (principal.legacy) return chatService;
-  if (userChatServices.has(principal.userId)) return userChatServices.get(principal.userId);
+  if (userChatServices.has(principal.userId)) {
+    return refreshChatAccess(userChatServices.get(principal.userId), {
+      allowedModels: principal.admin || principal.unrestrictedModels ? null : NON_ADMIN_MODELS,
+      defaultModel: principal.admin || principal.unrestrictedModels ? "gpt-6-astra" : "gpt-5.5",
+      quotaExhausted: !principal.admin && !principal.unrestrictedModels,
+      allowedCodexProfiles: principal.admin
+        ? Object.keys(codexProfiles) : (principal.codexProfiles || ["default"]),
+    });
+  }
   const directory = userDirectory(principal.userId);
   const service = new ChatService({
     chatDir: path.join(directory, "chat"),
