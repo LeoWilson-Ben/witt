@@ -124,6 +124,7 @@
 @media (prefers-reduced-motion: reduce) { .task-status-strip, .workspace-overview, .history-load { animation: none; transition: none; } }
   </style>
   <link rel="stylesheet" href="/vault/browser-chatgpt.css?v=1.0.0">
+  <link rel="stylesheet" href="/vault/process-lines.css?v=20261007-1">
 </head>
 <body>
   <div class="app-atmosphere" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -596,17 +597,7 @@
     </div>
   </aside>
 
-  <aside class="action-detail-sheet" id="actionDetailSheet" aria-hidden="true">
-    <div class="sheet-backdrop" id="actionDetailBackdrop"></div>
-    <div class="sheet-panel action-detail-panel">
-      <div class="sheet-handle"></div>
-      <div class="sheet-head">
-        <div><span class="eyebrow">EXECUTION DETAIL</span><h2 id="actionDetailTitle">执行详情</h2></div>
-        <button class="icon-button" id="closeActionDetail" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
-      </div>
-      <div class="action-detail-content" id="actionDetailContent"></div>
-    </div>
-  </aside>
+
 
   <aside class="image-viewer" id="imageViewer" aria-hidden="true">
     <button class="image-viewer-backdrop" id="imageViewerBackdrop" aria-label="关闭图片"></button>

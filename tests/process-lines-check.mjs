@@ -1,0 +1,66 @@
+import assert from 'node:assert/strict';
+import {readFileSync,existsSync} from 'node:fs';
+import {chromium} from 'playwright';
+const web=new URL('../web/',import.meta.url);
+const html=readFileSync(new URL('index.html',web),'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,'');
+const browser=await chromium.launch({headless:true});
+try {
+ for(const [width,theme] of [[390,'light'],[1280,'light'],[390,'dark'],[1280,'dark']]) {
+  const page=await browser.newPage({viewport:{width,height:900}});
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.route('https://witt.test/**',r=>{
+   const url=new URL(r.request().url());
+   const path=url.pathname.replace(/^\/vault\//,'');
+   const file=new URL(path,web);
+   if(path==='index.html')return r.fulfill({contentType:'text/html',body:html});
+   if(path.endsWith('.css')&&existsSync(file))return r.fulfill({contentType:'text/css',body:readFileSync(file)});
+   return r.fulfill({body:''});
+  });
+  await page.goto('https://witt.test/vault/index.html');
+  await page.evaluate(t=>{
+   localStorage.setItem('wit_theme',t);
+   document.documentElement.dataset.theme=t;document.documentElement.dataset.themeMode=t;
+   window.__detailCalls=[];window.DropVaultAndroid=new Proxy({}, {get:(_o,m)=>m==='requestStreamDetail'?(c,msg,id)=>{
+    window.__detailCalls.push(id);
+    setTimeout(()=>window.DropVault.onStreamDetail(JSON.stringify({entry:{id,kind:id==='cmd'?'command':'file',status:'completed',details:id==='cmd'?{command:'node --check server.js',cwd:'/data/drop-vault',output:'Syntax check passed\n'+'a'.repeat(200),exitCode:0,durationMs:450}:{changes:[{path:'web/app.js',kind:'update',diff:'- card\n+ inline disclosure'}]}}})),20);
+   }:()=>{}});
+  },theme);
+  await page.addScriptTag({content:readFileSync(new URL('app-workspace-20260916-r3.js',web),'utf8')});
+  await page.evaluate(()=>window.DropVault.onConversations(JSON.stringify({conversations:[]})));
+  const message={id:'00000000-0000-4000-8000-000000000002',role:'assistant',status:'completed',text:'已完成界面修改。',createdAt:new Date().toISOString(),stream:[{id:'cmd',kind:'command',label:'检查服务代码',status:'completed',hasDetails:true},{id:'file',kind:'file',label:'修改执行过程展示',status:'completed',hasDetails:true},{id:'final',kind:'message',phase:'final_answer',text:'已完成界面修改。',status:'completed'}]};
+  const conversation={id:'00000000-0000-4000-8000-000000000001',title:'执行过程',codexProfile:'default',model:'gpt-6-luna',messages:[message],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  await page.evaluate(c=>window.DropVault.onConversationCreated(JSON.stringify({conversation:c})),conversation);
+  assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),theme);
+  assert.equal(await page.locator('#messageList details[open]').count(),0);
+  assert.equal(await page.locator('.completed-result').innerText(),'已完成界面修改。');
+  await page.locator('.completed-process > summary').click();
+  await page.locator('.stream-action-group > summary').click();
+  await page.locator('[data-inline-detail="cmd"] > summary').click();
+  await page.waitForFunction(()=>document.querySelector('[data-inline-detail="cmd"] .process-body').textContent.includes('完整命令'));
+  assert.equal(await page.locator('[data-inline-detail="cmd"] .process-node[open]').count(),0);
+  const command=page.locator('[data-inline-detail="cmd"] .process-node').filter({has:page.locator('summary .process-label',{hasText:'完整命令'})});
+  await command.locator(':scope > summary').click();
+  await page.waitForFunction(()=>document.querySelector('[data-inline-detail="cmd"] .process-output')!==null);
+  await page.screenshot({path:`/tmp/witt-process-${width}-${theme}.png`,fullPage:true});
+  const styles=await page.locator('.process-node').evaluateAll(nodes=>nodes.map(n=>{const c=getComputedStyle(n);return {border:c.borderTopWidth,background:c.backgroundColor,shadow:c.boxShadow};}));
+  assert.ok(styles.every(s=>s.border==='0px'&&s.background==='rgba(0, 0, 0, 0)'&&s.shadow==='none'),JSON.stringify(styles));
+  assert.ok(await page.locator('[data-inline-detail="cmd"] > summary').evaluate(n=>n.getBoundingClientRect().height<60),'action summary remains a text row');
+  const arrow=await page.locator('.completed-process > summary').evaluate(n=>{const t=n.querySelector('.process-label').getBoundingClientRect(),a=n.querySelector('svg').getBoundingClientRect();return a.left-t.right;});
+  assert.ok(arrow>=0&&arrow<10,'arrow directly follows text');
+  conversation.messages[0].text+=' ';conversation.updatedAt=new Date().toISOString();
+  await page.evaluate(c=>window.DropVault.onConversation(JSON.stringify({conversation:c})),conversation);
+  assert.equal(await page.locator('.completed-process[open]').count(),1);
+  assert.equal(await page.locator('.stream-action-group[open]').count(),1);
+  assert.equal(await page.locator('[data-inline-detail="cmd"][open]').count(),1);
+  assert.equal(await command.evaluate(n=>n.open),true,'nested choice survives rerender');
+  await page.locator('[data-inline-detail="file"] > summary').click();
+  await page.waitForFunction(()=>document.querySelector('[data-inline-detail="file"] .process-label')?.textContent.includes('新增')||document.querySelector('[data-inline-detail="file"] .process-body')?.textContent.includes('web/app.js'));
+  assert.equal(await page.locator('[data-inline-detail="file"] .process-node[open]').count(),0);
+  assert.equal(await page.locator('#actionDetailSheet').count(),0);
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  assert.deepEqual(await page.evaluate(()=>window.__detailCalls),['cmd','file']);
+  assert.deepEqual(errors,[]);
+  await page.close();
+ }
+ console.log('Process rows passed mobile/desktop and light/dark: closed defaults, recursive expansion, inline lazy loading, no boxes, adjacent arrows and update preservation.');
+}finally{await browser.close();}

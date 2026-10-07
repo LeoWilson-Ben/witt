@@ -55,6 +55,9 @@
     codexLoginTimer: null,
     appVisible: !document.hidden,
     supportsSse: false,
+    expandedProcess: new Set(),
+    inlineDetails: new Map(),
+    inlineDetailQueue: [],
     capabilities: null,
     capabilitiesByProfile: null,
     artifactOpen: false,
@@ -1633,26 +1636,6 @@
     $("#deliverySheet").setAttribute("aria-hidden", "true");
   }
 
-  function openActionDetail(messageId, entryId, label) {
-    state.detailRequest = { messageId, entryId };
-    $("#actionDetailTitle").textContent = label || "执行详情";
-    $("#actionDetailContent").innerHTML = `<div class="detail-loading"><i></i><span>正在读取详情</span></div>`;
-    $("#actionDetailSheet").classList.add("open");
-    $("#actionDetailSheet").setAttribute("aria-hidden", "false");
-    if (typeof bridge()?.requestStreamDetail !== "function") {
-      $("#actionDetailContent").innerHTML = `<div class="detail-error">请先更新到新版 App，再查看执行详情。</div>`;
-      bridge()?.checkForUpdates?.();
-      return;
-    }
-    bridge().requestStreamDetail(state.activeId, messageId, entryId);
-  }
-
-  function closeActionDetail() {
-    state.detailRequest = null;
-    $("#actionDetailSheet").classList.remove("open");
-    $("#actionDetailSheet").setAttribute("aria-hidden", "true");
-  }
-
   function openImageViewer(url, name, mimeType = "") {
     if (!url) return;
     $("#imageViewerImage").src = url;
@@ -1670,41 +1653,6 @@
     $("#imageViewer").setAttribute("aria-hidden", "true");
     $("#imageViewerImage").removeAttribute("src");
     delete $("#downloadImageViewer").dataset.url;
-  }
-
-  function detailBlock(title, value, className = "") {
-    if (value === null || value === undefined || value === "") return "";
-    return `<section class="detail-block ${className}"><h3>${escapeHtml(title)}</h3><pre>${escapeHtml(value)}</pre></section>`;
-  }
-
-  function renderActionDetail(entry) {
-    const details = entry.details || {};
-    if (entry.kind === "command") {
-      const status = entry.status === "completed" ? "已完成"
-        : entry.status === "failed" ? "失败" : "执行中";
-      const meta = [
-        status,
-        Number.isInteger(details.exitCode) ? `退出码 ${details.exitCode}` : "",
-        Number.isInteger(details.durationMs) ? `${(details.durationMs / 1000).toFixed(2)} 秒` : "",
-      ].filter(Boolean).join(" · ");
-      $("#actionDetailTitle").textContent = "命令执行详情";
-      $("#actionDetailContent").innerHTML = `
-        <div class="detail-summary"><span>⌘</span><div><strong>${escapeHtml(meta)}</strong><small>${escapeHtml(details.cwd || "未提供工作目录")}</small></div></div>
-        ${detailBlock("完整命令", details.command, "command")}
-        ${detailBlock("执行输出", details.output || "该命令没有输出", "output")}`;
-      return;
-    }
-    const kindNames = { add: "新增", update: "修改", delete: "删除" };
-    $("#actionDetailTitle").textContent = "文件修改详情";
-    const changes = Array.isArray(details.changes) ? details.changes : [];
-    $("#actionDetailContent").innerHTML = changes.length
-      ? changes.map((change) => `
-        <article class="file-change-detail">
-          <header><span class="${escapeHtml(change.kind)}">${escapeHtml(kindNames[change.kind] || "修改")}</span><strong>${escapeHtml(change.path)}</strong></header>
-          ${change.movePath ? `<p>移动到：${escapeHtml(change.movePath)}</p>` : ""}
-          ${change.diff ? `<pre>${escapeHtml(change.diff)}</pre>` : `<p>没有可显示的差异内容</p>`}
-        </article>`).join("")
-      : `<div class="detail-error">暂时没有可显示的文件差异。</div>`;
   }
 
   function renderConversations() {
@@ -1999,26 +1947,93 @@
   function activityHtml(message) {
     const activities = visibleActivities(message);
     if (!activities.length) return "";
-    const latest = activities.at(-1);
-    const icon = latest.type === "command" ? "⌘" : latest.type === "file" ? "◇" : latest.type === "web" ? "◎" : "✦";
-    return `<details class="activity" ${message.status === "running" ? "open" : ""}>
-      <summary><span class="${message.status}">${icon}</span><b>${escapeHtml(latest.label)}</b><i></i></summary>
-      <div>${activities.map((item) => `<p><span class="${item.status}"></span>${escapeHtml(item.label)}</p>`).join("")}</div>
-    </details>`;
+    return processDisclosure(activities.at(-1).label,
+      activities.map((item) => `<p class="process-line ${escapeHtml(item.status || "")}">${escapeHtml(item.label)}</p>`).join(""),
+      processKey(message, "activity"), "activity");
+  }
+
+  function processKey(message, suffix) {
+    return `${state.activeId || "draft"}:${message.sourceMessageId || message.id}:${suffix}`;
+  }
+
+  function processDisclosure(label, body, key, classes = "", attributes = "") {
+    const open = state.expandedProcess.has(key) ? " open" : "";
+    return `<details class="process-node ${classes}" data-process-key="${escapeHtml(key)}"${open} ${attributes}>
+      <summary><span class="process-label">${escapeHtml(label)}</span><svg class="process-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></summary>
+      <div class="process-body">${body}</div></details>`;
+  }
+
+  function processValueHtml(label, value, key) {
+    if (value === undefined || value === null || value === "") return "";
+    const body = typeof value === "object"
+      ? Object.entries(value).map(([name, child]) => processValueHtml(name, child, `${key}:${name}`)).join("")
+      : `<pre class="process-output">${escapeHtml(String(value))}</pre>`;
+    return processDisclosure(label, body, key);
+  }
+
+  function inlineActionBody(entry, key) {
+    const details = entry.details || {};
+    if (entry.kind === "command") {
+      const meta = [Number.isInteger(details.exitCode) ? `退出码 ${details.exitCode}` : "",
+        Number.isInteger(details.durationMs) ? `${(details.durationMs / 1000).toFixed(2)} 秒` : ""].filter(Boolean).join(" · ");
+      return `${meta ? `<p class="process-meta">${escapeHtml(meta)}</p>` : ""}
+        ${processValueHtml("工作目录", details.cwd, `${key}:cwd`)}
+        ${processValueHtml("完整命令", details.command, `${key}:command`)}
+        ${processValueHtml("执行输出", details.output || "该命令没有输出", `${key}:output`)}`;
+    }
+    if (entry.kind === "file") {
+      const changes = Array.isArray(details.changes) ? details.changes : [];
+      const kinds = { add: "新增", update: "修改", delete: "删除" };
+      return changes.length ? changes.map((change, index) => processDisclosure(
+        `${kinds[change.kind] || "修改"} ${change.path || "文件"}`,
+        processValueHtml("移动到", change.movePath, `${key}:${index}:move`) +
+          processValueHtml("文件差异", change.diff || "没有可显示的差异内容", `${key}:${index}:diff`),
+        `${key}:file:${index}`)).join("") : '<p class="process-meta">暂时没有可显示的文件差异。</p>';
+    }
+    return processValueHtml("详情", details, `${key}:details`);
+  }
+
+  function cachedActionBody(key) {
+    const cached = state.inlineDetails.get(key);
+    if (cached?.entry) return inlineActionBody(cached.entry, key);
+    if (cached?.error) return `<p class="process-meta">${escapeHtml(cached.error)}<button class="process-retry" type="button" data-process-retry="${escapeHtml(key)}">重试</button></p>`;
+    return '<p class="process-meta" role="status">正在读取详情…</p>';
+  }
+
+  function refreshInlineDetail(key) {
+    document.querySelectorAll("details[data-inline-detail]").forEach((node) => {
+      if (node.dataset.processKey === key) node.querySelector(":scope > .process-body").innerHTML = cachedActionBody(key);
+    });
+  }
+
+  function pumpInlineDetails() {
+    if (state.detailRequest || !state.inlineDetailQueue.length) return;
+    const request = state.inlineDetailQueue.shift();
+    state.detailRequest = request;
+    if (typeof bridge()?.requestStreamDetail !== "function") {
+      window.DropVault.onStreamDetailError("当前 App 无法读取执行详情，请更新后重试。");
+      return;
+    }
+    bridge().requestStreamDetail(request.conversationId, request.messageId, request.entryId);
+  }
+
+  function loadInlineDetail(node) {
+    const key = node.dataset.processKey;
+    if (state.inlineDetails.has(key) || state.detailRequest?.key === key || state.inlineDetailQueue.some(item => item.key === key)) return;
+    state.inlineDetailQueue.push({key, conversationId: state.activeId,
+      messageId: node.dataset.messageId, entryId: node.dataset.inlineDetail});
+    pumpInlineDetails();
   }
 
   function streamActionHtml(message, entry) {
-    const icon = entry.kind === "command" ? "⌘"
-      : entry.kind === "file" ? "◇"
-      : entry.kind === "web" ? "◎" : "✦";
-    const detailAttributes = entry.hasDetails
-      ? `data-stream-detail="${escapeHtml(entry.id)}" data-message-id="${escapeHtml(message.sourceMessageId || message.id)}"`
-      : "";
-    const tag = entry.hasDetails ? "button" : "div";
-    return `<${tag} ${entry.hasDetails ? 'type="button"' : ""} class="stream-action ${entry.kind || "tool"} ${entry.status || ""} ${entry.hasDetails ? "clickable" : ""}" ${detailAttributes}>
-      <span>${icon}</span><p>${escapeHtml(entry.label || "正在处理")}</p>
-      <div class="stream-tail"><i></i>${entry.hasDetails ? `<svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>` : ""}</div>
-    </${tag}>`;
+    const label = entry.label || "正在处理";
+    if (!entry.hasDetails) return `<p class="process-line ${escapeHtml(entry.status || "")}">${escapeHtml(label)}</p>`;
+    const key = processKey(message, `action:${entry.id}`);
+    const cached = state.inlineDetails.get(key);
+    if (cached?.entry?.status === "running" && entry.status !== "running") state.inlineDetails.delete(key);
+    return processDisclosure(label, cachedActionBody(key), key,
+      `stream-action ${escapeHtml(entry.kind || "tool")} ${escapeHtml(entry.status || "")}`,
+      `data-inline-detail="${escapeHtml(entry.id)}" data-message-id="${escapeHtml(message.sourceMessageId || message.id)}"`);
   }
 
   function approvalQuestionFormHtml(entry) {
@@ -2247,14 +2262,9 @@
         const failed = actionBuffer.filter((entry) => entry.status === "failed").length;
         const groupStatus = running ? "running" : failed ? "failed" : "completed";
         const statusText = running ? "正在执行" : failed ? `${failed} 项未完成` : "执行完成";
-        rendered.push(`<details class="stream-action-group ${groupStatus}" ${message.status === "running" ? "open" : ""}>
-          <summary>
-            <span class="stream-group-icon">⌘</span>
-            <span class="stream-group-copy"><strong>${escapeHtml(streamGroupLabel(actionBuffer))}</strong><small>${statusText} · 点击${message.status === "running" ? "收起" : "展开"}详情</small></span>
-            <span class="stream-group-tail"><i></i><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></span>
-          </summary>
-          <div class="stream-action-list">${actionBuffer.map((entry) => streamActionHtml(message, entry)).join("")}</div>
-        </details>`);
+        rendered.push(processDisclosure(`${streamGroupLabel(actionBuffer)} · ${statusText}`,
+          actionBuffer.map((entry) => streamActionHtml(message, entry)).join(""),
+          processKey(message, `group:${actionBuffer[0].id}`), `stream-action-group ${groupStatus}`));
       }
       actionBuffer = [];
     };
@@ -2298,14 +2308,10 @@
     const interrupted = message.status === "interrupted";
     const stateLabel = failed ? "执行未完成" : interrupted ? "执行已暂停" : "执行过程";
     const resultText = finalEntry?.text || message.text || (failed ? "任务未完成。" : "任务已完成。");
-    const processSummary = processHtml ? `<details class="completed-process ${message.status || "completed"}">
-      <summary>
-        <span class="completed-process-mark" aria-hidden="true">${failed ? "!" : interrupted ? "Ⅱ" : "✓"}</span>
-        <span class="completed-process-copy"><strong>${stateLabel}</strong><small>${processCount ? `${processCount} 项 · ` : ""}${duration}</small></span>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
-      </summary>
-      <div class="completed-process-body">${processHtml}</div>
-    </details>` : (failed || interrupted) ? `<div class="completed-runtime ${message.status || "completed"}"><span>${failed ? "!" : interrupted ? "Ⅱ" : "✓"}</span>${stateLabel} · ${duration}</div>` : "";
+    const processSummary = processHtml ? processDisclosure(
+      `${stateLabel} · ${processCount ? `${processCount} 项 · ` : ""}${duration}`,
+      processHtml, processKey(message, "process"), `completed-process ${message.status || "completed"}`)
+      : (failed || interrupted) ? `<p class="process-line">${stateLabel} · ${duration}</p>` : "";
     return `${processSummary}<div class="completed-result"><div class="stream-message final ${message.status || "completed"}">${textHtml(resultText)}</div></div>`;
   }
 
@@ -2613,13 +2619,8 @@
       }
       const signature = fingerprint(message);
       if (article.dataset.fingerprint !== signature) {
-        const previousStatus = article.dataset.status;
-        const wasOpen = Boolean(article.querySelector("details[open]"));
         article.className = `message ${message.role} ${message.status || ""} ${message.steeredInto ? "guided" : ""}`;
         article.innerHTML = messageInnerHtml(message);
-        if (wasOpen && previousStatus === message.status) {
-          article.querySelector("details")?.setAttribute("open", "");
-        }
         article.dataset.status = message.status || "";
         article.dataset.fingerprint = signature;
         changed = true;
@@ -3372,13 +3373,20 @@
     },
     onStreamDetail(json) {
       const payload = JSON.parse(json);
-      if (!state.detailRequest || !payload.entry) return;
-      renderActionDetail(payload.entry);
+      const request = state.detailRequest;
+      if (!request || !payload.entry || payload.entry.id !== request.entryId) return;
+      state.inlineDetails.set(request.key, { entry: payload.entry });
+      state.detailRequest = null;
+      refreshInlineDetail(request.key);
+      pumpInlineDetails();
     },
     onStreamDetailError(message) {
-      if (!state.detailRequest) return;
-      $("#actionDetailContent").innerHTML =
-        `<div class="detail-error">${escapeHtml(message || "暂时无法读取执行详情")}</div>`;
+      const request = state.detailRequest;
+      if (!request) return;
+      state.inlineDetails.set(request.key, { error: message || "暂时无法读取执行详情" });
+      state.detailRequest = null;
+      refreshInlineDetail(request.key);
+      pumpInlineDetails();
     },
   };
 
@@ -3684,8 +3692,6 @@
   });
   $("#closeDelivery").addEventListener("click", closeDelivery);
   $("#deliveryBackdrop").addEventListener("click", closeDelivery);
-  $("#closeActionDetail").addEventListener("click", closeActionDetail);
-  $("#actionDetailBackdrop").addEventListener("click", closeActionDetail);
   $("#closeImageViewer").addEventListener("click", closeImageViewer);
   $("#downloadImageViewer").addEventListener("click", () => {
     const button = $("#downloadImageViewer");
@@ -3941,11 +3947,22 @@
       openImageViewer(image.dataset.inlineImage, image.dataset.imageName, image.dataset.imageMime);
       return;
     }
-    const action = event.target.closest("[data-stream-detail]");
-    if (!action) return;
-    openActionDetail(action.dataset.messageId, action.dataset.streamDetail,
-      action.querySelector("p")?.textContent || "执行详情");
+    const retry = event.target.closest("[data-process-retry]");
+    if (retry) {
+      const node = retry.closest("details[data-inline-detail]");
+      state.inlineDetails.delete(retry.dataset.processRetry);
+      refreshInlineDetail(node.dataset.processKey);
+      loadInlineDetail(node);
+    }
   });
+  document.addEventListener("toggle", (event) => {
+    const node = event.target;
+    if (!node.matches?.("details[data-process-key]")) return;
+    if (!node.isConnected) return;
+    if (node.open) state.expandedProcess.add(node.dataset.processKey);
+    else state.expandedProcess.delete(node.dataset.processKey);
+    if (node.open && node.hasAttribute("data-inline-detail")) loadInlineDetail(node);
+  }, true);
   document.addEventListener("submit", (event) => {
     const inputForm = event.target.closest("[data-approval-input-form]");
     const mcpForm = event.target.closest("[data-approval-mcp-form]");
