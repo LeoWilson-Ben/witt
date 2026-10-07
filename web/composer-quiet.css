@@ -1,6 +1,9 @@
 :root {
   --quiet-composer-bg: rgba(255, 255, 255, .28);
   --quiet-composer-shadow: 0 4px 24px rgba(0, 0, 0, .09);
+  --quiet-composer-wash:
+    radial-gradient(ellipse at 18% 12%, rgba(98, 98, 98, .10), transparent 70%),
+    radial-gradient(ellipse at 88% 92%, rgba(125, 125, 125, .07), transparent 65%);
   --quiet-button-bg: #171717;
   --quiet-button-ink: #ffffff;
 }
@@ -24,6 +27,7 @@ body .composer-hint,
 }
 #composer, #composer.has-active-turn, #composer:focus-within {
   background: var(--quiet-composer-bg) !important;
+  background-image: var(--quiet-composer-wash) !important;
   border: 0 !important;
   box-shadow: var(--quiet-composer-shadow) !important;
 }
