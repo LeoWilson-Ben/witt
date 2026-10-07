@@ -5,8 +5,8 @@ const web=new URL('../web/',import.meta.url);
 const html=readFileSync(new URL('index.html',web),'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,'');
 const browser=await chromium.launch({headless:true});
 try {
- for(const [width,theme] of [[390,'light'],[1280,'light'],[390,'dark'],[1280,'dark']]) {
-  const page=await browser.newPage({viewport:{width,height:860}});
+ for(const [width,theme] of [[320,'light'],[390,'light'],[1280,'light'],[390,'dark'],[1280,'dark'],[844,'light']]) {
+  const page=await browser.newPage({viewport:{width,height:width===844?390:860}});
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.route('https://witt.test/**',r=>{
    const name=new URL(r.request().url()).pathname.replace(/^\/vault\//,'');const file=new URL(name,web);
@@ -30,6 +30,20 @@ try {
   assert.equal(await page.locator('#sendButton').evaluate(n=>getComputedStyle(n).animationName),'quiet-button-breathe');
   assert.equal(await page.locator('#sendButton svg').evaluate(n=>getComputedStyle(n).animationName),'none');
   assert.equal(await page.locator('.message.user .bubble').evaluate(n=>getComputedStyle(n).backgroundColor),'rgb(255, 230, 138)');
+  await page.locator('#modelLabel').evaluate(n=>n.textContent='GPT-6.1 Sol');
+  const layout=await page.evaluate(()=>{
+   const rect=s=>document.querySelector(s).getBoundingClientRect();
+   const shell=rect('.app-shell'),wrap=rect('#composerWrap'),input=rect('#messageInput'),tool=rect('.composer-toolbar'),model=rect('#modelButton'),send=rect('#sendButton'),attach=rect('#attachButton');
+   const label=document.querySelector('#modelLabel');
+   const css=getComputedStyle(document.querySelector('#composer'));
+   return {centerOffset:Math.abs(wrap.x+wrap.width/2-shell.x-shell.width/2),inputBottom:input.bottom,toolbarTop:tool.top,modelLeft:model.left,modelRight:model.right,attachRight:attach.right,sendLeft:send.left,labelOverflow:label.scrollWidth>label.clientWidth+1,blur:css.backdropFilter,background:css.backgroundColor};
+  });
+  assert.ok(layout.centerOffset<1,'centered within app shell');
+  assert.ok(layout.inputBottom<=layout.toolbarTop,'textarea and toolbar use separate rows');
+  assert.ok(layout.modelLeft>=layout.attachRight&&layout.modelRight<=layout.sendLeft,'model does not overlap buttons');
+  assert.ok(!layout.labelOverflow,'model name is fully visible');
+  assert.ok(layout.blur.includes('blur(22px)'),'frosted glass enabled');
+  assert.ok(layout.background.startsWith('rgba('),'translucent surface');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   await page.screenshot({path:`/tmp/witt-composer-quiet-${width}-${theme}.png`,fullPage:true});
   await page.emulateMedia({reducedMotion:'reduce'});
