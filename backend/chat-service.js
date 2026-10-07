@@ -798,11 +798,31 @@ class ChatService {
     }
   }
 
-  async readCapabilities(res) {
-    const profile = this.codexProfiles[this.defaultCodexProfile];
+  async readCapabilities(res, requestedProfile = null, respond = this.sendJson) {
+    // Older native clients cannot pass a profile. Return all authorized profiles
+    // so the web UI can select locally without mixing account capabilities.
+    if (requestedProfile === null) {
+      const capabilitiesByProfile = {};
+      await Promise.all([...this.allowedCodexProfiles].map(async (id) => {
+        await this.readCapabilities(res, id, (_res, status, payload) => {
+          capabilitiesByProfile[id] = status === 200 ? payload
+            : { codexProfile: id, models: [], skills: [], mcpServers: [],
+                features: [], error: payload.error };
+        });
+      }));
+      const primary = capabilitiesByProfile[this.defaultCodexProfile] || { models: [] };
+      respond(res, 200, { ...primary, capabilitiesByProfile });
+      return;
+    }
+    const profileId = String(requestedProfile);
+    if (!this.allowedCodexProfiles.has(profileId) || !this.codexProfiles[profileId]) {
+      respond(res, 403, { error: "当前用户不能使用这个 Codex 账号" });
+      return;
+    }
+    const profile = this.codexProfiles[profileId];
     const cached = this.capabilityCache.get(profile.id);
     if (cached && Date.now() - cached.cachedAt < 5 * 60 * 1000) {
-      this.sendJson(res, 200, cached.payload);
+      respond(res, 200, cached.payload);
       return;
     }
     try {
@@ -815,6 +835,7 @@ class ChatService {
         client.request("collaborationMode/list", {}),
         client.request("experimentalFeature/list", { limit: 100 }),
       ]);
+      if (settled[0].status === "rejected") throw new Error("无法读取这个账号的模型列表，请稍后重试");
       const value = (index) => settled[index].status === "fulfilled"
         ? settled[index].value : {};
       const models = (value(0).data || []).filter((model) => !model.hidden &&
@@ -879,14 +900,15 @@ class ChatService {
         enabled: Boolean(feature.enabled), displayName: String(feature.displayName || ""),
       })).filter((feature) => feature.name);
       const payload = {
+        codexProfile: profile.id,
         models, skills, mcpServers, collaborationModes, features,
         support: { fork: true, compact: true, review: true, plans: true },
         checkedAt: new Date().toISOString(),
       };
       this.capabilityCache.set(profile.id, { cachedAt: Date.now(), payload });
-      this.sendJson(res, 200, payload);
+      respond(res, 200, payload);
     } catch (error) {
-      this.sendJson(res, 503, { error: error.message || "无法读取 App Server 能力" });
+      respond(res, 503, { error: error.message || "无法读取 App Server 能力" });
     }
   }
 
@@ -938,7 +960,7 @@ class ChatService {
     }
 
     if (req.method === "GET" && url.pathname === "/chat/capabilities") {
-      this.readCapabilities(res);
+      this.readCapabilities(res, url.searchParams.get("codexProfile"));
       return true;
     }
 

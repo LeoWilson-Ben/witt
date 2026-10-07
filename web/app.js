@@ -56,6 +56,7 @@
     appVisible: !document.hidden,
     supportsSse: false,
     capabilities: null,
+    capabilitiesByProfile: null,
     artifactOpen: false,
     artifactKey: "",
     artifactVersionIndex: -1,
@@ -597,7 +598,7 @@
   function renderQuickModelPicker() {
     const menu = $("#quickModelMenu");
     if (!menu) return;
-    const models = Array.isArray(state.capabilities?.models) && state.capabilities.models.length
+    const models = Array.isArray(state.capabilities?.models)
       ? state.capabilities.models
       : Object.keys(modelNames).map((id) => ({ id, displayName: modelNames[id] }));
     const selectedModel = state.draftModel || state.model;
@@ -631,7 +632,7 @@
       return;
     }
     const models = Array.isArray(capabilities.models) ? capabilities.models : [];
-    if (models.length) {
+    if (Array.isArray(capabilities.models)) {
       models.forEach((model) => {
         modelNames[model.id] = modelNames[model.id] || model.displayName || model.id;
       });
@@ -771,7 +772,16 @@
       xuanyuOnly ? "使用玄遇专用 Codex 账号" : "开启一个独立上下文";
   }
 
+  function selectAccountCapabilities() {
+    if (!state.capabilitiesByProfile) return;
+    state.capabilities = state.capabilitiesByProfile[state.codexProfile] || {
+      codexProfile: state.codexProfile, models: [], skills: [], mcpServers: [], features: [],
+      error: "这个账号的模型列表暂时不可用",
+    };
+  }
+
   function updateModelControls() {
+    selectAccountCapabilities();
     $("#modelLabel").textContent = modelNames[state.model] || "Sol";
     $("#reasoningLabel").textContent = reasoningNames[state.reasoning] || "均衡";
     $("#accessLabel").textContent = accessNames[state.accessMode] || "完全访问";
@@ -2979,7 +2989,10 @@
       }
     },
     onCapabilities(json) {
-      state.capabilities = JSON.parse(json);
+      const payload = JSON.parse(json);
+      state.capabilitiesByProfile = payload.capabilitiesByProfile || null;
+      state.capabilities = payload;
+      selectAccountCapabilities();
       renderCapabilities();
     },
     onCapabilitiesError(message) {
@@ -3371,10 +3384,26 @@
 
   function beginNewConversation(codexProfile = null) {
     const selectedProfile = codexProfile || state.allowedCodexProfiles[0] || "default";
-    state.activeId = null;
-    state.active = null;
+    const previousProfile = state.codexProfile;
     state.codexProfile = state.allowedCodexProfiles.includes(selectedProfile)
       ? selectedProfile : state.allowedCodexProfiles[0];
+    selectAccountCapabilities();
+    const models = state.capabilities?.models;
+    if (Array.isArray(models) && !models.some((model) => model.id === state.model)) {
+      const fallback = models.find((model) => model.isDefault) || models[0];
+      if (!fallback) {
+        state.codexProfile = previousProfile;
+        selectAccountCapabilities();
+        toast("这个账号的模型列表暂时不可用，请稍后重试");
+        return;
+      }
+      state.model = fallback.id;
+      state.reasoning = fallback.defaultReasoningEffort || "medium";
+      state.draftModel = state.model;
+      state.draftReasoning = state.reasoning;
+    }
+    state.activeId = null;
+    state.active = null;
     state.workDir = state.codexProfile === "xuanyu" ? "/data/xuanyu-build-console" : "";
     localStorage.setItem("wit_codex_profile", state.codexProfile);
     localStorage.removeItem("wit_active_conversation");
