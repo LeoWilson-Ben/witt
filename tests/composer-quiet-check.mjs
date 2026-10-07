@@ -44,9 +44,11 @@ try {
   assert.ok(!layout.labelOverflow,'model name is fully visible');
   assert.ok(layout.blur.includes('blur(22px)'),'frosted glass enabled');
   assert.equal(await page.locator('#composer').evaluate(n=>getComputedStyle(n).borderTopWidth),'0px','no composer border');
+  if(theme==='light')assert.notEqual(await page.locator('#composer').evaluate(n=>getComputedStyle(n).boxShadow),'none','soft shadow defines composer on white background');
   assert.ok(layout.background.startsWith('rgba('),'translucent surface');
   assert.ok(Number(layout.background.match(/,\s*([\d.]+)\)$/)[1])<.4,'glass tint stays mostly transparent');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  await page.locator('#bootScreen').waitFor({state:'hidden'});
   await page.screenshot({path:`/tmp/witt-composer-quiet-${width}-${theme}.png`,fullPage:true});
   await page.emulateMedia({reducedMotion:'reduce'});
   assert.equal(await page.locator('#sendButton').evaluate(n=>getComputedStyle(n).animationName),'none');

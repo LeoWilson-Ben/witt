@@ -1,10 +1,12 @@
 :root {
   --quiet-composer-bg: rgba(255, 255, 255, .28);
+  --quiet-composer-shadow: 0 4px 24px rgba(0, 0, 0, .09);
   --quiet-button-bg: #171717;
   --quiet-button-ink: #ffffff;
 }
 :root[data-theme="dark"], :root[data-theme-mode="colorful"] {
   --quiet-composer-bg: rgba(31, 31, 28, .32);
+  --quiet-composer-shadow: none;
   --quiet-button-bg: #ededeb;
   --quiet-button-ink: #222222;
 }
@@ -23,7 +25,7 @@ body .composer-hint,
 #composer, #composer.has-active-turn, #composer:focus-within {
   background: var(--quiet-composer-bg) !important;
   border: 0 !important;
-  box-shadow: none !important;
+  box-shadow: var(--quiet-composer-shadow) !important;
 }
 #composer::before, #composer::after { content: none !important; }
 #sendButton, #sendButton svg, #sendButton::before, #sendButton::after {
