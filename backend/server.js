@@ -11,6 +11,7 @@ const {
   ChatService, NON_ADMIN_MODELS, servePublicArtifactPreview, servePublicArtifactSource,
 } = require("./chat-service");
 const { CodexAccountService } = require("./codex-account-service");
+const { ClaudeAccountService } = require("./claude-account-service");
 const { claimStandby } = require("./failover");
 
 const host = "127.0.0.1";
@@ -210,6 +211,14 @@ const chatService = new ChatService({
   codexProfiles,
 });
 const authService = new AuthService({ dir: authDir, sendJson, readJsonBody });
+const claudeAccountService = new ClaudeAccountService({
+  sendJson, readJsonBody,
+  isAuthorized: (ticket) => {
+    if (ticket.owner === "legacy") return !authService.initialized();
+    return authService.read().devices.some((device) => device.id === ticket.deviceId &&
+      device.userId === ticket.owner && device.admin && !device.disabled);
+  },
+});
 const codexAccountService = new CodexAccountService({
   codexBin,
   profiles: codexProfiles,
@@ -716,6 +725,7 @@ http.createServer((req, res) => {
     sendJson(res, 404, { error: "交互预览不存在或已失效" });
     return;
   }
+  if (claudeAccountService.handle(req, res, url)) return;
   const legacyAuthorized = authorized(req);
   const imageRequest = /^\/chat-images\/[a-f0-9-]{36}$/.test(url.pathname);
   let principal = principalFor(req);
@@ -743,7 +753,10 @@ http.createServer((req, res) => {
       sendJson(res, 405, { error: "请求方式不支持" });
       return;
     }
-    codexAccountService.list(res, principal.admin ? null : (principal.codexProfiles || ["default"]));
+    const extraAccounts = principal.admin ? claudeAccountService.card(principal).then((card) => [card])
+      .catch(() => []) : Promise.resolve([]);
+    extraAccounts.then((accounts) => codexAccountService.list(res,
+      principal.admin ? null : (principal.codexProfiles || ["default"]), accounts));
     return;
   }
   const codexLoginMatch = url.pathname.match(

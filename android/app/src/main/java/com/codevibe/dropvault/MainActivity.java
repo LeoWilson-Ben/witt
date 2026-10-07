@@ -441,6 +441,9 @@ public class MainActivity extends Activity {
                 case "activateInvite": webBridge.activateInvite(args.optString(0)); break;
                 case "requestAdminDevices": webBridge.requestAdminDevices(); break;
                 case "requestCodexAccounts": webBridge.requestCodexAccounts(); break;
+                case "startCodexLogin": webBridge.startCodexLogin(args.optString(0)); break;
+                case "requestCodexLoginStatus": webBridge.requestCodexLoginStatus(args.optString(0)); break;
+                case "cancelCodexLogin": webBridge.cancelCodexLogin(args.optString(0)); break;
                 case "startXuanyuCodexLogin": webBridge.startXuanyuCodexLogin(); break;
                 case "requestXuanyuCodexLoginStatus": webBridge.requestXuanyuCodexLoginStatus(); break;
                 case "cancelXuanyuCodexLogin": webBridge.cancelXuanyuCodexLogin(); break;
@@ -1456,6 +1459,23 @@ public class MainActivity extends Activity {
         @JavascriptInterface public boolean hasBundledLumoraMedia() { return true; }
         @JavascriptInterface public void requestAdminDevices() { MainActivity.this.requestAdmin("admin/devices", "GET", null, "window.DropVault.onAdminDevices"); }
         @JavascriptInterface public void requestCodexAccounts() { MainActivity.this.requestAdmin("codex/accounts", "GET", null, "window.DropVault.onCodexAccounts"); }
+        private void codexLoginRequest(String profile, String action, String method, String callback) {
+            if (profile == null || !profile.matches("^(xuanyu|account4|account5)$")) {
+                callJs("window.DropVault.onAdminError('账号配置不存在')");
+                return;
+            }
+            MainActivity.this.requestAdmin("codex/accounts/" + profile + "/login/" + action,
+                method, "POST".equals(method) ? "{}" : null, callback);
+        }
+        @JavascriptInterface public void startCodexLogin(String profile) {
+            codexLoginRequest(profile, "start", "POST", "window.DropVault.onCodexLoginStarted");
+        }
+        @JavascriptInterface public void requestCodexLoginStatus(String profile) {
+            codexLoginRequest(profile, "status", "GET", "window.DropVault.onCodexLoginStatus");
+        }
+        @JavascriptInterface public void cancelCodexLogin(String profile) {
+            codexLoginRequest(profile, "cancel", "POST", "window.DropVault.onCodexLoginCancelled");
+        }
         @JavascriptInterface public void startXuanyuCodexLogin() { MainActivity.this.requestAdmin("codex/accounts/xuanyu/login/start", "POST", "{}", "window.DropVault.onCodexLoginStarted"); }
         @JavascriptInterface public void requestXuanyuCodexLoginStatus() { MainActivity.this.requestAdmin("codex/accounts/xuanyu/login/status", "GET", null, "window.DropVault.onCodexLoginStatus"); }
         @JavascriptInterface public void cancelXuanyuCodexLogin() { MainActivity.this.requestAdmin("codex/accounts/xuanyu/login/cancel", "POST", "{}", "window.DropVault.onCodexLoginCancelled"); }

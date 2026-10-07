@@ -54,7 +54,7 @@ class CodexAccountService {
     }
   }
 
-  async list(res, allowedProfileIds = null) {
+  async list(res, allowedProfileIds = null, extraAccounts = []) {
     try {
       const accounts = [];
       const allowed = Array.isArray(allowedProfileIds) ? new Set(allowedProfileIds) : null;
@@ -62,7 +62,7 @@ class CodexAccountService {
         .filter((item) => !allowed || allowed.has(item.id))) {
         accounts.push(await this.readProfile(profile));
       }
-      this.sendJson(res, 200, { accounts });
+      this.sendJson(res, 200, { accounts: [...accounts, ...extraAccounts] });
     } catch (error) {
       this.sendJson(res, 502, {
         error: `暂时无法读取 Codex 账号：${String(error.message || error).slice(0, 160)}`,

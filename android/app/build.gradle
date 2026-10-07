@@ -10,9 +10,9 @@ def setting = { String propertyName, String environmentName, String fallback ->
 }
 def javaString = { String value -> "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\"" }
 def signingFile = file(setting("wittSigningProperties", "WITT_SIGNING_PROPERTIES", "signing.properties"))
-def webUrl = setting("wittWebUrl", "WITT_WEB_URL", "https://upload.16.208.20.133.sslip.io/vault/index.html")
-def apiUrl = setting("wittApiUrl", "WITT_API_URL", "https://upload.16.208.20.133.sslip.io/vault-api/")
-def updateUrl = setting("wittUpdateUrl", "WITT_UPDATE_URL", "https://upload.16.208.20.133.sslip.io/vault/update.json")
+def webUrl = setting("wittWebUrl", "WITT_WEB_URL", "https://upload.13.208.127.58.sslip.io/vault/index.html")
+def apiUrl = setting("wittApiUrl", "WITT_API_URL", "https://upload.13.208.127.58.sslip.io/vault-api/")
+def updateUrl = setting("wittUpdateUrl", "WITT_UPDATE_URL", "https://upload.13.208.127.58.sslip.io/vault/update-osaka.json")
 def fallbackWebUrl = setting("wittFallbackWebUrl", "WITT_FALLBACK_WEB_URL", "https://upload.13.208.127.58.sslip.io/vault/index.html")
 def fallbackApiUrl = setting("wittFallbackApiUrl", "WITT_FALLBACK_API_URL", "https://upload.13.208.127.58.sslip.io/vault-api/")
 def signing = new Properties()
@@ -23,11 +23,11 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId "com.codevibe.dropvault"
+        applicationId "com.codevibe.dropvault.osaka"
         minSdk 26
         targetSdk 35
-        versionCode 37
-        versionName "2.2.18"
+        versionCode 40
+        versionName "2.2.21"
         buildConfigField "String", "WEB_URL", javaString(webUrl)
         buildConfigField "String", "API_URL", javaString(apiUrl)
         buildConfigField "String", "UPDATE_URL", javaString(updateUrl)

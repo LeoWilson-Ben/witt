@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer"><title>连接 Claude · Witt</title>
+<style>
+:root{color-scheme:light dark;font-family:system-ui,-apple-system,"Noto Sans SC",sans-serif;color:#202126;background:#f6f5f2}*{box-sizing:border-box}body{margin:0;padding:24px 20px 40px}main{max-width:480px;margin:clamp(16px,7vh,64px) auto}a{color:inherit}h1{font-size:28px;letter-spacing:-.6px;margin:32px 0 14px}p{line-height:1.7;color:#53555d;margin:0 0 18px}.status{padding:16px 0;border-top:1px solid #cccac5;border-bottom:1px solid #cccac5;margin:24px 0;overflow-wrap:anywhere;color:#202126}button,.action{min-height:48px;padding:13px 18px;border-radius:12px;border:1px solid #b6b4af;background:transparent;color:inherit;font:inherit;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}button.primary,.action{background:#25272c;color:#fff;border-color:#25272c}button:disabled{opacity:.55;cursor:wait}.actions{display:flex;flex-wrap:wrap;gap:12px;margin:20px 0}label{display:block;font-weight:600;margin:24px 0 10px}input{display:block;width:100%;min-height:48px;padding:12px;border:1px solid #9a9995;border-radius:10px;background:transparent;color:inherit;font:inherit}small{display:block;color:#53555d;line-height:1.6;margin:12px 0}button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid #537af0;outline-offset:3px}[hidden]{display:none!important}.error{color:#a72923}@media(prefers-color-scheme:dark){:root{background:#18191c;color:#f4f2ef}p,small{color:#bbbcc4}.status{color:#f4f2ef;border-color:#4a4b50}button.primary,.action{background:#e9e5df;color:#202126;border-color:#e9e5df}.error{color:#ffb3a9}}
+</style>
+</head>
+<body><main>
+<a href="/vault/">返回维特</a>
+<h1>连接 Claude</h1>
+<p>通过官方 Claude Code 登录你的账号。密码只在 Claude 官方页面填写。</p>
+<p id="status" class="status" role="status" aria-live="polite">正在检查登录状态…</p>
+<div class="actions"><button id="start" class="primary" disabled>开始登录</button><button id="cancel" hidden>取消本次登录</button></div>
+<section id="authorization" hidden>
+<p>打开官方页面并完成授权。如果页面给出授权码，请回到这里粘贴。</p>
+<a class="action" id="official" rel="noreferrer noopener" href="#">打开 Claude 官方授权页</a>
+<form id="codeForm">
+<label for="code">官方页面的授权码</label>
+<input id="code" type="password" maxlength="4096" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="codeHelp">
+<small id="codeHelp">只填写本次登录生成的授权码，无需粘贴密码、API Key 或 Token。</small>
+<button class="primary" id="submit" type="submit">完成授权</button>
+</form>
+</section>
+<small>每个账号的登录状态独立保存。完成后返回维特，即可在账号列表查看。</small>
+</main>
+<script>
+(() => {
+  "use strict";
+  const ticket = location.hash.slice(1);
+  history.replaceState(null, "", location.pathname);
+  const $ = (id) => document.getElementById(id);
+  let timer = null, busy = false, url = "";
+  const pendingStates = ["starting", "pending", "verifying"];
+  async function request(action, body) {
+    const response = await fetch(`/vault-api/claude/login/${action}`, {
+      method: body === undefined ? "GET" : "POST", credentials: "omit", cache: "no-store",
+      headers: { Authorization: `Bearer ${ticket}`, "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "连接失败，请稍后重试");
+    return result;
+  }
+  function error(message) {
+    clearTimeout(timer); timer = null; $("status").textContent = message;
+    $("status").classList.add("error"); $("start").disabled = false;
+  }
+  function render(result) {
+    const state = result.status;
+    const pending = pendingStates.includes(state);
+    $("status").classList.remove("error");
+    $("start").disabled = pending;
+    $("start").textContent = result.authenticated ? "登录其他账号" : "开始登录";
+    $("cancel").hidden = !pending;
+    $("authorization").hidden = !(pending && result.verificationUrl);
+    $("submit").disabled = state === "verifying";
+    $("code").disabled = state === "verifying";
+    url = result.verificationUrl || "";
+    $("official").href = url || "#";
+    const labels = { starting: "正在创建官方授权流程…", pending: "等待你在官方页面完成授权", verifying: "正在验证授权，请稍候…", signedOut: "尚未连接 Claude 账号", cancelled: "已取消本次登录", expired: "本次授权已过期，请重新开始", failed: "登录未完成，请重新开始" };
+    $("status").textContent = state === "authenticated"
+      ? `已连接 ${result.email || "Claude 账号"}${result.planType ? ` · ${result.planType}` : ""}`
+      : (labels[state] || "请重新发起登录");
+    clearTimeout(timer); timer = pending ? setTimeout(refresh, 2000) : null;
+  }
+  async function refresh() { try { render(await request("status")); } catch (e) { error(e.message); } }
+  async function act(action, body = {}) {
+    if (busy) return;
+    busy = true; $("start").disabled = true; $("submit").disabled = true;
+    try { render(await request(action, body)); } catch (e) { error(e.message); }
+    finally { busy = false; if (!$("code").disabled) $("submit").disabled = false; }
+  }
+  $("start").onclick = () => act("start");
+  $("cancel").onclick = () => act("cancel");
+  $("codeForm").onsubmit = (event) => {
+    event.preventDefault(); const code = $("code").value.trim();
+    if (!code) { $("code").focus(); return; }
+    $("code").value = ""; void act("complete", { code });
+  };
+  $("official").onclick = (event) => {
+    event.preventDefault(); if (!url) return;
+    if (window.WittNative || window.DropVaultAndroid) location.href = url;
+    else window.open(url, "_blank", "noopener,noreferrer");
+  };
+  if (!/^[A-Za-z0-9_-]{43}$/.test(ticket)) {
+    error("请从维特的“账号与项目”重新打开 Claude 登录入口"); $("start").disabled = true;
+  } else void refresh();
+})();
+</script>
+</body></html>

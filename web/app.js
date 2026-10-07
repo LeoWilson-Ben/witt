@@ -1416,6 +1416,10 @@
   function renderCodexAccounts(accounts = []) {
     state.codexAccounts = accounts;
     $("#codexAccountList").innerHTML = accounts.map((account) => {
+      if (account.provider === "claude") {
+        const detail = account.authenticated ? `${account.account?.email || "已登录"}${account.account?.planType ? ` · ${account.account.planType}` : ""}` : "通过官方 Claude Code 登录";
+        return `<article class="codex-account-card additional"><span class="codex-account-avatar">C</span><div class="codex-account-identity"><strong>Claude</strong><small>${escapeHtml(detail)}</small></div><div class="codex-account-actions"><button class="login" data-login-claude>${account.authenticated ? "管理登录" : "登录账号"}</button></div></article>`;
+      }
       const signedIn = Boolean(account.authenticated);
       const canLogin = state.admin && account.id !== "default";
       const detail = signedIn
@@ -3552,6 +3556,13 @@
   $("#closeCodexAccounts").addEventListener("click", closeCodexAccounts);
   $("#codexAccountBackdrop").addEventListener("click", closeCodexAccounts);
   $("#codexAccountList").addEventListener("click", (event) => {
+    if (event.target.closest("[data-login-claude]")) {
+      const url = state.codexAccounts.find((account) => account.provider === "claude")?.loginUrl;
+      if (typeof url === "string" && /^\/vault-api\/claude\/login#[A-Za-z0-9_-]{43}$/.test(url)) {
+        window.location.href = url;
+      } else toast("登录入口已失效，请重新打开账号列表");
+      return;
+    }
     const login = event.target.closest("[data-login-codex]")?.dataset.loginCodex;
     if (login) {
       state.codexLoginProfile = login;
