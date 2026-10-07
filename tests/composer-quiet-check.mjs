@@ -43,7 +43,9 @@ try {
   assert.ok(layout.modelLeft>=layout.attachRight&&layout.modelRight<=layout.sendLeft,'model does not overlap buttons');
   assert.ok(!layout.labelOverflow,'model name is fully visible');
   assert.ok(layout.blur.includes('blur(22px)'),'frosted glass enabled');
+  assert.equal(await page.locator('#composer').evaluate(n=>getComputedStyle(n).borderTopWidth),'0px','no composer border');
   assert.ok(layout.background.startsWith('rgba('),'translucent surface');
+  assert.ok(Number(layout.background.match(/,\s*([\d.]+)\)$/)[1])<.4,'glass tint stays mostly transparent');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   await page.screenshot({path:`/tmp/witt-composer-quiet-${width}-${theme}.png`,fullPage:true});
   await page.emulateMedia({reducedMotion:'reduce'});
@@ -52,6 +54,25 @@ try {
   c.busy=false;c.messages[1].status='completed';c.messages[1].stream[0].status='completed';
   await page.evaluate(c=>window.DropVault.onConversation(JSON.stringify({conversation:c})),c);
   assert.equal(await page.locator('#sendButton').evaluate(n=>getComputedStyle(n).animationName),'none');
+  await page.addStyleTag({content:'.message { animation: none !important; }'});
+  c.messages=Array.from({length:40},(_,index)=>({id:'glass-'+index,role:'user',text:'这是一条从输入框后面经过的黄色消息，检查半透明和背景模糊。',createdAt:now,status:'completed'}));
+  await page.evaluate(c=>window.DropVault.onConversation(JSON.stringify({conversation:c})),c);
+  await page.locator('#bootScreen').waitFor({state:'hidden'});
+  await page.waitForTimeout(600);
+  await page.evaluate(()=>{
+   const stage=document.querySelector('.chat-stage');
+   stage.style.setProperty('scroll-behavior','auto','important');
+   const bubble=document.querySelector('[data-message="glass-28"] .bubble');
+   const composer=document.querySelector('#composer');
+   stage.scrollTop+=bubble.getBoundingClientRect().top-composer.getBoundingClientRect().top-8;
+  });
+  const overlaps=await page.evaluate(()=>{
+   const a=document.querySelector('[data-message="glass-28"] .bubble').getBoundingClientRect();
+   const b=document.querySelector('#composer').getBoundingClientRect();
+   return a.bottom>b.top&&a.top<b.bottom;
+  });
+  assert.ok(overlaps,'real chat message passes beneath glass composer');
+  await page.screenshot({path:`/tmp/witt-glass-underlay-${width}-${theme}.png`,fullPage:true});
   assert.deepEqual(errors,[]);await page.close();
  }
  console.log('Composer passed mobile, desktop, light and dark: static input, breathing busy button, yellow user bubbles, no voice icon, reduced motion and completion.');
