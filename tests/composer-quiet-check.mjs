@@ -29,7 +29,7 @@ try {
   assert.deepEqual(await page.locator('#composer').evaluate(n=>['::before','::after'].map(p=>getComputedStyle(n,p).animationName)),['none','none']);
   assert.equal(await page.locator('#sendButton').evaluate(n=>getComputedStyle(n).animationName),'quiet-button-breathe');
   assert.equal(await page.locator('#sendButton svg').evaluate(n=>getComputedStyle(n).animationName),'none');
-  assert.equal(await page.locator('.message.user .bubble').evaluate(n=>getComputedStyle(n).backgroundColor),'rgb(255, 230, 138)');
+  assert.equal(await page.locator('.message.user .bubble').evaluate(n=>getComputedStyle(n).backgroundColor),'rgb(255, 255, 255)');
   await page.locator('#modelLabel').evaluate(n=>n.textContent='GPT-6.1 Sol');
   const layout=await page.evaluate(()=>{
    const rect=s=>document.querySelector(s).getBoundingClientRect();
@@ -57,7 +57,7 @@ try {
   await page.evaluate(c=>window.DropVault.onConversation(JSON.stringify({conversation:c})),c);
   assert.equal(await page.locator('#sendButton').evaluate(n=>getComputedStyle(n).animationName),'none');
   await page.addStyleTag({content:'.message { animation: none !important; }'});
-  c.messages=Array.from({length:40},(_,index)=>({id:'glass-'+index,role:'user',text:'这是一条从输入框后面经过的黄色消息，检查半透明和背景模糊。',createdAt:now,status:'completed'}));
+  c.messages=Array.from({length:40},(_,index)=>({id:'glass-'+index,role:'user',text:'这是一条从输入框后面经过的消息，检查半透明和背景模糊。',createdAt:now,status:'completed'}));
   await page.evaluate(c=>window.DropVault.onConversation(JSON.stringify({conversation:c})),c);
   await page.locator('#bootScreen').waitFor({state:'hidden'});
   await page.waitForTimeout(600);
@@ -77,5 +77,5 @@ try {
   await page.screenshot({path:`/tmp/witt-glass-underlay-${width}-${theme}.png`,fullPage:true});
   assert.deepEqual(errors,[]);await page.close();
  }
- console.log('Composer passed mobile, desktop, light and dark: static input, breathing busy button, yellow user bubbles, no voice icon, reduced motion and completion.');
+ console.log('Composer passed mobile, desktop, light and dark: static input, breathing busy button, white user bubbles, no voice icon, reduced motion and completion.');
 }finally{await browser.close();}

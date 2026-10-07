@@ -48,15 +48,15 @@ body .composer-hint,
 }
 #messageList .message.user .bubble,
 #messageList .message.user.guided .bubble {
-  color: #30280c !important;
-  background: #ffe68a !important;
-  border-color: #ffe68a !important;
+  color: #262626 !important;
+  background: #ffffff !important;
+  border-color: #ffffff !important;
   box-shadow: none !important;
 }
 #messageList .message.user .user-message-rich,
-#messageList .message.user .bubble p { color: #30280c !important; }
+#messageList .message.user .bubble p { color: #262626 !important; }
 #messageList .message.user .message-file { background: rgba(255,255,255,.3) !important; }
-#messageList .message.user .message-file small { color: #625321 !important; }
+#messageList .message.user .message-file small { color: #666666 !important; }
 .power-paused #sendButton { animation-play-state: paused !important; }
 @media (prefers-reduced-motion: reduce) {
   #sendButton:is(.working, .sending, .pausing) { animation: none !important; opacity: 1; }
