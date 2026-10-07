@@ -59,6 +59,24 @@ try {
   assert.equal(await page.locator('#actionDetailSheet').count(),0);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   assert.deepEqual(await page.evaluate(()=>window.__detailCalls),['cmd','file']);
+  conversation.messages[0]={...message,id:'00000000-0000-4000-8000-000000000003',status:'running',stream:message.stream.map(e=>e.id==='cmd'?{...e,status:'running'}:e)};
+  await page.evaluate(c=>window.DropVault.onConversation(JSON.stringify({conversation:c})),conversation);
+  assert.equal(await page.locator('#messageList details[open]').count(),0);
+  const runningLabel=page.locator('.stream-action-group.command-running > summary > .process-label');
+  assert.equal(await runningLabel.evaluate(n=>getComputedStyle(n).animationName),'process-command-breathe');
+  const rgb=await runningLabel.evaluate(n=>getComputedStyle(n).color.match(/\d+/g).map(Number));
+  assert.equal(rgb[0],rgb[1]);assert.equal(rgb[1],rgb[2]);
+  await page.locator('.stream-action-group > summary').click();
+  assert.equal(await page.locator('.stream-action.command.running > summary > .process-label').evaluate(n=>getComputedStyle(n).animationName),'process-command-breathe');
+  await page.evaluate(()=>document.body.classList.add('power-paused'));
+  assert.equal(await runningLabel.evaluate(n=>getComputedStyle(n).animationPlayState),'paused');
+  await page.evaluate(()=>document.body.classList.remove('power-paused'));
+  await page.emulateMedia({reducedMotion:'reduce'});
+  assert.equal(await runningLabel.evaluate(n=>getComputedStyle(n).animationName),'none');
+  await page.emulateMedia({reducedMotion:'no-preference'});
+  conversation.messages[0].stream[0].status='completed';
+  await page.evaluate(c=>window.DropVault.onConversation(JSON.stringify({conversation:c})),conversation);
+  assert.equal(await page.locator('.stream-action.command > summary > .process-label').evaluate(n=>getComputedStyle(n).animationName),'none');
   assert.deepEqual(errors,[]);
   await page.close();
  }

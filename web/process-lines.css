@@ -118,3 +118,27 @@
 }
 @media (pointer: coarse) { #messageList .process-node > summary { min-height: 40px !important; } }
 @media (prefers-reduced-motion: reduce) { #messageList .process-chevron { transition: none; } }
+
+/* Running command text breathes in neutral gray; layout and arrows stay still. */
+:root { --process-command-ink: #4b4b4b; }
+:root[data-theme="dark"], :root[data-theme-mode="colorful"] { --process-command-ink: #bdbdbd; }
+#messageList .stream-action.command.running > summary > .process-label,
+#messageList .stream-action.command.running [data-process-key$=":command"] .process-output,
+#messageList .stream-action-group.command-running > summary > .process-label,
+#messageList .process-line.command.running {
+  color: var(--process-command-ink) !important;
+  animation: process-command-breathe 1.8s ease-in-out infinite;
+}
+@keyframes process-command-breathe {
+  0%, 100% { opacity: .78; }
+  50% { opacity: 1; }
+}
+.power-paused #messageList .process-label,
+.power-paused #messageList .process-output,
+.power-paused #messageList .process-line { animation-play-state: paused !important; }
+@media (prefers-reduced-motion: reduce) {
+  #messageList .stream-action.command.running > summary > .process-label,
+  #messageList .stream-action.command.running [data-process-key$=":command"] .process-output,
+  #messageList .stream-action-group.command-running > summary > .process-label,
+  #messageList .process-line.command.running { animation: none; opacity: 1; }
+}

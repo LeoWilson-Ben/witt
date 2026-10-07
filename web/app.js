@@ -2027,7 +2027,7 @@
 
   function streamActionHtml(message, entry) {
     const label = entry.label || "正在处理";
-    if (!entry.hasDetails) return `<p class="process-line ${escapeHtml(entry.status || "")}">${escapeHtml(label)}</p>`;
+    if (!entry.hasDetails) return `<p class="process-line ${escapeHtml(entry.kind || "tool")} ${escapeHtml(entry.status || "")}">${escapeHtml(label)}</p>`;
     const key = processKey(message, `action:${entry.id}`);
     const cached = state.inlineDetails.get(key);
     if (cached?.entry?.status === "running" && entry.status !== "running") state.inlineDetails.delete(key);
@@ -2264,7 +2264,7 @@
         const statusText = running ? "正在执行" : failed ? `${failed} 项未完成` : "执行完成";
         rendered.push(processDisclosure(`${streamGroupLabel(actionBuffer)} · ${statusText}`,
           actionBuffer.map((entry) => streamActionHtml(message, entry)).join(""),
-          processKey(message, `group:${actionBuffer[0].id}`), `stream-action-group ${groupStatus}`));
+          processKey(message, `group:${actionBuffer[0].id}`), `stream-action-group ${groupStatus} ${actionBuffer.some((entry) => entry.kind === "command" && entry.status === "running") ? "command-running" : ""}`));
       }
       actionBuffer = [];
     };
