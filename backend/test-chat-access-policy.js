@@ -17,6 +17,7 @@ const service = new ChatService({
     xuanyu: { id: "xuanyu", workDir: os.homedir() },
   },
 });
+service.runNext = () => {};
 try {
   const oldConversation = service.createConversation();
   const active = { conversationId: oldConversation.id, marker: "preserve" };

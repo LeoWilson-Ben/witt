@@ -5,12 +5,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { AppServerClient, sharedAppServer } = require("./app-server-client");
 const { ConversationStore } = require("./sqlite-store");
+const { UserWorkspace } = require("./user-workspace");
 const { workspaceOverview } = require("./workspace-overview");
+const { executionPolicy } = require("./execution-policy");
 
 const ID_PATTERN = /^[a-f0-9-]{36}$/;
 const DEEPSEEK_MODELS = new Set(["deepseek-v4-pro", "deepseek-v4-flash"]);
 const ADMIN_MODELS = new Set([
-  "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+  "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
   "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", ...DEEPSEEK_MODELS,
 ]);
 const NON_ADMIN_MODELS = new Set(["gpt-5.5", ...DEEPSEEK_MODELS]);
@@ -51,12 +53,15 @@ class ChatService {
     this.dataDir = options.dataDir;
     this.codexBin = options.codexBin;
     this.codexWorkDir = options.codexWorkDir;
+    this.serverAdministrator = options.serverAdministrator === true;
+    this.userWorkspaceDir = path.join(path.dirname(this.chatDir), "workspace");
+    if (!this.serverAdministrator) fs.mkdirSync(this.userWorkspaceDir, { recursive: true, mode: 0o700 });
     this.deepseekEnabled = options.deepseekEnabled !== false;
     this.sendJson = options.sendJson;
     this.readJsonBody = options.readJsonBody;
     this.allowedModels = Object.hasOwn(options, "allowedModels")
       ? options.allowedModels : ADMIN_MODELS;
-    this.defaultModel = options.defaultModel || "gpt-6-astra";
+    this.defaultModel = options.defaultModel || "gpt-6.1-sol";
     this.quotaExhausted = Boolean(options.quotaExhausted);
     this.recoveryMaxAgeMs = Number.isFinite(options.recoveryMaxAgeMs)
       ? Math.max(0, options.recoveryMaxAgeMs)
@@ -91,7 +96,9 @@ class ChatService {
     ]).flatMap((root) => {
       try { return [fs.realpathSync(root)]; } catch { return []; }
     });
-    this.active = null;
+    this.activeTurns = new Map();
+    const concurrency = Number(options.maxConcurrentTurns ?? process.env.WITT_MAX_CONCURRENT_TURNS ?? 3);
+    this.maxConcurrentTurns = Number.isFinite(concurrency) ? Math.max(1, Math.min(8, Math.floor(concurrency))) : 3;
     this.lastUsageConversationId = null;
     this.usageCache = new Map();
     this.capabilityCache = new Map();
@@ -105,12 +112,38 @@ class ChatService {
     this.jsonCheckpoints = new Map();
     this.eventSubscribers = new Map();
     this.eventBroadcasts = new Map();
+    this.workspace = new UserWorkspace(this, { start: options.startWorkspace !== false });
     this.recover();
+  }
+
+  get active() { return this.activeTurns.size === 1 ? this.activeTurns.values().next().value : null; }
+  set active(value) {
+    if (value) this.activeTurns.set(value.conversationId, value);
+    else if (this.activeTurns.size === 1) this.activeTurns.clear();
+  }
+
+  activeFor(conversationId) { return this.activeTurns.get(conversationId) || null; }
+
+  activeForEvent(client, params = {}) {
+    const candidates = [...this.activeTurns.values()].filter((turn) => turn.client === client && !turn.finished);
+    const threadId = params.threadId || params.thread_id || params.thread?.id || params.turn?.threadId;
+    const turnId = params.turnId || params.turn_id || params.turn?.id;
+    if (threadId) return candidates.find((turn) => turn.threadId === threadId &&
+      (!turnId || !turn.turnId || turn.turnId === turnId)) || null;
+    if (turnId) return candidates.find((turn) => turn.turnId === turnId) || null;
+    // Do not guess a conversation for unscoped events when several threads are running.
+    return candidates.length === 1 ? candidates[0] : null;
   }
 
   clientFor(profile, model = this.defaultModel) {
     const deepseek = DEEPSEEK_MODELS.has(model);
     const configOverrides = ["features.default_mode_request_user_input=true"];
+    if (!this.serverAdministrator) configOverrides.push(
+      'sandbox_mode="workspace-write"',
+      'approval_policy="never"',
+      'sandbox_workspace_write.network_access=false',
+      `sandbox_workspace_write.writable_roots=${JSON.stringify([this.userWorkspaceDir, this.dataDir])}`,
+    );
     if (deepseek) configOverrides.push(
       'model_provider="witt-deepseek"',
       'model_providers.witt-deepseek.name="DeepSeek through Witt"',
@@ -131,12 +164,12 @@ class ChatService {
     if (!this.boundClients.has(client)) {
       this.boundClients.add(client);
       client.on("notification", (method, params) => {
-        const active = this.active;
+        const active = this.activeForEvent(client, params);
         if (!active || active.client !== client) return;
         this.handleNotification(active.conversationId, active.messageId, method, params);
       });
       client.on("request", (request) => {
-        const active = this.active;
+        const active = this.activeForEvent(client, request.params);
         if (!active || active.client !== client) {
           try { client.respond(request.id, { decision: "decline" }); } catch {}
           return;
@@ -144,8 +177,10 @@ class ChatService {
         this.handleServerRequest(active.conversationId, active.messageId, request);
       });
       client.on("closed", ({ stderr }) => {
-        if (this.active?.client === client && !this.active.finished) {
-          this.failActive(stderr.trim().slice(-1200) || "Codex 服务意外停止");
+        for (const active of [...this.activeTurns.values()]) {
+          if (active.client === client && !active.finished) {
+            this.failActive(stderr.trim().slice(-1200) || "Codex 服务意外停止", active.conversationId);
+          }
         }
       });
       client.on("notification", (method) => {
@@ -180,6 +215,7 @@ class ChatService {
   }
 
   writeConversation(conversation) {
+    if (this.workspace) this.workspace.queueCache = null;
     this.store.save(conversation);
     this.scheduleConversationEvent(conversation.id);
     const existing = this.jsonCheckpoints.get(conversation.id);
@@ -372,6 +408,7 @@ class ChatService {
   }
 
   publishPreviewSnapshot(assistant, requestedPath) {
+    const active = [...this.activeTurns.values()].find((turn) => turn.messageId === assistant.id);
     const verified = this.deliveryArtifact(requestedPath);
     const extension = path.extname(String(verified?.name || "")).toLowerCase();
     if (!verified || !['.html', '.htm'].includes(extension) ||
@@ -389,8 +426,8 @@ class ChatService {
     const contentHash = crypto.createHash("sha256").update(source).digest("hex");
     let versions = Array.isArray(assistant.previewVersions)
       ? assistant.previewVersions.slice() : [];
-    if (!versions.length && this.active?.conversationId) {
-      const conversation = this.readConversation(this.active.conversationId);
+    if (!versions.length && active?.conversationId) {
+      const conversation = this.readConversation(active.conversationId);
       const previous = conversation?.messages?.slice().reverse().find((message) =>
         message.id !== assistant.id && message.livePreview?.artifactKey === artifactKey);
       if (previous) versions = (previous.previewVersions || []).slice(-20);
@@ -429,8 +466,8 @@ class ChatService {
     }
     assistant.previewVersions = versions;
     assistant.livePreview = snapshot;
-    if (this.active?.messageId === assistant.id) {
-      this.active.previewSourcePath = verified.sourcePath;
+    if (active?.messageId === assistant.id) {
+      active.previewSourcePath = verified.sourcePath;
     }
     return true;
   }
@@ -438,14 +475,14 @@ class ChatService {
   publicConversation(conversation, includeMessages = true) {
     const profile = this.profileFor(conversation);
     const messages = conversation.messages || [];
-    const active = this.active?.conversationId === conversation.id ? this.active : null;
+    const active = this.activeFor(conversation.id);
     const busy = conversation.busy ?? messages.some((message) =>
       message.role === "assistant" && ["queued", "running"].includes(message.status));
     const lastAssistant = messages.findLast((message) => message.role === "assistant");
     const waiting = Boolean(active?.pendingApprovals?.size) || (conversation.awaitingConfirmation ??
       lastAssistant?.stream?.some((entry) => entry.kind === "approval" && entry.status === "pending"));
     const lastStatus = conversation.lastAssistantStatus ?? lastAssistant?.status;
-    const taskState = waiting ? "awaiting_confirmation" : busy ? "running" :
+    const taskState = waiting ? "awaiting_confirmation" : busy ? (active ? "running" : "queued") :
       lastStatus === "failed" ? "failed" : lastStatus === "interrupted" ? "interrupted" :
       messages.length || conversation.totalMessages ? "completed" : "idle";
     const result = {
@@ -456,11 +493,14 @@ class ChatService {
       archived: Boolean(conversation.archived),
       pinned: Boolean(conversation.pinned),
       project: String(conversation.project || ""),
+      workspaceProjectId: conversation.workspaceProjectId || null,
+      queuePosition: busy && !active ? this.workspace.queuePosition(conversation.id) : null,
+      waitingForProject: busy && !active ? this.workspace.conflict(conversation)?.title || null : null,
       hasAttachments: conversation.hasAttachments ?? messages.some((message) =>
         message.attachments?.length || message.artifacts?.length),
       taskStatus: { state: taskState, label: {
-        awaiting_confirmation: "等你确认", running: "处理中", failed: "执行失败",
-        completed: "已结束", interrupted: "已暂停", idle: "尚未开始",
+        awaiting_confirmation: "等待确认", running: "正在执行", queued: "排队中", failed: "失败",
+        completed: "已完成", interrupted: "已暂停", idle: "尚未开始",
       }[taskState] },
       activeDeviceLabel: active?.ownerDeviceId ? this.deviceLabel(active.ownerDeviceId) : null,
       codexProfile: profile.id,
@@ -470,8 +510,7 @@ class ChatService {
       model: this.modelAllowed(conversation.model, profile.id)
         ? conversation.model : this.defaultModel,
       reasoning: conversation.reasoning || "medium",
-      accessMode: ALLOWED_ACCESS.has(conversation.accessMode)
-        ? conversation.accessMode : "danger-full-access",
+      accessMode: executionPolicy(this.serverAdministrator, conversation).sandbox,
       workDir: Object.hasOwn(conversation, "workDir")
         ? (conversation.workDir || "") : this.codexWorkDir,
       contextUsage: this.quotaExhausted ? {
@@ -737,6 +776,7 @@ class ChatService {
   }
 
   effectiveWorkDir(conversation) {
+    if (!this.serverAdministrator) return this.userWorkspaceDir;
     if (!Object.hasOwn(conversation, "workDir")) return this.codexWorkDir;
     return conversation.workDir || "/home/ubuntu";
   }
@@ -932,6 +972,7 @@ class ChatService {
   handle(req, res, url, principal = {}) {
     if (!url.pathname.startsWith("/chat/")) return false;
     const deviceId = String(principal.deviceId || "legacy");
+    if (this.workspace.handle(req, res, url, principal)) return true;
 
     if (req.method === "GET" && url.pathname === "/chat/conversations") {
       const query = String(url.searchParams.get("q") || "").trim().slice(0, 200);
@@ -945,9 +986,10 @@ class ChatService {
           ...(query ? { matchingMessageId: conversation.matchingMessageId,
             searchSnippet: conversation.snippet } : {}) }))
         .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt));
-      const activeConversationId = this.active?.ownerDeviceId === deviceId
-        ? this.active.conversationId : null;
-      this.sendJson(res, 200, { activeConversationId, conversations,
+      const activeConversationIds = [...this.activeTurns.values()]
+        .filter((turn) => turn.ownerDeviceId === deviceId && !turn.finished).map((turn) => turn.conversationId);
+      this.sendJson(res, 200, { activeConversationId: activeConversationIds[0] || null,
+        activeConversationIds, maxConcurrentTasks: this.maxConcurrentTurns, conversations,
         currentDeviceLabel: this.deviceLabel(deviceId) });
       return true;
     }
@@ -1116,6 +1158,11 @@ class ChatService {
         this.sendJson(res, 404, { error: "对话不存在" });
         return true;
       }
+      if (this.activeFor(conversation.id) || conversation.messages.some((message) =>
+          message.role === "assistant" && ["queued", "running"].includes(message.status))) {
+        this.sendJson(res, 409, { error: "请先暂停任务或等待完成，再归档对话" });
+        return true;
+      }
       conversation.archived = true;
       conversation.updatedAt = new Date().toISOString();
       this.writeConversation(conversation);
@@ -1135,7 +1182,7 @@ class ChatService {
         this.sendJson(res, 404, { error: "对话不存在" });
         return;
       }
-      if (this.active?.conversationId === conversationId) {
+      if (this.activeFor(conversationId)) {
         this.sendJson(res, 409, { error: "当前轮次完成后才能创建分支" });
         return;
       }
@@ -1176,7 +1223,7 @@ class ChatService {
       this.sendJson(res, 404, { error: "对话不存在" });
       return;
     }
-    if (this.active?.conversationId === conversationId) {
+    if (this.activeFor(conversationId)) {
       this.sendJson(res, 409, { error: "当前轮次完成后才能压缩上下文" });
       return;
     }
@@ -1204,8 +1251,8 @@ class ChatService {
         this.sendJson(res, 404, { error: "对话不存在" });
         return;
       }
-      if (this.active) {
-        this.sendJson(res, 409, { error: "另一项任务正在执行，请稍后再审查" });
+      if (this.activeFor(conversationId) || this.activeTurns.size >= this.maxConcurrentTurns || this.workspace.conflict(conversation)) {
+        this.sendJson(res, 409, { error: "当前会话正在执行或并发任务已满，请稍后再审查" });
         return;
       }
       let target = { type: "uncommittedChanges" };
@@ -1227,6 +1274,7 @@ class ChatService {
       } else if (requestedType !== "uncommittedChanges") {
         this.sendJson(res, 400, { error: "不支持这个审查目标" }); return;
       }
+      this.activeTurns.set(conversationId, { conversationId, finished: false, mode: "starting-review" });
       void (async () => {
         try {
           const client = await this.resumeOnClient(conversation);
@@ -1240,7 +1288,7 @@ class ChatService {
           conversation.messages.push(assistant);
           conversation.updatedAt = now;
           this.writeConversation(conversation);
-          this.active = {
+          const active = {
             conversationId, messageId: assistant.id, userId: null, client,
             ownerDeviceId: deviceId,
             threadId: conversation.codexThreadId, turnId: null, turnStarted: false,
@@ -1248,16 +1296,24 @@ class ChatService {
             pendingApprovals: new Map(), codexHome: this.profileFor(conversation).codexHome,
             mode: "review",
           };
+          this.activeTurns.set(conversationId, active);
+          this.armActiveIdleTimeout(active);
           const result = await client.request("review/start", {
             threadId: conversation.codexThreadId, delivery: "inline", target,
           });
-          this.active.turnId = result.turn?.id || null;
-          assistant.codexTurnId = this.active.turnId;
-          this.writeConversation(conversation);
-          this.sendJson(res, 202, { conversation: this.publicConversation(conversation) });
+          if (this.activeFor(conversationId) !== active || active.finished) {
+            this.sendJson(res, 202, { conversation: this.publicConversation(this.readConversation(conversationId) || conversation) });
+            return;
+          }
+          active.turnId = result.turn?.id || active.turnId;
+          const latest = this.readConversation(conversationId) || conversation;
+          const latestAssistant = latest.messages.find((message) => message.id === assistant.id);
+          if (latestAssistant) latestAssistant.codexTurnId = active.turnId;
+          this.writeConversation(latest);
+          this.sendJson(res, 202, { conversation: this.publicConversation(latest) });
         } catch (reviewError) {
-          if (this.active?.conversationId === conversationId) {
-            this.failActive(reviewError.message || "无法启动代码审查");
+          if (this.activeFor(conversationId)) {
+            this.failActive(reviewError.message || "无法启动代码审查", conversationId);
           }
           if (!res.headersSent) this.sendJson(res, 500, { error: reviewError.message || "无法启动代码审查" });
         }
@@ -1276,6 +1332,10 @@ class ChatService {
         this.sendJson(res, 404, { error: "对话不存在" });
         return;
       }
+      const hasTitle = Object.hasOwn(body || {}, "title");
+      if (hasTitle && (typeof body.title !== "string" || !body.title.trim() || body.title.trim().length > 100 || /[\x00-\x1f]/.test(body.title))) {
+        this.sendJson(res, 400, { error: "对话名称须为 1–100 个字符" }); return;
+      }
       const hasPinned = Object.hasOwn(body || {}, "pinned");
       const hasProject = Object.hasOwn(body || {}, "project");
       if ((hasPinned && typeof body.pinned !== "boolean") ||
@@ -1283,9 +1343,10 @@ class ChatService {
         this.sendJson(res, 400, { error: "置顶或项目分组格式无效" });
         return;
       }
-      const metadataOnly = (hasPinned || hasProject) && Object.keys(body).every((key) =>
-        key === "pinned" || key === "project");
+      const metadataOnly = (hasPinned || hasProject || hasTitle) && Object.keys(body).every((key) =>
+        key === "pinned" || key === "project" || key === "title");
       if (metadataOnly) {
+        if (hasTitle) conversation.title = body.title.trim();
         if (hasPinned) conversation.pinned = body.pinned;
         if (hasProject) conversation.project = body.project.trim();
         conversation.updatedAt = new Date().toISOString();
@@ -1364,8 +1425,9 @@ class ChatService {
     });
   }
 
-  createMessage(req, res, conversationId, deviceId = "legacy") {
-    this.readJsonBody(req, 64 * 1024, (error, body) => {
+  createMessage(req, res, conversationId, deviceId = "legacy", parsedBody) {
+    const readBody = parsedBody === undefined ? this.readJsonBody : (_req, _limit, cb) => cb(null, parsedBody);
+    readBody(req, 64 * 1024, (error, body) => {
       if (error) {
         this.sendJson(res, 400, { error: error.message });
         return;
@@ -1427,10 +1489,11 @@ class ChatService {
         createdAt: now,
         status: "queued",
       };
-      const activeAssistant = this.active?.conversationId === conversation.id &&
-          this.active?.ownerDeviceId === deviceId
+      const active = this.activeFor(conversation.id);
+      const activeAssistant = active?.conversationId === conversation.id &&
+          active?.ownerDeviceId === deviceId
         ? conversation.messages.find((message) =>
-          message.id === this.active.messageId && message.role === "assistant")
+          message.id === active.messageId && message.role === "assistant")
         : null;
       if (activeAssistant) {
         userMessage.status = "running";
@@ -1444,7 +1507,7 @@ class ChatService {
         this.writeConversation(conversation);
         if (clientRequestId) this.store.save(conversation, { immediate: true });
         const inputs = this.buildInputs(conversation, userMessage, attachments, false);
-        const pending = !this.active.turnId || !this.active.turnStarted;
+        const pending = !active.turnId || !active.turnStarted;
         this.sendJson(res, 202, {
           conversation: this.publicConversation(conversation),
           messageId: userMessage.id,
@@ -1452,9 +1515,9 @@ class ChatService {
           pending,
         });
         if (pending) {
-          this.active.pendingSteers.push({ userMessageId: userMessage.id, inputs });
+          active.pendingSteers.push({ userMessageId: userMessage.id, inputs });
         } else {
-          this.sendSteer(userMessage.id, inputs);
+          this.sendSteer(userMessage.id, inputs, active);
         }
         return;
       }
@@ -1632,7 +1695,7 @@ class ChatService {
       this.sendJson(res, 404, { error: "对话不存在" });
       return;
     }
-    const current = this.active;
+    const current = this.activeFor(conversationId);
     if (!current || current.conversationId !== conversationId || current.finished) {
       this.sendJson(res, 409, { error: "当前对话没有正在执行的任务" });
       return;
@@ -1648,15 +1711,14 @@ class ChatService {
       conversation.updatedAt = new Date().toISOString();
       this.writeConversation(conversation);
     }
-    this.requestActiveInterrupt();
+    this.requestActiveInterrupt(current);
     this.sendJson(res, 202, {
       ok: true,
       conversation: this.publicConversation(conversation),
     });
   }
 
-  requestActiveInterrupt() {
-    const current = this.active;
+  requestActiveInterrupt(current = this.active) {
     if (!current?.interruptRequested || !current.threadId || !current.turnId ||
         current.interruptSent || current.finished) return;
     current.interruptSent = true;
@@ -1664,7 +1726,7 @@ class ChatService {
       threadId: current.threadId,
       turnId: current.turnId,
     }).catch((error) => {
-      if (!this.active || this.active.messageId !== current.messageId) return;
+      if (this.activeFor(current.conversationId) !== current) return;
       current.interruptSent = false;
       current.interruptRequested = false;
       const conversation = this.readConversation(current.conversationId);
@@ -1682,7 +1744,7 @@ class ChatService {
     const conversation = this.readConversation(conversationId);
     if (!conversation) return;
     const user = conversation.messages.find((message) => message.id === userMessageId);
-    const assistant = conversation.messages.find((message) => message.id === this.active?.messageId);
+    const assistant = conversation.messages.find((message) => message.id === this.activeFor(conversationId)?.messageId);
     const detail = String(error.message || error);
     if (user && /no active turn|not steerable|active turn/i.test(detail) &&
         !conversation.messages.some((message) => message.replyTo === userMessageId)) {
@@ -1716,8 +1778,7 @@ class ChatService {
     this.writeConversation(conversation);
   }
 
-  sendSteer(userMessageId, inputs) {
-    const current = this.active;
+  sendSteer(userMessageId, inputs, current = this.active) {
     if (!current?.turnId || !current.threadId || !current.turnStarted) return;
     current.client.request("turn/steer", {
       threadId: current.threadId,
@@ -1727,11 +1788,11 @@ class ChatService {
     }).catch((error) => this.failSteer(current.conversationId, userMessageId, error));
   }
 
-  flushPendingSteers() {
-    if (!this.active?.turnStarted || !this.active.turnId) return;
-    const pendingSteers = this.active.pendingSteers.splice(0);
+  flushPendingSteers(current = this.active) {
+    if (!current?.turnStarted || !current.turnId) return;
+    const pendingSteers = current.pendingSteers.splice(0);
     for (const pendingSteer of pendingSteers) {
-      this.sendSteer(pendingSteer.userMessageId, pendingSteer.inputs);
+      this.sendSteer(pendingSteer.userMessageId, pendingSteer.inputs, current);
     }
   }
 
@@ -1829,13 +1890,8 @@ class ChatService {
   }
 
   nextQueued() {
-    for (const metadata of this.store.listMetadata().reverse()) {
-      if (metadata.archived || !metadata.busy) continue;
-      const conversation = this.readConversation(metadata.id);
-      if (!conversation) continue;
-      const assistant = conversation.messages.find((message) =>
-        message.role === "assistant" && message.status === "queued");
-      if (!assistant) continue;
+    for (const { conversation, assistant } of this.workspace.queued()) {
+      if (this.workspace.conflict(conversation)) continue;
       const user = conversation.messages.find((message) => message.id === assistant.replyTo);
       if (user) return { conversation, user, assistant };
     }
@@ -2058,7 +2114,7 @@ class ChatService {
   }
 
   handleServerRequest(conversationId, messageId, request) {
-    const current = this.active;
+    const current = this.activeFor(conversationId);
     if (!current || current.conversationId !== conversationId ||
         current.messageId !== messageId) return;
     const supported = new Set([
@@ -2070,6 +2126,13 @@ class ChatService {
     ]);
     if (!supported.has(request.method)) {
       try { current.client.respond(request.id, { decision: "decline" }); } catch {}
+      return;
+    }
+    if (!this.serverAdministrator && [
+      "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval",
+    ].includes(request.method)) {
+      try { current.client.respond(request.id, request.method === "item/permissions/requestApproval"
+        ? { permissions: {}, scope: "turn" } : { decision: "decline" }); } catch {}
       return;
     }
     const conversation = this.readConversation(conversationId);
@@ -2110,6 +2173,7 @@ class ChatService {
     );
     conversation.updatedAt = new Date().toISOString();
     this.writeConversation(conversation);
+    this.workspace.event(conversation, "awaiting_confirmation");
   }
 
   resolveApproval(req, res, conversationId, approvalId, deviceId = "legacy") {
@@ -2118,7 +2182,7 @@ class ChatService {
         this.sendJson(res, 400, { error: error.message });
         return;
       }
-      const current = this.active;
+      const current = this.activeFor(conversationId);
       if (current?.conversationId === conversationId && current.ownerDeviceId &&
           current.ownerDeviceId !== deviceId) {
         this.sendJson(res, 409, { error: "这一轮由另一台设备发起，请在原设备上确认" });
@@ -2222,10 +2286,13 @@ class ChatService {
       `固定工作目录：${workDir}`,
       `Witt 附件目录：${this.dataDir}`,
       "记住用户在本线程中的上下文，回答使用简洁自然的中文。",
+      this.workspace.projectFor(conversation)?.instructions ? `用户为本项目提供的说明：\n${this.workspace.projectFor(conversation).instructions}` : "",
       "只处理用户明确要求的任务，保留现有数据和未提交修改。",
       "禁止展示、记录或回传凭据原文。用户明确授权时，允许认证程序使用指定的本地凭据文件完成认证，不将凭据或生成的 Token 输出到聊天及日志",
       "访问范围由本对话的权限设置决定。删除数据、对外发送消息等不可逆或对外动作仍需先向用户说明。",
-      "Witt 已经获得本机通用 Root 权限；需要完成用户要求时，可以直接使用 `sudo -n`、systemctl 和系统目录。",
+      this.serverAdministrator
+        ? "Witt 已经获得本机通用 Root 权限；需要完成用户要求时，可以直接使用 `sudo -n`、systemctl 和系统目录。"
+        : "这是普通账号的受限工作区。禁止操作服务器电源、重启服务、修改系统设置或申请提权；只在当前用户工作区与文件目录内完成任务。模型和额度权限不代表服务器管理员权限。",
       "修改服务代码后先完成语法或构建校验，再重启对应服务并检查健康状态。",
       "删除大量数据、覆盖数据库、修改防火墙或其他难以恢复的操作，执行前仍需向用户明确说明目标和影响。",
       "兼容备用通道：修改 drop-vault 后端但不适合直接重启时，仍可写入 /data/drop-vault/restart-request 请求延迟校验重启。",
@@ -2282,7 +2349,7 @@ class ChatService {
   }
 
   async runNext() {
-    if (this.active) return;
+    if (this.activeTurns.size >= this.maxConcurrentTurns) return;
     const queued = this.nextQueued();
     if (!queued) return;
     const { conversation, user, assistant } = queued;
@@ -2322,12 +2389,12 @@ class ChatService {
     const model = this.modelAllowed(conversation.model, this.profileFor(conversation).id)
       ? conversation.model : this.defaultModel;
     const reasoning = ALLOWED_REASONING.has(conversation.reasoning) ? conversation.reasoning : "medium";
-    const accessMode = ALLOWED_ACCESS.has(conversation.accessMode)
-      ? conversation.accessMode : "danger-full-access";
+    const policy = executionPolicy(this.serverAdministrator, conversation);
+    const accessMode = policy.sandbox;
     const workDir = this.effectiveWorkDir(conversation);
     const profile = this.profileFor(conversation);
     const client = this.clientFor(profile, model);
-    this.active = {
+    const active = {
       conversationId: conversation.id,
       messageId: assistant.id,
       userId: user.id,
@@ -2343,15 +2410,17 @@ class ChatService {
       previewMessageBuffers: new Map(),
       codexHome: profile.codexHome,
     };
-    this.armActiveIdleTimeout(this.active);
+    this.activeTurns.set(conversation.id, active);
+    this.armActiveIdleTimeout(active);
+    setImmediate(() => this.runNext());
     try {
       await client.start();
-      if (!this.active || this.active.messageId !== assistant.id) return;
+      if (this.activeFor(conversation.id) !== active) return;
       const threadOptions = {
         cwd: workDir,
         model,
         sandbox: accessMode,
-        approvalPolicy: "on-request",
+        approvalPolicy: policy.approvalPolicy,
         developerInstructions: this.buildDeveloperInstructions(conversation),
       };
       const threadResult = conversation.codexThreadId
@@ -2361,10 +2430,11 @@ class ChatService {
         : await client.request("thread/start", {
             ...threadOptions,
           });
+      if (this.activeFor(conversation.id) !== active || active.finished) return;
       const latestConversation = this.readConversation(conversation.id) || conversation;
       latestConversation.codexThreadId = threadResult.thread.id;
-      this.active.threadId = threadResult.thread.id;
-      this.active.generatedImageFiles =
+      active.threadId = threadResult.thread.id;
+      active.generatedImageFiles =
         this.generatedImageFiles(threadResult.thread.id, profile.codexHome);
       this.writeConversation(latestConversation);
       const turnResult = await client.request("turn/start", {
@@ -2373,14 +2443,15 @@ class ChatService {
         model,
         effort: reasoning,
         cwd: workDir,
-        approvalPolicy: "on-request",
+        approvalPolicy: policy.approvalPolicy,
       });
+      if (this.activeFor(conversation.id) !== active || active.finished) return;
       if (latestConversation.replayHistoryOnNextTurn) {
         delete latestConversation.replayHistoryOnNextTurn;
         this.writeConversation(latestConversation);
       }
-      this.active.turnId = turnResult.turn.id;
-      this.requestActiveInterrupt();
+      active.turnId = turnResult.turn.id;
+      this.requestActiveInterrupt(active);
       const runningConversation = this.readConversation(conversation.id) || latestConversation;
       const runningAssistant = runningConversation.messages.find(
         (message) => message.id === assistant.id);
@@ -2388,18 +2459,19 @@ class ChatService {
         this.addActivity(runningAssistant, "thinking", "正在理解并处理你的要求", "running");
       }
       this.writeConversation(runningConversation);
-      this.flushPendingSteers();
+      this.flushPendingSteers(active);
     } catch (error) {
-      if (this.active?.messageId === assistant.id) {
-        this.failActive(`无法启动 Codex：${error.message}`);
+      if (this.activeFor(conversation.id) === active) {
+        this.failActive(`无法启动 Codex：${error.message}`, conversation.id);
       }
     }
   }
 
   handleNotification(conversationId, messageId, method, params) {
-    if (!this.active || this.active.conversationId !== conversationId ||
-        this.active.messageId !== messageId) return;
-    this.armActiveIdleTimeout(this.active);
+    const active = this.activeFor(conversationId);
+    if (!active || active.conversationId !== conversationId ||
+        active.messageId !== messageId) return;
+    this.armActiveIdleTimeout(active);
     const conversation = this.readConversation(conversationId);
     if (!conversation) return;
     const assistant = conversation.messages.find((message) => message.id === messageId);
@@ -2420,19 +2492,19 @@ class ChatService {
         updatedAt: new Date().toISOString(),
       } : null;
     } else if (method === "turn/started") {
-      this.active.turnId = params.turn?.id || this.active.turnId;
-      assistant.codexTurnId = this.active.turnId;
-      this.active.turnStarted = true;
+      active.turnId = params.turn?.id || active.turnId;
+      assistant.codexTurnId = active.turnId;
+      active.turnStarted = true;
       this.addActivity(assistant, "thinking", "正在理解并处理你的要求", "running");
-      this.requestActiveInterrupt();
-      this.flushPendingSteers();
+      this.requestActiveInterrupt(active);
+      this.flushPendingSteers(active);
     } else if (method === "turn/plan/updated") {
       const steps = (params.plan || []).map((step) => ({
         step: String(step.step || ""),
         status: String(step.status || "pending"),
       })).filter((step) => step.step);
       const completed = steps.filter((step) => step.status === "completed").length;
-      this.upsertStream(assistant, `plan-${params.turnId || this.active.turnId}`, {
+      this.upsertStream(assistant, `plan-${params.turnId || active.turnId}`, {
         kind: "plan",
         label: steps.length ? `计划进度 ${completed}/${steps.length}` : "正在制定计划",
         status: completed === steps.length && steps.length ? "completed" : "running",
@@ -2451,8 +2523,8 @@ class ChatService {
         phase: "unknown",
         status: "running",
       });
-      const buffers = this.active.previewMessageBuffers || new Map();
-      this.active.previewMessageBuffers = buffers;
+      const buffers = active.previewMessageBuffers || new Map();
+      active.previewMessageBuffers = buffers;
       const raw = `${buffers.get(params.itemId) || ""}${String(params.delta || "")}`;
       buffers.set(params.itemId, raw);
       entry.text = this.parsePreviewMarkers(raw).text;
@@ -2472,8 +2544,8 @@ class ChatService {
             output: String(item.aggregatedOutput || "").slice(-64 * 1024),
           },
         });
-        if (method === "item/completed" && this.active.previewSourcePath) {
-          this.publishPreviewSnapshot(assistant, this.active.previewSourcePath);
+        if (method === "item/completed" && active.previewSourcePath) {
+          this.publishPreviewSnapshot(assistant, active.previewSourcePath);
         }
       } else if (item.type === "fileChange") {
         const count = Array.isArray(item.changes) ? item.changes.length : 0;
@@ -2492,8 +2564,8 @@ class ChatService {
             })),
           },
         });
-        if (method === "item/completed" && this.active.previewSourcePath) {
-          this.publishPreviewSnapshot(assistant, this.active.previewSourcePath);
+        if (method === "item/completed" && active.previewSourcePath) {
+          this.publishPreviewSnapshot(assistant, active.previewSourcePath);
         }
       } else if (item.type === "mcpToolCall") {
         const label = item.tool ? `调用工具：${item.tool}` : "正在调用已连接的工具";
@@ -2554,7 +2626,7 @@ class ChatService {
         this.upsertStream(assistant, item.id, {
           kind: "message", phase: "final_answer", text: review, status,
         });
-        if (review) this.active.finalResponse = review;
+        if (review) active.finalResponse = review;
       } else if (item.type === "webSearch") {
         const label = item.query ? `搜索：${String(item.query).slice(0, 100)}` : "正在查找最新资料";
         this.addActivity(assistant, "web", label, status);
@@ -2600,10 +2672,10 @@ class ChatService {
           for (const previewPath of parsed.paths) {
             this.publishPreviewSnapshot(assistant, previewPath);
           }
-          this.active.previewMessageBuffers?.delete(item.id);
+          active.previewMessageBuffers?.delete(item.id);
         }
         if (item.phase === "final_answer" && entry.text) {
-          this.active.finalResponse = entry.text;
+          active.finalResponse = entry.text;
         }
       }
     } else if (method === "turn/completed") {
@@ -2611,11 +2683,11 @@ class ChatService {
         (entry) => entry.kind === "message" && String(entry.text || "").trim());
       const finalEntry = messageEntries.filter((entry) => entry.phase === "final_answer").at(-1)
         || messageEntries.at(-1);
-      const response = String(finalEntry?.text || this.active.finalResponse || "");
+      const response = String(finalEntry?.text || active.finalResponse || "");
       const interrupted = params.turn?.status === "interrupted";
       const success = params.turn?.status === "completed" && Boolean(response.trim());
       const detail = params.turn?.error?.message || "Codex 未返回有效结果";
-      this.finishActive(success, response, interrupted ? "已暂停" : detail, interrupted);
+      this.finishActive(success, response, interrupted ? "已暂停" : detail, interrupted, conversationId);
       return;
     } else {
       return;
@@ -2624,46 +2696,47 @@ class ChatService {
     this.writeConversation(conversation);
   }
 
-  failActive(error) {
-    this.finishActive(false, "", error);
+  failActive(error, conversationId = this.active?.conversationId) {
+    this.finishActive(false, "", error, false, conversationId);
   }
 
   armActiveIdleTimeout(current = this.active) {
     if (!current || current.finished) return;
     clearTimeout(current.timeout);
     current.timeout = setTimeout(() => {
-      if (this.active !== current || current.finished) return;
+      if (this.activeFor(current.conversationId) !== current || current.finished) return;
       if (current.pendingApprovals?.size) {
         this.armActiveIdleTimeout(current);
         return;
       }
       current.interruptRequested = true;
-      this.requestActiveInterrupt();
+      this.requestActiveInterrupt(current);
       current.timeoutGrace = setTimeout(() => {
-        if (this.active !== current || current.finished) return;
-        current.client.close();
-        this.failActive("执行长时间没有进展，系统已自动结束本轮。请重试任务。");
+        if (this.activeFor(current.conversationId) !== current || current.finished) return;
+        if (![...this.activeTurns.values()].some((other) => other !== current && other.client === current.client)) current.client.close();
+        this.failActive("执行长时间没有进展，系统已自动结束本轮。请重试任务。", current.conversationId);
       }, 30_000);
       current.timeoutGrace.unref();
     }, this.turnIdleTimeoutMs);
     current.timeout.unref();
   }
 
-  finishActive(success, response, error, interrupted = false) {
-    const current = this.active;
+  finishActive(success, response, error, interrupted = false, conversationId = this.active?.conversationId) {
+    const current = this.activeFor(conversationId);
     if (!current || current.finished) return;
     current.finished = true;
     clearTimeout(current.timeout);
     clearTimeout(current.timeoutGrace);
     const conversation = this.readConversation(current.conversationId);
     if (!conversation) {
-      this.active = null;
+      this.activeTurns.delete(conversationId);
+      setImmediate(() => this.runNext());
       return;
     }
     const user = conversation.messages.find((message) => message.id === current.userId);
     const assistant = conversation.messages.find((message) => message.id === current.messageId);
     if (!assistant) {
-      this.active = null;
+      this.activeTurns.delete(conversationId);
       setImmediate(() => this.runNext());
       return;
     }
@@ -2678,6 +2751,7 @@ class ChatService {
   }
 
   finishRun(conversation, user, assistant, success, response, error, interrupted = false) {
+    const active = this.activeFor(conversation.id);
     if (user) user.status = success || interrupted ? "completed" : "failed";
     const assistantIndex = conversation.messages.findIndex((message) => message.id === assistant.id);
     for (let index = 0; index < conversation.messages.length; index += 1) {
@@ -2718,9 +2792,9 @@ class ChatService {
         this.storeImagePath(artifact.sourcePath, "delivery", artifact.id),
       );
     }
-    if (success && this.active?.threadId === conversation.codexThreadId) {
-      this.captureNewGeneratedImages(assistant, this.active.threadId,
-        this.active.generatedImageFiles, this.active.codexHome).forEach((image, index) => {
+    if (success && active?.threadId === conversation.codexThreadId) {
+      this.captureNewGeneratedImages(assistant, active.threadId,
+        active.generatedImageFiles, active.codexHome).forEach((image, index) => {
         this.upsertStream(assistant, `generated-image-${image.id}-${index}`, {
           kind: "image", imageId: image.id, name: image.name,
           mimeType: image.mimeType, status: "completed",
@@ -2771,13 +2845,15 @@ class ChatService {
       interrupted || success ? "completed" : "failed");
     conversation.updatedAt = assistant.completedAt;
     this.writeConversation(conversation);
-    this.active = null;
+    this.activeTurns.delete(conversation.id);
+    this.workspace.event(conversation, interrupted ? "interrupted" : success ? "completed" : "failed");
     setImmediate(() => this.runNext());
   }
 
   extractDeliveries(response) {
     const lines = String(response || "").split("\n");
     const artifacts = [];
+    const seenPaths = new Set();
     const visible = [];
     for (const line of lines) {
       const match = line.trim().match(/^\[\[deliver:(\/.+)\]\]$/);
@@ -2786,7 +2862,18 @@ class ChatService {
         continue;
       }
       const artifact = this.deliveryArtifact(match[1].trim());
-      if (artifact && !artifacts.some((item) => item.sourcePath === artifact.sourcePath)) {
+      if (artifact && !seenPaths.has(artifact.sourcePath)) {
+        seenPaths.add(artifact.sourcePath);
+        // Preserve delivered bytes when a later task overwrites a file with the same name.
+        const directory=path.join(this.dataDir,'.witt-file-versions',artifact.id);
+        const snapshot=path.join(directory,artifact.name);
+        try {
+          fs.mkdirSync(directory,{recursive:true,mode:0o700});
+          fs.copyFileSync(artifact.sourcePath,snapshot,fs.constants.COPYFILE_FICLONE);
+          fs.chmodSync(snapshot,0o400);
+          artifact.sourcePath=snapshot;
+          artifact.versioned=true;
+        } catch { artifact.versioned=false; }
         artifacts.push(artifact);
       }
     }

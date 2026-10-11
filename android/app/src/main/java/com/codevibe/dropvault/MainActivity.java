@@ -351,10 +351,11 @@ public class MainActivity extends Activity {
                         .put("version", BuildConfig.VERSION_NAME)
                         .put("cacheScope", cacheScope())
                         .put("supportsSse", true)
-                        .put("bundledLumoraMedia", true);
+                        .put("openAccess", BuildConfig.OPEN_ACCESS)
+                        .put("taskNotifications", true).put("workspaceOperations", true).put("workspaceFeatures", true).put("bundledLumoraMedia", true).put("nativeLaunch", true);
                     callJs("window.DropVault&&window.DropVault.nativeReady(" + info + ")");
+                    openNotificationConversation();
                 } catch (Exception ignored) {}
-                view.postDelayed(MainActivity.this::dismissLaunchSurface, 650L);
             }
 
             @Override
@@ -364,7 +365,8 @@ public class MainActivity extends Activity {
                 String retryUrl = usingStandby ? BuildConfig.FALLBACK_WEB_URL : BuildConfig.WEB_URL;
                 String html = "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>" +
                     "<style>body{min-height:100vh;margin:0;display:grid;place-content:center;text-align:center;font-family:sans-serif;background:#f5f8ff;color:#263952}button{margin:18px auto;padding:12px 20px;border:0;border-radius:12px;color:white;background:#566fe8}</style>" +
-                    "<h2>暂时无法连接 Witt</h2><p>请检查网络后重试</p><button onclick='location.href=\"" + retryUrl + "\"'>重新连接</button>";
+                    "<h2>暂时无法连接 Witt</h2><p>请检查网络后重试</p><button onclick='location.href=\"" + retryUrl + "\"'>重新连接</button>" +
+                    "<script>window.WittNative?.postMessage(JSON.stringify({method:'contentReady',args:['light']}));</script>";
                 view.loadDataWithBaseURL(retryUrl, html, "text/html", "UTF-8", null);
             }
 
@@ -454,6 +456,9 @@ public class MainActivity extends Activity {
                 case "requestHistory": webBridge.requestHistory(); break;
                 case "requestTasks": webBridge.requestTasks(); break;
                 case "submitTask": webBridge.submitTask(args.optString(0)); break;
+                case "workspaceRequest": MainActivity.this.workspaceRequest(args.optString(0),args.optString(1),args.optString(2),args.optString(3)); break;
+                case "taskNotificationSettings": MainActivity.this.taskNotificationSettings(args.optString(0)); break;
+                case "watchTasks": TaskNotificationMonitor.snapshot(MainActivity.this,args.optString(0),activeApiUrl()); break;
                 case "requestConversations": webBridge.requestConversations(); break;
                 case "requestCapabilities": webBridge.requestCapabilities(); break;
                 case "requestConversation": webBridge.requestConversation(args.optString(0)); break;
@@ -791,10 +796,46 @@ public class MainActivity extends Activity {
         return connection;
     }
 
+    private synchronized void ensureOpenSession() throws Exception {
+        if (!apiToken().isEmpty()) return;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            HttpURLConnection connection = (HttpURLConnection) new URL(activeApiUrl() + "auth/open-enroll").openConnection();
+            try {
+                connection.setRequestMethod("POST");
+                connection.setDoOutput(true);
+                connection.setConnectTimeout(15_000);
+                connection.setReadTimeout(60_000);
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                byte[] bytes = new JSONObject().put("deviceId", deviceId())
+                    .put("deviceName", Build.MANUFACTURER + " " + Build.MODEL)
+                    .toString().getBytes(StandardCharsets.UTF_8);
+                connection.setFixedLengthStreamingMode(bytes.length);
+                try (OutputStream output = connection.getOutputStream()) { output.write(bytes); }
+                int status = connection.getResponseCode();
+                String body = readBody(status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream());
+                if (status == 409 && attempt == 0) {
+                    // A interrupted first login can leave a registered UUID without its local token.
+                    authPreferences().edit().putString("device_id", UUID.randomUUID().toString()).commit();
+                    continue;
+                }
+                if (status != 201) throw new IllegalStateException("自动登录失败");
+                JSONObject result = new JSONObject(body);
+                String token = result.optString("token", "");
+                if (token.isEmpty() || result.getJSONObject("principal").optBoolean("admin"))
+                    throw new IllegalStateException("设备凭据无效");
+                if (!authPreferences().edit().putString("device_token_v2", encryptToken(token))
+                        .remove("device_token").commit()) throw new IllegalStateException("设备凭据未能保存");
+                return;
+            } finally { connection.disconnect(); }
+        }
+        throw new IllegalStateException("自动登录失败");
+    }
+
     private void requestAuthStatus() {
         network.execute(() -> {
             HttpURLConnection connection = null;
             try {
+                if (BuildConfig.OPEN_ACCESS && apiToken().isEmpty()) ensureOpenSession();
                 connection = openApiConnection("auth/status", "GET");
                 int status = connection.getResponseCode();
                 String body = readBody(status >= 200 && status < 300
@@ -811,6 +852,7 @@ public class MainActivity extends Activity {
     }
 
     private void activateInvite(String inviteCode) {
+        if (BuildConfig.OPEN_ACCESS) { requestAuthStatus(); return; }
         network.execute(() -> {
             HttpURLConnection connection = null;
             try {
@@ -866,6 +908,29 @@ public class MainActivity extends Activity {
                 callJs("window.DropVault.onAdminError(" + JSONObject.quote("管理请求失败，请重试") + ")");
             } finally { if (connection != null) connection.disconnect(); }
         });
+    }
+
+    private void workspaceRequest(String endpoint,String method,String json,String requestId) {
+        if(requestId==null||!requestId.matches("[a-zA-Z0-9_-]{8,100}"))return;
+        String clean=endpoint==null?"":endpoint.split("\\?",2)[0];
+        boolean allowed=clean.matches("chat/(projects|schedules)(/[a-f0-9-]{36}(/(conversations|run))?)?")||clean.matches("chat/conversations/[a-f0-9-]{36}/(cancel|retry|artifact-content)")||clean.equals("chat/notifications");
+        if(!allowed||endpoint.contains("..")||!("GET".equals(method)||"POST".equals(method)||"PATCH".equals(method))){callJs("window.WittFeatures?.onResponse("+JSONObject.quote(requestId)+",false,'{\"error\":\"请求不可用\"}')");return;}
+        network.execute(()->{HttpURLConnection connection=null;try{
+            connection=openApiConnection(endpoint,method);
+            if(!"GET".equals(method)){byte[] bytes=(json==null||json.isEmpty()?"{}":json).getBytes(StandardCharsets.UTF_8);if(bytes.length>32768)throw new java.io.IOException("Payload too large");connection.setDoOutput(true);connection.setRequestProperty("Content-Type","application/json; charset=utf-8");connection.setFixedLengthStreamingMode(bytes.length);try(OutputStream out=connection.getOutputStream()){out.write(bytes);}}
+            int status=connection.getResponseCode();String body=readBody(status>=200&&status<300?connection.getInputStream():connection.getErrorStream());callJs("window.WittFeatures?.onResponse("+JSONObject.quote(requestId)+","+(status>=200&&status<300)+","+JSONObject.quote(body)+")");
+        }catch(Exception ignored){callJs("window.WittFeatures?.onResponse("+JSONObject.quote(requestId)+",false,'{\"error\":\"请求失败，请重试\"}')");}finally{if(connection!=null)connection.disconnect();}});
+    }
+    private void taskNotificationSettings(String json){runOnUiThread(()->{try{
+        JSONObject value=new JSONObject(json==null||json.isEmpty()?"{}":json);
+        boolean permitted=Build.VERSION.SDK_INT<33||checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;
+        if(value.has("enabled")){boolean enable=value.optBoolean("enabled");if(enable&&!permitted)requestNotificationPermission();TaskNotificationMonitor.configure(this,enable&&permitted,activeApiUrl());}
+        JSONObject state=new JSONObject().put("enabled",TaskNotificationMonitor.enabled(this)).put("permission",permitted).put("supported",true);
+        callJs("window.WittFeatures?.onNotificationSettings("+state+")");
+    }catch(Exception ignored){}});}
+    private void openNotificationConversation(){
+        String id=getIntent().getStringExtra("open_conversation");if(id==null||!id.matches("[a-f0-9-]{36}"))return;
+        getIntent().removeExtra("open_conversation");if(webView!=null)webView.postDelayed(()->callJs("window.WittFeatures?.openConversation("+JSONObject.quote(id)+")"),1000L);
     }
 
     private void requestConversations() {
@@ -1416,6 +1481,7 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        openNotificationConversation();
         if (intent.getBooleanExtra("open_update", false)) {
             UpdateManager.check(this, true);
         }
@@ -1448,10 +1514,13 @@ public class MainActivity extends Activity {
 
     public final class WebBridge {
         @JavascriptInterface public void launchSurfaceReady() {
-            runOnUiThread(MainActivity.this::dismissLaunchSurface);
+            // The native initialization surface stays until usable content is ready.
         }
         @JavascriptInterface public void contentReady(String themeMode) {
-            runOnUiThread(() -> MainActivity.this.applySystemBars(themeMode));
+            runOnUiThread(() -> {
+                MainActivity.this.applySystemBars(themeMode);
+                MainActivity.this.dismissLaunchSurface();
+            });
         }
         @JavascriptInterface public void requestAuthStatus() { MainActivity.this.requestAuthStatus(); }
         @JavascriptInterface public void activateInvite(String code) { MainActivity.this.activateInvite(code); }
@@ -1480,6 +1549,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void requestXuanyuCodexLoginStatus() { MainActivity.this.requestAdmin("codex/accounts/xuanyu/login/status", "GET", null, "window.DropVault.onCodexLoginStatus"); }
         @JavascriptInterface public void cancelXuanyuCodexLogin() { MainActivity.this.requestAdmin("codex/accounts/xuanyu/login/cancel", "POST", "{}", "window.DropVault.onCodexLoginCancelled"); }
         @JavascriptInterface public void createInvite(String label, int maxDevices) {
+            if (BuildConfig.OPEN_ACCESS) { callJs("window.DropVault.onAdminError('开放版不提供激活码分发')"); return; }
             try { MainActivity.this.requestAdmin("admin/invites", "POST", new JSONObject().put("label", label).put("maxDevices", maxDevices).toString(), "window.DropVault.onInviteCreated"); }
             catch (Exception error) { callJs("window.DropVault.onAdminError('无法创建邀请码')"); }
         }

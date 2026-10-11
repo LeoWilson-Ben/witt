@@ -6,17 +6,13 @@
   <meta name="theme-color" id="themeColor" content="#ffffff">
   <script>
     (() => {
-      const choices = ["system", "light", "colorful", "dark"];
-      let stored = localStorage.getItem("wit_theme");
-      if (!localStorage.getItem("wit_claude_style_v1")) {
-        stored = choices.includes(stored) ? stored : "system";
-        localStorage.setItem("wit_theme", stored);
-        localStorage.setItem("wit_claude_style_v1", "1");
-      }
-      const preference = choices.includes(stored) ? stored : "system";
-      const mode = preference === "system"
-        ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-        : preference;
+      const stored = localStorage.getItem("wit_theme");
+      const mode = stored === "dark" ? "dark"
+        : stored === "light" || stored === "colorful" ? "light"
+        : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      const preference = mode;
+      localStorage.setItem("wit_theme", mode);
+      localStorage.setItem("wit_claude_style_v1", "1");
       document.documentElement.dataset.theme = mode;
       document.documentElement.dataset.themeMode = mode;
       document.documentElement.dataset.themePreference = preference;
@@ -24,48 +20,7 @@
   </script>
   <title>Witt · 私人服务器助手</title>
   <link rel="icon" href="/vault/icon.svg">
-  <link rel="stylesheet" href="/vault/styles.css?v=2.2.4-boot1">
-  <link rel="stylesheet" href="/vault/quota.css?v=2.1.12-quota1">
-  <link rel="stylesheet" href="/vault/quota-fix.css?v=2.1.12-quota1">
-  <link rel="stylesheet" href="/vault/reset-glow.css?v=2.1.12-quota1">
-  <link rel="stylesheet" href="/vault/composer-aura.css?v=2.1.12-composer1">
-  <link rel="stylesheet" href="/vault/composer-refine.css?v=2.1.12-composer2">
-  <link rel="stylesheet" href="/vault/composer-transparency.css?v=2.1.12-composer3">
-  <link rel="stylesheet" href="/vault/composer-overlay.css?v=2.1.12-composer4">
-  <link rel="stylesheet" href="/vault/composer-spectra.css?v=2.2.0-composer5">
-  <link rel="stylesheet" href="/vault/quota-layout.css?v=2.1.12-quota2">
-  <link rel="stylesheet" href="/vault/quota-header-restore.css?v=2.1.12-quota3">
-  <link rel="stylesheet" href="/vault/quota-confirm.css?v=2.1.12-quota4">
-  <link rel="stylesheet" href="/vault/quota-compact.css?v=2.1.12-quota5">
-  <link rel="stylesheet" href="/vault/drawer-motion.css?v=2.1.12-drawer1">
-  <link rel="stylesheet" href="/vault/quota-profile-motion.css?v=3.2.2-pro-quota2">
-  <link rel="stylesheet" href="/vault/usage-insight.css?v=2.1.12-usage1">
-  <link rel="stylesheet" href="/vault/quota-spacing.css?v=2.1.12-quota7">
-  <link rel="stylesheet" href="/vault/usage-ring-fit.css?v=2.1.12-usage2">
-  <link rel="stylesheet" href="/vault/auth-gate.css?v=2.2.7-admin-hide1">
-  <link rel="stylesheet" href="/vault/approval-card.css?v=2.3.0-user-input1">
-  <link rel="stylesheet" href="/vault/conversation-type.css?v=2.2.0-type1">
-  <link rel="stylesheet" href="/vault/night-theme.css?v=2.2.13-night2">
-  <link rel="stylesheet" href="/vault/message-collapse.css?v=2.2.0-collapse1">
-  <link rel="stylesheet" href="/vault/chat-overflow-fix.css?v=2.2.0-overflow1">
-  <link rel="stylesheet" href="/vault/vendor/katex/katex.min.css?v=0.16.22">
-  <link rel="stylesheet" href="/vault/formula-code.css?v=2.2.10-table1">
-  <link rel="stylesheet" href="/vault/codex-accounts.css?v=2.2.9-layout2">
-  <link rel="stylesheet" href="/vault/performance.css?v=2.2.8-power1">
-  <link rel="stylesheet" href="/vault/landscape.css?v=2.2.5-landscape3">
-  <link rel="stylesheet" href="/vault/lumora-global.css?v=2.2.6-perf1">
-  <link rel="stylesheet" href="/vault/codex-model-picker.css?v=2.2.9-liquid1">
-  <link rel="stylesheet" href="/vault/chat-links.css?v=2.2.9-links1">
-  <link rel="stylesheet" href="/vault/completed-turn.css?v=2.2.10-result1">
-  <link rel="stylesheet" href="/vault/drawer-layout.css?v=2.2.11-drawer2">
-  <link rel="stylesheet" href="/vault/witt-next.css?v=3.2.4-weekly">
-  <link rel="stylesheet" href="/vault/artifact-preview.css?v=3.0.0">
-  <link rel="stylesheet" href="/vault/claude-app.css?v=1.0.0">
-  <link rel="stylesheet" href="/vault/vendor/xterm/xterm.css?v=6.0.0">
-  <link rel="stylesheet" href="/vault/local-terminal.css?v=2.2.16-terminal-workspace4">
-  <link rel="stylesheet" href="/vault/night-contrast.css?v=2.2.13-nightfix1">
-  <link rel="stylesheet" href="/vault/approval-dock.css?v=3.2.1-swipefix1">
-  <link rel="stylesheet" href="/vault/witt-white.css?v=3.0.18-modelrestore1">
+  <link rel="stylesheet" href="/vault/witt-base-20261008.css?v=1">
   <style id="workspace-critical-style">
 /* Semantic workspace layer. Legacy terminal/artifact/theme styles stay intact. */
 :root { --ws-ink: #243839; --ws-muted: #718181; --ws-line: rgba(42,68,68,.12); --ws-surface: rgba(255,255,255,.94); --ws-accent: #227b70; --ws-radius: 16px; }
@@ -123,19 +78,34 @@
 }
 @media (prefers-reduced-motion: reduce) { .task-status-strip, .workspace-overview, .history-load { animation: none; transition: none; } }
   </style>
-  <link rel="stylesheet" href="/vault/browser-chatgpt.css?v=1.0.0">
-  <link rel="stylesheet" href="/vault/process-lines.css?v=20261007-2">
-  <link rel="stylesheet" href="/vault/composer-quiet.css?v=20261007-7">
+  <link rel="stylesheet" href="/vault/witt-interface-20261008.css?v=4-usage-restored">
 </head>
 <body>
   <div class="app-atmosphere" aria-hidden="true"><i></i><i></i><i></i></div>
   <div class="boot-screen" id="bootScreen" aria-label="Witt 正在启动">
-    <div class="boot-wordmark">Witt<span>.</span></div>
-    <p>PRIVATE SERVER CODEX</p>
-    <div class="boot-track"><i></i></div>
-    <small id="bootLabel">正在连接你的服务器</small>
+    <div class="boot-stage"><div class="halo" aria-hidden="true"></div><svg viewBox="0 0 280 150" aria-hidden="true">
+<defs>
+<path id="wittLaunch-w" pathLength="1" d="M24 30 L49 112 Q52 124 57 112 L80 54 L103 112 Q108 124 111 112 L136 30"/>
+<path id="wittLaunch-i" pathLength="1" d="M158 40 L158 40.2 M158 66 L158 109 Q158 124 169 114"/>
+<path id="wittLaunch-t1" pathLength="1" d="M198 36 L198 107 Q198 127 213 114 M184 67 L212 67"/>
+<path id="wittLaunch-t2" pathLength="1" d="M244 36 L244 107 Q244 127 259 114 M230 67 L258 67"/>
+<linearGradient id="wittLaunch-ink" x1="0" y1="0" x2=".85" y2="1"><stop stop-color="var(--ink)"/><stop offset=".46" stop-color="var(--edge)"/><stop offset="1" stop-color="var(--ink)"/></linearGradient>
+<linearGradient id="wittLaunch-sheen" gradientUnits="userSpaceOnUse" x1="-65" y1="0" x2="65" y2="20"><stop stop-color="var(--shine)" stop-opacity="0"/><stop offset=".5" stop-color="var(--shine)"/><stop offset="1" stop-color="var(--shine)" stop-opacity="0"/></linearGradient>
+<filter id="wittLaunch-soft" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3"/></filter>
+<filter id="wittLaunch-shadow" x="-50%" y="-300%" width="200%" height="700%"><feGaussianBlur stdDeviation="6"/></filter>
+</defs>
+<ellipse class="shadow" cx="140" cy="143" rx="85" ry="3"/>
+<g id="wittLaunch-word">
+<g class="glow"><use class="letter light" href="#wittLaunch-w"/><use class="letter light" href="#wittLaunch-i"/><use class="letter light" href="#wittLaunch-t1"/><use class="letter light" href="#wittLaunch-t2"/></g>
+<g class="strokes"><use class="letter ink" href="#wittLaunch-w"/><use class="letter ink" href="#wittLaunch-i"/><use class="letter ink" href="#wittLaunch-t1"/><use class="letter ink" href="#wittLaunch-t2"/></g>
+<g class="finish"><use href="#wittLaunch-w"/><use href="#wittLaunch-i"/><use href="#wittLaunch-t1"/><use href="#wittLaunch-t2"/></g>
+<g id="wittLaunch-pen" opacity="0"><circle class="nib" r="8"/><circle class="nib-core" r="2.4"/></g>
+<g id="wittLaunch-sparks"></g>
+</g>
+</svg></div>
   </div>
-  <script>window.WittNative?.postMessage('{"method":"launchSurfaceReady","args":[]}');</script>
+  <script src="/vault/boot-w.js?v=20261007-3"></script>
+  <script>window.wittBootStartedAt = performance.now(); window.WittNative?.postMessage('{"method":"launchSurfaceReady","args":[]}');</script>
   <section class="auth-gate" id="authGate" aria-hidden="true" aria-labelledby="authGateTitle">
     <div class="auth-gate-halo" aria-hidden="true"></div>
     <div class="auth-gate-card">
@@ -305,29 +275,43 @@
     <div class="drawer-backdrop" id="drawerBackdrop"></div>
     <div class="drawer-panel">
       <div class="drawer-head">
-        <div><span class="eyebrow">CONVERSATIONS</span><h2>对话</h2></div>
-        <button class="icon-button" id="closeDrawer" aria-label="关闭">
-          <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
-        </button>
+        <h2>Witt</h2>
+        <button class="icon-button drawer-search-toggle" id="drawerSearchToggle" type="button" aria-label="搜索对话" aria-expanded="false" aria-controls="drawerSearchControls"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg></button>
+        <button class="icon-button" id="closeDrawer" aria-label="关闭边栏"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </div>
-      <button class="drawer-new" id="drawerNewChat">
-        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-        <span><strong>新建对话</strong><small>开启一个独立上下文</small></span>
-      </button>
       <section class="drawer-history" aria-labelledby="drawerHistoryTitle">
         <div class="drawer-history-head">
-          <span id="drawerHistoryTitle">最近对话</span>
-          <b id="conversationCount">0</b>
+          <span id="drawerHistoryTitle">最近</span>
+          <b id="conversationCount">0</b><button type="button" id="taskOverviewButton" aria-label="查看全部任务">任务 <span id="taskOverviewCount">0</span></button>
         </div>
-        <div class="history-controls">
+        <div class="history-controls" id="drawerSearchControls" hidden>
           <input id="historySearch" type="search" placeholder="搜索对话和消息" aria-label="搜索历史对话" autocomplete="off">
           <div><select id="historyProject" aria-label="按项目筛选"><option value="">全部项目</option></select><label><input type="checkbox" id="historyAttachments"> 含附件</label></div>
           <small id="historySearchHint">按项目整理，置顶优先显示</small>
         </div>
         <div class="conversation-list" id="conversationList"></div>
       </section>
-      <div class="drawer-tools">
-        <button class="workspace-entry" id="workspaceOverviewButton" type="button">项目与服务连接 <span>↗</span></button>
+      <div class="drawer-dock">
+      <button class="drawer-new" id="drawerNewChat">
+        <svg viewBox="0 0 24 24"><path d="M5 19h4l10-10a2.8 2.8 0 0 0-4-4L5 15v4Z M13.5 6.5l4 4"/></svg>
+        <span><strong>新建对话</strong><small>开启一个独立上下文</small></span>
+      </button>
+        <button class="drawer-avatar" id="drawerAvatar" type="button" aria-label="我的与设置" aria-expanded="false" aria-controls="drawerAccountMenu"><span aria-hidden="true">W</span></button>
+      </div>
+
+    </div>
+  </aside>
+
+  <aside id="drawerAccountMenu" class="user-settings-sheet" hidden>
+    <button type="button" class="upgrade-backdrop" id="userSettingsBackdrop" aria-label="关闭设置"></button>
+      <div class="drawer-tools user-settings-panel" role="dialog" aria-modal="true" aria-labelledby="userSettingsTitle">
+        <div class="drawer-account-head"><strong id="userSettingsTitle">设置</strong><button id="closeDrawerAccount" type="button" aria-label="关闭头像菜单">×</button></div>
+        <div class="settings-user-identity"><span>W</span><div><strong>Witt</strong><small>你的私人助手</small></div></div>
+        <section class="settings-block"><div class="settings-section-label">工作区</div>        <button class="workspace-entry" id="workspaceOverviewButton" type="button">项目与服务连接 <span>›</span></button>
+        <button class="feature-entry" id="featureProjects">项目工作区</button><button class="feature-entry" id="featureSchedules">定时任务</button><button class="feature-entry" id="featureNotifications" data-enabled="false">任务通知：开启</button>
+</section>
+        <section class="settings-block">
+        <div class="settings-section-label">账号与连接</div>
         <div class="drawer-utilities">
           <button class="drawer-profile" id="profileButton">
             <span class="profile-monogram">W</span>
@@ -340,36 +324,35 @@
             <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
           </button>
           <button class="drawer-profile drawer-admin-entry" id="adminSettingsButton" hidden>
-            <span class="profile-monogram">⌁</span>
+            <span class="profile-monogram"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="3"/><path d="M10 17h4"/></svg></span>
             <span><strong>设备</strong><small>访问控制</small></span>
             <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
           </button>
           <button class="drawer-profile drawer-admin-entry" id="codexAccountsButton" hidden>
-            <span class="profile-monogram">◎</span>
+            <span class="profile-monogram"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg></span>
             <span><strong>账号</strong><small>Codex</small></span>
             <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
           </button>
         </div>
+        </section>
+        <section class="settings-block"><div class="settings-section-label">偏好设置</div>
         <section class="drawer-theme" aria-labelledby="themeTitle">
           <span>
             <i aria-hidden="true">◐</i>
             <b id="themeTitle">外观</b>
           </span>
           <div class="theme-options" role="group" aria-label="选择界面主题">
-            <button type="button" data-theme-choice="system">自动</button>
-            <button type="button" data-theme-choice="light">亮色</button>
-            <button type="button" data-theme-choice="colorful">暖色</button>
-            <button type="button" data-theme-choice="dark">夜间</button>
+            <button type="button" data-theme-choice="light">白天</button>
+            <button type="button" data-theme-choice="dark">夜晚</button>
           </div>
+        </section>
         </section>
         <div class="drawer-footer">
           <span>Witt <b id="appVersion">v—</b></span>
           <button id="updateButton">检查更新</button>
         </div>
       </div>
-    </div>
   </aside>
-
   <aside class="project-sheet" id="projectSheet" aria-hidden="true">
     <div class="sheet-backdrop" id="projectBackdrop"></div>
     <div class="sheet-panel project-panel">
@@ -538,7 +521,7 @@
        <section class="model-picker-section">
         <div class="settings-section-head"><h3>选择模型</h3><small>由 App Server 实时提供</small></div>
         <div class="model-options" role="radiogroup" aria-label="选择模型">
-          <button data-model="gpt-6-astra"><span class="model-glyph astra">A</span><span><strong>Astra</strong><small>旗舰智能与复杂任务</small></span><i></i></button>
+          <button data-model="gpt-6.1-sol"><span class="model-glyph sol">S</span><span><strong>GPT-6.1 Sol</strong><small>近 Astra 智能与更低成本</small></span><i></i></button>
         </div>
       </section>
       <section class="reasoning-picker-section">
@@ -614,11 +597,35 @@
     </div>
   </aside>
 
+  <aside class="upgrade-sheet" id="conversationActions" hidden>
+    <button class="upgrade-backdrop" type="button" data-close-upgrade aria-label="关闭对话操作"></button>
+    <section class="upgrade-panel conversation-actions-panel" role="dialog" aria-modal="true" aria-labelledby="conversationActionsTitle">
+      <header><h2 id="conversationActionsTitle">对话操作</h2><button type="button" data-close-upgrade aria-label="关闭">×</button></header>
+      <button type="button" id="conversationRenameButton">重命名 <span>↗</span></button>
+      <button type="button" id="conversationPinButton">置顶 <span>⌖</span></button>
+      <button type="button" id="conversationArchiveButton">归档 <span>↓</span></button>
+      <small>归档只移出列表，历史记录仍会保留。</small>
+    </section>
+  </aside>
+  <aside class="upgrade-sheet" id="conversationRenameSheet" hidden>
+    <button class="upgrade-backdrop" type="button" data-close-upgrade aria-label="取消重命名"></button>
+    <form class="upgrade-panel rename-panel" id="conversationRenameForm" role="dialog" aria-modal="true" aria-labelledby="conversationRenameTitle">
+      <header><h2 id="conversationRenameTitle">重命名对话</h2><button type="button" data-close-upgrade aria-label="关闭">×</button></header>
+      <label for="conversationRenameInput">对话名称</label><input id="conversationRenameInput" maxlength="100" required autocomplete="off">
+      <div class="rename-actions"><button type="button" data-close-upgrade>取消</button><button type="submit">保存</button></div>
+    </form>
+  </aside>
+  <aside class="upgrade-sheet" id="taskOverviewSheet" hidden>
+    <button class="upgrade-backdrop" type="button" data-close-upgrade aria-label="关闭任务列表"></button>
+    <section class="upgrade-panel tasks-panel" role="dialog" aria-modal="true" aria-labelledby="taskOverviewTitle">
+      <header><div><h2 id="taskOverviewTitle">任务</h2><p id="taskOverviewSummary">不同对话可以同时执行</p></div><button type="button" data-close-upgrade aria-label="关闭">×</button></header>
+      <div id="taskOverviewList"></div>
+      <button id="taskOverviewRefresh" class="tasks-refresh" type="button">刷新状态</button>
+    </section>
+  </aside>
+  <aside id="featureSheet" hidden><button class="upgrade-backdrop" id="featureBackdrop" aria-label="关闭"></button><section id="featurePanel" role="dialog" aria-modal="true" aria-labelledby="featureTitle"><header><h2 id="featureTitle">工作区</h2><button id="featureClose" aria-label="关闭">×</button></header><div id="featureContent"></div></section></aside>
   <div class="toast" id="toast"></div>
-  <script src="/vault/vendor/katex/katex.min.js?v=0.16.22"></script>
-  <script src="/vault/vendor/xterm/xterm.js?v=6.0.0"></script>
-  <script src="/vault/vendor/xterm/addon-fit.js?v=0.11.0"></script>
-  <script src="/vault/vendor/xterm/addon-web-links.js?v=0.12.0"></script>
+  <script src="/vault/optional-modules.js?v=20261008-1"></script>
   <aside class="workspace-overview" id="workspaceOverview" aria-hidden="true">
     <button class="workspace-backdrop" id="workspaceBackdrop" aria-label="关闭项目与服务连接"></button>
     <section class="workspace-panel" role="dialog" aria-modal="true" aria-labelledby="workspaceTitle">
@@ -629,6 +636,9 @@
     </section>
   </aside>
   <script src="/vault/browser-bridge.js?v=1.0.0"></script>
-  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-claude-login"></script>
+  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1"></script>
+  <script src="/vault/sidebar-layout.js?v=20261008-2"></script>
+  <script src="/vault/ui-upgrades.js?v=20261008-2"></script>
+  <script src="/vault/witt-features.js?v=20261008-1"></script>
 </body>
 </html>

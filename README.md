@@ -16,6 +16,7 @@ Witt is a self-hosted mobile client for Codex. It combines a dependency-light No
 ## 主要能力
 
 - 连续 Codex 会话、历史记录和本地缓存
+- 同一用户的多对话并发、排队、取消与重试，执行事件按对话隔离
 - App Server 动态模型目录及 Low 到 Ultra 推理强度
 - 实时展示计划、命令、文件修改、MCP、审批和最终答复
 - Claude 风格 Artifact 工作区，支持完整 HTML 快照的增量预览、版本切换和源码查看
@@ -25,8 +26,11 @@ Witt is a self-hosted mobile client for Codex. It combines a dependency-light No
 - ChatGPT 风格桌面网页版，使用 HttpOnly 安全会话 Cookie
 - 默认账号与子账号隔离，会话、项目和额度互不混用
 - SQLite 持久化、WAL、定时备份及 JSON 旧数据迁移
-- 浅色、深色和动态主题，兼容横屏与移动端安全区
+- 白天、夜晚两种外观，兼容横屏与移动端安全区
+- 项目归类、常用指令、计划任务与项目文件预览
+- 设备管理滚动列表、重新布局的侧栏和项目与服务连接面板
 - Android Keystore 凭据保存、原生下载和应用内更新
+- Android 后台任务通知、通知跳转和原生启动动画
 - Android 本地 SSH 终端，支持 Keystore 加密的多服务器配置和点击直连
 
 ## 架构
@@ -151,6 +155,8 @@ Android 外壳要求 Android 8.0（API 26）以上。构建前通过 `~/.gradle/
 - `wittSigningProperties` / `WITT_SIGNING_PROPERTIES`
 - `applicationId`（如果需要独立安装）
 
+当前源码默认版本为大阪版 `2.2.27`（versionCode `46`），服务地址使用 `https://witt.example.com` 占位，部署时必须替换为自己的 HTTPS 地址。独立安装使用 `wittApplicationId` / `WITT_APPLICATION_ID` 参数。开放版可以使用 `wittOpenAccess` / `WITT_OPEN_ACCESS` 参数启用，配置及权限边界见 [开放版说明](docs/open-edition.md)。
+
 发布签名请放在未跟踪的 `signing.properties` 中，不要把 keystore、密码、令牌或签名 APK 提交到仓库。复制 `web/update.example.json` 为部署目录中的 `update.json`，并填写 Release APK 的版本、URL、大小和 SHA-256。
 
 ```bash
@@ -162,6 +168,8 @@ gradle :app:assembleRelease
 
 ## 测试
 
+浏览器测试需要安装 Playwright 及 Chromium，例如 `npm install --no-save playwright` 和 `npx playwright install chromium`。这些是开发依赖，不是后端运行依赖。
+
 ```bash
 node --check backend/server.js
 node --check backend/chat-service.js
@@ -169,10 +177,18 @@ node tests/auth-service-check.cjs
 node tests/chat-images-check.cjs
 node tests/chat-approval-check.cjs
 node tests/app-server-capabilities-check.cjs
+node tests/execution-isolation-check.cjs
+node tests/account-migration-check.cjs
+node --test backend/test-multitask.js backend/test-chat-history-regressions.js
+node --test tests/open-enrollment-check.cjs
+node tests/account-migration-ui-check.cjs
+node tests/workspace-overview-check.cjs
 node tests/ui-check.mjs
 ```
 
 UI 测试会在 `tests/` 生成本地截图，这些截图默认不进入版本控制。
+
+Web 页面使用 `web/web-style-manifest.json` 维护样式顺序。修改源样式后运行 `python3 tools/rebuild-web-styles.py`，重新生成页面引用的两个 CSS 文件。
 
 ## 安全模型
 
@@ -181,6 +197,7 @@ UI 测试会在 `tests/` 生成本地截图，这些截图默认不进入版本�
 - Android 端使用 Keystore 保护设备凭据和已保存的 SSH 密码，不将凭据持久化到网页存储。
 - 会话和认证数据使用 SQLite；敏感目录应限制为服务用户可读。
 - 删除数据、发送外部消息和高权限命令仍需要应用层审批策略。
+- 普通用户执行任务使用隔离工作目录与受限沙箱；服务器访问权限通过设备策略明确授予。
 - 完全访问模式允许 Codex 操作服务器，请使用专用用户、最小 sudo 规则、备份和网络隔离。
 
 公开报告漏洞前请先阅读 [SECURITY.md](SECURITY.md)。
@@ -192,7 +209,7 @@ UI 测试会在 `tests/` 生成本地截图，这些截图默认不进入版本�
 ## 路线图
 
 - 提供可复用的环境配置生成器
-- 为多用户部署增加更细粒度的项目策略
+- 完善项目访问策略、任务恢复与计划任务管理
 - 提供容器化部署与健康监控示例
 - 增加端到端安全测试和无障碍检查
 - 把特定项目集成拆分成可选适配器

@@ -201,6 +201,7 @@ function readJsonBody(req, limit, callback) {
 }
 
 const chatService = new ChatService({
+  serverAdministrator: true,
   chatDir,
   imageDir,
   dataDir,
@@ -267,8 +268,9 @@ function chatFor(principal) {
   if (principal.legacy) return chatService;
   if (userChatServices.has(principal.userId)) {
     return refreshChatAccess(userChatServices.get(principal.userId), {
+      serverAdministrator: Boolean(principal.admin || principal.fullServerAccess),
       allowedModels: principal.admin || principal.unrestrictedModels ? null : NON_ADMIN_MODELS,
-      defaultModel: principal.admin || principal.unrestrictedModels ? "gpt-6-astra" : "gpt-5.5",
+      defaultModel: principal.admin || principal.unrestrictedModels ? "gpt-6.1-sol" : "gpt-5.5",
       quotaExhausted: !principal.admin && !principal.unrestrictedModels,
       allowedCodexProfiles: principal.admin
         ? Object.keys(codexProfiles) : (principal.codexProfiles || ["default"]),
@@ -276,6 +278,7 @@ function chatFor(principal) {
   }
   const directory = userDirectory(principal.userId);
   const service = new ChatService({
+    serverAdministrator: Boolean(principal.admin || principal.fullServerAccess),
     chatDir: path.join(directory, "chat"),
     imageDir: path.join(directory, "chat-images"),
     dataDir: path.join(directory, "files"),
@@ -284,7 +287,7 @@ function chatFor(principal) {
     sendJson,
     readJsonBody,
     allowedModels: principal.admin || principal.unrestrictedModels ? null : NON_ADMIN_MODELS,
-    defaultModel: principal.admin || principal.unrestrictedModels ? "gpt-6-astra" : "gpt-5.5",
+    defaultModel: principal.admin || principal.unrestrictedModels ? "gpt-6.1-sol" : "gpt-5.5",
     quotaExhausted: !principal.admin && !principal.unrestrictedModels,
     codexProfiles,
     allowedCodexProfiles: principal.admin
@@ -294,6 +297,27 @@ function chatFor(principal) {
   userChatServices.set(principal.userId, service);
   return service;
 }
+
+// Restore enabled schedules for authenticated users even while their devices are offline.
+function restoreScheduledUsers() {
+  const store = authService.read();
+  const seen = new Set();
+  for (const device of store.devices) {
+    if (device.disabled || seen.has(device.userId)) continue;
+    seen.add(device.userId);
+    const stateFile = path.join(usersDir,device.userId,'chat','workspace-state.json');
+    try {
+      if (!fs.existsSync(stateFile)) continue;
+      const state = JSON.parse(fs.readFileSync(stateFile,'utf8'));
+      if (!state.schedules?.some(item=>item.enabled)) continue;
+      const policy = store.userPolicies?.[device.userId];
+      chatFor({userId:device.userId,deviceId:device.id,admin:Boolean(device.admin),
+        codexProfiles:policy?.codexProfiles||null,unrestrictedModels:Boolean(policy?.unrestrictedModels)});
+    } catch { /* A corrupt user's workspace must not stop the server. */ }
+  }
+}
+setImmediate(restoreScheduledUsers);
+const scheduleRestoreTimer=setInterval(restoreScheduledUsers,60000);scheduleRestoreTimer.unref();
 
 function filesFor(principal) {
   return principal.legacy ? dataDir : path.join(userDirectory(principal.userId), "files");
@@ -691,7 +715,7 @@ function handleLicre(req, res, url) {
 http.createServer((req, res) => {
   const url = new URL(req.url, `http://${host}:${port}`);
   if (url.pathname === "/health") {
-    sendJson(res, 200, { ok: true });
+    sendJson(res, 200, { ok: true, nonAdminExecution: "sandboxed", serverAccessPolicy: "per-device" });
     return;
   }
   if (url.pathname === "/xuanyu-preview") {
@@ -739,6 +763,13 @@ http.createServer((req, res) => {
   if (!principal) {
     sendJson(res, 401, { error: "未授权" });
     return;
+  }
+  if (req.method === "GET" && ["/chat/conversations", "/files"].includes(url.pathname)) {
+    res.once("finish", () => {
+      if (res.statusCode !== 200) return;
+      try { authService.recordMigrationAccess(principal, url.pathname === "/files" ? "files" : "conversations"); }
+      catch { console.error("Migration access confirmation could not be saved"); }
+    });
   }
   if (url.pathname === "/failover/claim") {
     if (req.method !== "POST") {

@@ -53,7 +53,24 @@
 .device-list { display:grid; gap:8px; margin-top:14px; }.device-row { display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid rgba(255,255,255,.12); }.device-row span { display:grid; place-items:center; width:29px; height:29px; flex:none; border-radius:9px; background:rgba(118,226,207,.16); color:#92eadb; }.device-row div { min-width:0; flex:1; }.device-row strong,.device-row small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.device-row small { margin-top:2px; color:#adc9d2; font-size:11px; }.device-row button { border:1px solid rgba(255,255,255,.26); border-radius:9px; padding:7px 9px; background:transparent; color:#fff; font-size:12px; }
 .drawer-admin-entry .profile-monogram { background:linear-gradient(145deg,#163c56,#209d8e); color:#a6f7e8; font-size:23px; }
 .drawer-admin-entry[hidden] { display:none !important; }
-.admin-settings-panel { overflow:hidden; }
+/* Keep every device reachable when the sheet exceeds the viewport. */
+.admin-settings-panel.sheet-panel {
+  overflow-x:hidden;
+  overflow-y:auto;
+  overscroll-behavior-y:contain;
+  touch-action:pan-y;
+  scrollbar-width:thin;
+  scrollbar-color:var(--muted, #77746d) transparent;
+  scrollbar-gutter:stable;
+}
+.admin-settings-panel.sheet-panel::-webkit-scrollbar { display:block; width:8px; }
+.admin-settings-panel.sheet-panel::-webkit-scrollbar-track { background:transparent; }
+.admin-settings-panel.sheet-panel::-webkit-scrollbar-thumb {
+  border:2px solid transparent;
+  border-radius:8px;
+  background:var(--muted, #77746d);
+  background-clip:padding-box;
+}
 .admin-settings-panel .device-admin { position:relative; margin:16px 0 2px; min-height:270px; background:radial-gradient(circle at 90% 0%,rgba(88,221,196,.26),transparent 36%),linear-gradient(135deg,#102742,#17606b); }
 .admin-settings-panel .device-admin::after { content:""; position:absolute; inset:-60% 38% auto -25%; height:90%; border-radius:50%; border:1px solid rgba(132,239,218,.23); box-shadow:0 0 38px rgba(98,224,200,.13); animation:device-beacon 5s ease-in-out infinite; pointer-events:none; }
 .device-admin header { position:relative; z-index:1; display:flex; align-items:center; gap:9px; }.device-admin header h3 { flex:1; }.device-admin header i { color:#82ead6; font-style:normal; font-size:10px; animation:device-pulse 1.8s ease-in-out infinite; }

@@ -5,9 +5,11 @@ function refreshChatAccess(service, options) {
   const profiles = new Set((options.allowedCodexProfiles || ["default"])
     .filter((id) => service.codexProfiles[id]));
   const sameModels = service.allowedModels === options.allowedModels;
-  const changed = !sameModels || service.defaultModel !== options.defaultModel ||
+  const serverAdministrator = options.serverAdministrator === true;
+  const changed = service.serverAdministrator !== serverAdministrator || !sameModels || service.defaultModel !== options.defaultModel ||
     service.quotaExhausted !== options.quotaExhausted ||
     [...service.allowedCodexProfiles].join("|") !== [...profiles].join("|");
+  service.serverAdministrator = serverAdministrator;
   service.allowedModels = options.allowedModels;
   service.defaultModel = options.defaultModel;
   service.quotaExhausted = options.quotaExhausted;

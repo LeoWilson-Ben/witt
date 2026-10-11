@@ -10,10 +10,20 @@
   const previousModel = localStorage.getItem("wit_model_preference") || localStorage.getItem("wit_model");
   const shouldUpgradeDefaultModel = !localStorage.getItem("wit_gpt6_model_migrated") &&
     (!previousModel || previousModel === "gpt-5.6-sol");
-  const savedModel = shouldUpgradeDefaultModel ? "gpt-6-astra" : (previousModel || "gpt-6-astra");
+  const shouldUpgradeSolModel = !localStorage.getItem("wit_gpt61_model_migrated") &&
+    previousModel === "gpt-6-sol";
+  const savedModel = shouldUpgradeDefaultModel || shouldUpgradeSolModel
+    ? "gpt-6.1-sol" : (previousModel || "gpt-6.1-sol");
   if (!localStorage.getItem("wit_gpt6_model_migrated")) {
     localStorage.setItem("wit_gpt6_model_migrated", "1");
     if (shouldUpgradeDefaultModel) {
+      localStorage.setItem("wit_model", savedModel);
+      localStorage.setItem("wit_model_preference", savedModel);
+    }
+  }
+  if (!localStorage.getItem("wit_gpt61_model_migrated")) {
+    localStorage.setItem("wit_gpt61_model_migrated", "1");
+    if (shouldUpgradeSolModel) {
       localStorage.setItem("wit_model", savedModel);
       localStorage.setItem("wit_model_preference", savedModel);
     }
@@ -92,7 +102,29 @@
     attachmentDrafts: new Map(),
     sendRequest: null,
   };
+  let mathLoading = false;
+  let terminalLoad = null;
+  let terminalBuffer = "";
   let historySearchTimer;
+  let summaryTimer;
+  let summaryRefreshPending = false;
+  let summaryRefreshAt = 0;
+  let maxConcurrentTasks = 3;
+  function scheduleSummaryRefresh() {
+    clearTimeout(summaryTimer);
+    if (!state.authenticated || !state.appVisible) return;
+    const hasTasks = state.conversations.some((item) => item.busy);
+    const browsing = $("#drawer").classList.contains("open") || !$("#taskOverviewSheet")?.hidden;
+    if (!hasTasks && !browsing) return;
+    summaryTimer = setTimeout(() => {
+      if (summaryRefreshPending && Date.now() - summaryRefreshAt < 15000) { scheduleSummaryRefresh(); return; }
+      summaryRefreshPending = true;
+      summaryRefreshAt = Date.now();
+      bridge()?.requestConversations?.();
+      scheduleSummaryRefresh();
+    }, hasTasks ? 5000 : 15000);
+  }
+
   let draftSaveTimer;
   let completionReminder = false;
   try { completionReminder = localStorage.getItem("witt_completion_reminder") === "1"; } catch {}
@@ -151,7 +183,7 @@
       : state.active?.taskStatus || { state: state.busy ? "running" : last?.status || "idle", label: state.busy ? "处理中" : last?.status === "failed" ? "执行失败" : last?.status === "interrupted" ? "已暂停" : last ? "已完成" : "准备就绪" };
     strip.hidden = !state.activeId;
     strip.dataset.state = status.state;
-    strip.innerHTML = `<span class="task-state-dot"></span><strong>${escapeHtml(status.label)}</strong><span class="task-origin">${escapeHtml(state.active?.activeDeviceLabel ? `${state.active.activeDeviceLabel} 发起 · 同一会话会同步` : "不同任务请使用独立对话")}</span>${approval ? '<button id="jumpToApproval" type="button">查看并确认 ↓</button>' : ""}`;
+    strip.innerHTML = `<span class="task-state-dot"></span><strong>${escapeHtml(status.label)}</strong><span class="task-origin">${escapeHtml(state.active?.activeDeviceLabel ? `${state.active.activeDeviceLabel} 发起 · 同一会话会同步` : "新建对话可同时执行其他任务")}</span>${approval ? '<button id="jumpToApproval" type="button">查看并确认 ↓</button>' : ""}`;
     strip.querySelector("#jumpToApproval")?.addEventListener("click", () => $("#approvalDock")?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
     const older = $("#loadOlderMessages");
     older.hidden = !state.workspaceFeatures || !state.active?.hasMore;
@@ -161,10 +193,19 @@
 
   function requestWorkspaceOverview() {
     $("#workspaceOverviewContent").textContent = state.workspaceFeatures ? "正在检查连接…" : "此功能需要支持工作区的新客户端，当前安装版本暂不支持。";
-    if (state.workspaceFeatures) bridge()?.requestWorkspaceOverview?.();
+    if (!state.workspaceFeatures) return;
+    // Current Osaka APKs use workspaceRequest rather than a dedicated native method.
+    if (state.workspaceOperations && typeof window.WittFeatures?.request === "function") {
+      window.WittFeatures.request("chat/workspace-overview")
+        .then((payload) => window.DropVault.onWorkspaceOverview(JSON.stringify(payload)))
+        .catch((error) => window.DropVault.onWorkspaceOverviewError(error.message || "检查失败，请重试"));
+      return;
+    }
+    bridge()?.requestWorkspaceOverview?.();
   }
 
   function openWorkspaceOverview() {
+    if (!$("#drawerAccountMenu")?.hidden) $("#closeDrawerAccount")?.click();
     closeDrawer();
     $("#workspaceOverview").classList.add("open");
     $("#workspaceOverview").setAttribute("aria-hidden", "false");
@@ -208,15 +249,15 @@
     composerResizeObserver.observe($(".composer-wrap"));
   }
   function applyTheme(mode, persist = false) {
-    const preference = ["system", "light", "colorful", "dark"].includes(mode) ? mode : "system";
-    const selected = preference === "system"
-      ? (systemThemeQuery.matches ? "dark" : "light")
-      : preference;
+    const preference = mode === "dark" ? "dark"
+      : mode === "light" || mode === "colorful" ? "light"
+      : systemThemeQuery.matches ? "dark" : "light";
+    const selected = preference;
     const commit = () => {
       document.documentElement.dataset.themeMode = selected;
       document.documentElement.dataset.theme = selected;
       document.documentElement.dataset.themePreference = preference;
-      if (persist) localStorage.setItem("wit_theme", preference);
+      if (persist || localStorage.getItem("wit_theme") !== preference) localStorage.setItem("wit_theme", preference);
       $("#themeColor")?.setAttribute("content",
         selected === "dark" ? "#1f1f1c" : "#ffffff");
       document.querySelectorAll("[data-theme-choice]").forEach((button) => {
@@ -242,14 +283,6 @@
 
   applyTheme(localStorage.getItem("wit_theme") ||
     document.documentElement.dataset.themePreference || "system");
-  const syncSystemTheme = () => {
-    if (document.documentElement.dataset.themePreference === "system") applyTheme("system");
-  };
-  if (typeof systemThemeQuery.addEventListener === "function") {
-    systemThemeQuery.addEventListener("change", syncSystemTheme);
-  } else {
-    systemThemeQuery.addListener(syncSystemTheme);
-  }
   requestAnimationFrame(watchComposerInset);
   function escapeHtml(value) {
     const node = document.createElement("span");
@@ -424,6 +457,10 @@
     const formula = String(source || "").trim();
     if (!formula) return "";
     if (!window.katex?.renderToString) {
+      if (!mathLoading && window.WittModules) {
+        mathLoading = true;
+        window.WittModules.math().then(() => window.WittUI?.refreshMath()).catch(() => {}).finally(() => { mathLoading = false; });
+      }
       return `<code class="math-fallback">${escapeHtml(formula)}</code>`;
     }
     try {
@@ -615,6 +652,7 @@
   }
 
   const modelNames = {
+    "gpt-6.1-sol": "GPT-6.1 Sol",
     "gpt-6-astra": "Astra",
     "gpt-6-sol": "Sol",
     "gpt-6-luna": "Luna",
@@ -624,6 +662,7 @@
   };
 
   const modelDescriptions = {
+    "gpt-6.1-sol": "近 Astra 智能 · 更低成本",
     "gpt-6-astra": "旗舰智能 · 复杂任务",
     "gpt-6-sol": "专业编码 · 均衡推理",
     "gpt-6-luna": "快速高效 · 日常任务",
@@ -868,7 +907,15 @@
 
   function dismissBoot() {
     const boot = $("#bootScreen");
-    if (!boot || boot.classList.contains("leaving")) return;
+    if (!boot || boot.classList.contains("leaving") || boot.dataset.dismissPending) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const remaining = reduced || window.wittNativeLaunch ? 0 : Math.max(0,
+      2800 - (performance.now() - (window.wittBootStartedAt ?? 0)));
+    if (remaining > 0) {
+      boot.dataset.dismissPending = "true";
+      setTimeout(() => { delete boot.dataset.dismissPending; dismissBoot(); }, remaining);
+      return;
+    }
     bridge()?.contentReady?.(document.documentElement.dataset.themeMode || "light");
     boot.classList.add("leaving");
     setTimeout(() => boot.remove(), 520);
@@ -1065,6 +1112,7 @@
   }
 
   function renderAdminDevices(devices = []) {
+    devices = devices.filter((device) => !device.hiddenFromList);
     $("#deviceList").innerHTML = devices.length ? devices.map((device) => `
       <article class="device-row"><span>⌁</span><div><strong>${escapeHtml(device.label || "未命名设备")}</strong><small>${device.disabled ? "已停止访问" : `最近活跃：${formatDate(device.lastSeenAt || device.createdAt)}`}</small></div>${device.disabled ? "" : `<button data-disable-device="${escapeHtml(device.id)}">停止</button>`}</article>`).join("")
       : `<small>还没有已激活的设备。</small>`;
@@ -1496,13 +1544,14 @@
     return localTerminal;
   }
 
-  function openLocalSsh() {
+  async function openLocalSsh() {
     closeDrawer();
     if (versionLessThan(state.nativeVersion, "2.2.16")) {
       toast("请先更新 Witt 后使用本地终端");
       bridge()?.checkForUpdates?.();
       return;
     }
+    try { await window.WittModules?.terminal(); } catch { toast("终端组件加载失败，请重试"); return; }
     $("#localSshSheet").classList.add("open");
     $("#localSshSheet").setAttribute("aria-hidden", "false");
     localSshViewportBaseline = window.innerHeight;
@@ -1522,7 +1571,13 @@
   }
 
   function appendLocalTerminal(text) {
-    ensureLocalTerminal()?.write(String(text || ""));
+    if (window.Terminal) { ensureLocalTerminal()?.write(String(text || "")); return; }
+    terminalBuffer = (terminalBuffer + String(text || "")).slice(-1024 * 1024);
+    if (!terminalLoad && window.WittModules) {
+      terminalLoad = window.WittModules.terminal().then(() => {
+        ensureLocalTerminal()?.write(terminalBuffer); terminalBuffer = "";
+      }).catch(() => toast("终端组件加载失败，请重新打开服务器")).finally(() => { terminalLoad = null; });
+    }
   }
 
   function openAdminSettings() {
@@ -1720,6 +1775,7 @@
   function openDrawer() {
     $("#drawer").classList.add("open");
     $("#drawer").setAttribute("aria-hidden", "false");
+    scheduleSummaryRefresh();
   }
 
   function closeDrawer() {
@@ -1734,6 +1790,8 @@
 
   function renderDeliveries() {
     const artifacts = allArtifacts();
+    const versions=new Map();artifacts.forEach(a=>versions.set(a.name,(versions.get(a.name)||0)+1));
+    const versionIndex=a=>artifacts.filter(b=>b.name===a.name).findIndex(b=>b.id===a.id&&b.messageId===a.messageId)+1;
     $("#deliveryBadge").textContent = artifacts.length;
     $("#deliverySummary").textContent = artifacts.length ? `${artifacts.length} 个可下载文件` : "当前对话暂无文件";
     $("#deliveryButton").classList.toggle("has-files", artifacts.length > 0);
@@ -1742,7 +1800,7 @@
       ? artifacts.slice().reverse().map((artifact) => `
         <button class="delivery-file" data-artifact="${artifact.id}" data-message="${artifact.messageId}">
           <span class="delivery-type">${extension(artifact.name)}</span>
-          <span class="delivery-file-copy"><strong>${escapeHtml(artifact.name)}</strong><small>${formatBytes(artifact.size)}<i></i>来自当前对话</small></span>
+          <span class="delivery-file-copy"><strong>${escapeHtml(artifact.name)}</strong><small>${formatBytes(artifact.size)}<i></i>${versions.get(artifact.name)>1?`版本 ${versionIndex(artifact)} / ${versions.get(artifact.name)} · `:""}点击预览</small></span>
           <span class="delivery-download"><svg viewBox="0 0 24 24"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/></svg></span>
         </button>`).join("")
       : `<div class="delivery-empty"><span>↓</span><strong>暂无交付文件</strong><p>需要文件时直接告诉我“把它放到交付区”。</p></div>`;
@@ -1778,6 +1836,10 @@
     delete $("#downloadImageViewer").dataset.url;
   }
 
+  function conversationTask(item) {
+    return item.taskStatus || { state: item.busy ? "running" : "idle", label: item.busy ? "正在执行" : "" };
+  }
+
   function renderConversations() {
     $("#conversationCount").textContent = String(state.conversations.length);
     const pinned = pinnedIds();
@@ -1791,19 +1853,28 @@
       if (state.historyResults) return true;
       return (!selectedProject || historyProjectName(item) === selectedProject) &&
         (!q || `${item.title} ${item.lastMessage || ""}`.toLocaleLowerCase().includes(q)) &&
-        (!attachments || item.hasAttachments || (item.id === state.activeId && state.active?.messages?.some((message) => message.attachments?.length || message.artifacts?.length)));
-    }).slice().sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)) ||
-      historyProjectName(a).localeCompare(historyProjectName(b)) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
-    $("#conversationList").innerHTML = conversations.length
-      ? conversations.map((conversation) => `
-        <article class="conversation-row ${conversation.id === state.activeId ? "active" : ""}" data-id="${conversation.id}">
-          <button class="conversation-open" data-open="${conversation.id}">
-            <span class="conversation-mark">${conversation.busy ? '<i></i>' : '<svg viewBox="0 0 24 24"><path d="M5 6h14v10H9l-4 4V6Z"/></svg>'}</span>
-            <span>${state.workspaceFeatures ? `<span class="history-project-label">${escapeHtml(historyProjectName(conversation))}</span>` : ""}<strong>${pinned.has(conversation.id) ? "⌖ " : ""}${escapeHtml(conversation.title)}</strong><small>${conversation.busy ? "正在处理" : formatDate(conversation.updatedAt)} · ${escapeHtml(conversation.searchSnippet || conversation.lastMessage || "暂无消息")}</small></span>
-          </button>
-          <button class="conversation-more" data-archive="${conversation.id}" aria-label="移除对话">•••</button>
-        </article>`).join("")
-      : `<div class="drawer-empty">${q || selectedProject || attachments ? "没有匹配的对话" : "还没有历史对话"}</div>`;
+        (!attachments || item.hasAttachments);
+    }).slice().sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    let previousGroup = '';
+    const today = new Date(); today.setHours(0,0,0,0);
+    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate()-1);
+    $("#conversationList").classList.toggle("searching", Boolean(q));
+    $("#conversationList").innerHTML = conversations.length ? conversations.map((item) => {
+      const stamp = new Date(item.updatedAt);
+      const group = q ? "搜索结果" : pinned.has(item.id) ? "置顶" : stamp >= today ? "今天" : stamp >= yesterday ? "昨天" : "更早";
+      const heading = group !== previousGroup ? `<div class="history-date-group">${group}</div>` : '';
+      previousGroup = group;
+      const task = conversationTask(item);
+      const showStatus = ["running", "queued", "awaiting_confirmation", "waiting_confirmation", "failed"].includes(task.state);
+      return `${heading}<article class="conversation-row ${item.id === state.activeId ? "active" : ""}" data-id="${item.id}" data-task-state="${escapeHtml(task.state)}">
+        <button class="conversation-open" data-open="${item.id}" title="${escapeHtml(item.title)}">
+          <span><strong>${escapeHtml(item.title)}</strong>${q ? `<small class="history-search-snippet">${escapeHtml(item.searchSnippet || item.lastMessage || "标题匹配")}</small>` : ''}${showStatus ? `<span class="conversation-task"><i></i>${escapeHtml(task.label)}</span>` : ''}</span>
+        </button>
+        <button class="conversation-more" data-conversation-menu="${item.id}" aria-label="${escapeHtml(item.title)}的更多操作" aria-haspopup="dialog">•••</button>
+      </article>`;
+    }).join('') : `<div class="drawer-empty">${q || selectedProject || attachments ? "没有匹配的对话" : "还没有历史对话"}</div>`;
+    window.WittUpgrades?.renderTasks(state.conversations, maxConcurrentTasks);
+    scheduleSummaryRefresh();
   }
 
   function attachmentHtml(file) {
@@ -2026,6 +2097,14 @@
   function showActivation(message = "") {
     dismissBoot();
     const gate = $("#authGate");
+    if (state.openAccess) {
+      $("#authGateTitle").textContent = "连接 Witt 开放版";
+      $("#authGateTitle + p").textContent = "本版本自动登录，无需输入激活码。";
+      $("label[for=inviteCode]").hidden = true;
+      $("#inviteCode").hidden = true;
+      $("#activateInviteButton span").textContent = "重新连接";
+      $("#activateInviteButton").disabled = false;
+    }
     gate.classList.add("open");
     gate.setAttribute("aria-hidden", "false");
     if (message) $("#authGateHint").textContent = message;
@@ -2804,11 +2883,13 @@
     state.appVisible = Boolean(visible);
     document.body.classList.toggle("power-paused", !state.appVisible);
     clearTimeout(pollTimer);
+    clearTimeout(summaryTimer);
     if (!state.appVisible) {
       saveDraft();
       if (state.supportsSse) bridge()?.unsubscribeConversationEvents?.();
       return;
     }
+    scheduleSummaryRefresh();
     applyTheme(document.documentElement.dataset.themePreference || "system");
     if (state.supportsSse && state.activeId) {
       bridge()?.subscribeConversationEvents?.(state.activeId);
@@ -2932,6 +3013,8 @@
       summary.lastMessage = conversation.lastMessage ||
         conversation.messages?.at(-1)?.text || summary.lastMessage;
       summary.busy = state.busy;
+      summary.taskStatus = conversation.taskStatus;
+      summary.pinned = conversation.pinned;
       renderConversations();
       persistConversationList();
     }
@@ -2987,8 +3070,22 @@
   }
 
   function sendPreparedMessage(text, uploadedIds) {
-    if (state.workspaceFeatures) bridge()?.sendChatMessageWithRequestId?.(state.activeId, text, JSON.stringify(uploadedIds), state.sendRequest.id);
-    else bridge()?.sendChatMessage?.(state.activeId, text, JSON.stringify(uploadedIds));
+    const transport = bridge();
+    // Workspace support does not imply support for request-ID message transport.
+    const supportsRequestIds = window.WittNative
+      ? state.sendRequestIds
+      : typeof transport?.sendChatMessageWithRequestId === "function";
+    try {
+      if (supportsRequestIds) {
+        transport.sendChatMessageWithRequestId(state.activeId, text, JSON.stringify(uploadedIds), state.sendRequest.id);
+      } else if (typeof transport?.sendChatMessage === "function") {
+        transport.sendChatMessage(state.activeId, text, JSON.stringify(uploadedIds));
+      } else {
+        window.DropVault.onMessageSendError("发送连接不可用，请重新打开 App 后再试");
+      }
+    } catch {
+      window.DropVault.onMessageSendError("消息未能送达，请重新发送");
+    }
   }
 
   function sendMessage(prefill) {
@@ -3054,11 +3151,19 @@
   window.DropVault = {
     nativeReady(info = {}) {
       if (state.nativeInitialized) return;
+      if (info.nativeLaunch) {
+        window.wittNativeLaunch = true;
+        const boot = $("#bootScreen");
+        if (boot) boot.style.visibility = "hidden";
+      }
       state.nativeInitialized = true;
+      state.openAccess = Boolean(info.openAccess);
       document.body.classList.add("native");
       const version = String(info.version || window.DropVaultAndroid?.getVersion?.() || "");
       state.nativeVersion = version;
       state.workspaceFeatures = Boolean(info.workspaceFeatures);
+      state.sendRequestIds = Boolean(info.sendRequestIds);
+      state.workspaceOperations = Boolean(info.workspaceOperations);
       // Do not expose controls whose native transport is absent in older APKs.
       $("#workspaceOverviewButton").hidden = !state.workspaceFeatures;
       $("#moreGroupButton").hidden = !state.workspaceFeatures;
@@ -3112,7 +3217,7 @@
           claimThisDevice();
           return;
         }
-        showActivation("此设备尚未获授权，请输入邀请码。邀请码不会保存到网页中。");
+        showActivation(state.openAccess ? "本设备暂时无法访问，请重新连接或联系管理员。" : "此设备尚未获授权，请输入邀请码。邀请码不会保存到网页中。");
         return;
       }
       showActivation("管理员正在初始化访问控制，请稍后重新连接。");
@@ -3143,12 +3248,19 @@
     },
     onConversations(json) {
       const payload = JSON.parse(json);
+      const finishedElsewhere = (payload.conversations || []).filter((item) =>
+        item.id !== state.activeId && !item.busy && state.conversations.some((old) => old.id === item.id && old.busy));
       state.conversations = payload.conversations || [];
+      if (completionReminder && state.appVisible && finishedElsewhere.length) toast(finishedElsewhere.slice(0,2).map(item => `${item.title} · ${item.taskStatus?.label || "已结束"}`).join("；"));
       state.currentDeviceLabel = payload.currentDeviceLabel || "";
+      const wasSummaryRefresh = summaryRefreshPending;
+      summaryRefreshPending = false;
+      maxConcurrentTasks = Number(payload.maxConcurrentTasks) || maxConcurrentTasks;
       persistConversationList();
       setConnected(true, "服务器在线");
       dismissBoot();
       renderConversations();
+      if (wasSummaryRefresh) return;
       if (state.activeId && state.conversations.some((item) => item.id === state.activeId)) {
         if (!state.active || state.active.id !== state.activeId) {
           selectConversation(state.activeId);
@@ -3357,7 +3469,7 @@
     onConversationMetadataUpdated(json) {
       const conversation = JSON.parse(json).conversation;
       const item = state.conversations.find((entry) => entry.id === conversation?.id);
-      if (item) Object.assign(item, { pinned: conversation.pinned, project: conversation.project });
+      if (item) Object.assign(item, { title: conversation.title, pinned: conversation.pinned, project: conversation.project });
       if (conversation?.id === state.activeId) applyConversation(conversation);
       renderConversations();
       persistConversationList();
@@ -3993,6 +4105,7 @@
     const artifact = allArtifacts().find((item) =>
       item.id === button.dataset.artifact && item.messageId === button.dataset.message);
     if (!artifact) return;
+    if (window.WittFeatures) { window.WittFeatures.preview(state.activeId,artifact); return; }
     if (typeof bridge()?.downloadArtifact === "function") {
       bridge().downloadArtifact(
         state.activeId, artifact.messageId, artifact.id, artifact.name, artifact.mimeType || "");
@@ -4103,6 +4216,7 @@
     bridge()?.pickFiles?.();
   });
   $("#activateInviteButton").addEventListener("click", () => {
+    if (state.openAccess) { bridge()?.requestAuthStatus?.(); return; }
     const code = $("#inviteCode").value.trim();
     if (!code) { $("#authGateHint").textContent = "请先输入邀请码。"; return; }
     const button = $("#activateInviteButton");
@@ -4304,9 +4418,9 @@
   });
   $("#conversationList").addEventListener("click", (event) => {
     const openId = event.target.closest("[data-open]")?.dataset.open;
-    const archiveId = event.target.closest("[data-archive]")?.dataset.archive;
+    const menuId = event.target.closest("[data-conversation-menu]")?.dataset.conversationMenu;
     if (openId) selectConversation(openId);
-    if (archiveId) openArchiveDialog(archiveId);
+    if (menuId) window.WittUpgrades?.openConversationMenu(menuId);
   });
   $(".suggestions").addEventListener("click", (event) => {
     const prompt = event.target.closest("[data-prompt]")?.dataset.prompt;
@@ -4422,6 +4536,30 @@
     if (state.activeId) bridge()?.reviewConversation?.(state.activeId);
   });
 
+  window.WittUI = {
+    settings: () => ({model:state.model,codexProfile:state.codexProfile,reasoning:state.reasoning,accessMode:state.accessMode}),
+    workspaceOperations: () => Boolean(state.workspaceOperations),
+    draft: text => { $("#messageInput").value=text; $("#messageInput").dispatchEvent(new Event("input")); $("#messageInput").focus(); },
+    download: (id,a) => { if(typeof bridge()?.downloadArtifact==='function')bridge().downloadArtifact(id,a.messageId,a.id,a.name,a.mimeType||'');else downloadArtifactUrl(artifactUrl(a.messageId,a),a.name);toast('正在下载文件'); },
+    conversations: () => state.conversations,
+    task: conversationTask,
+    select: selectConversation,
+    archive: openArchiveDialog,
+    toast,
+    refresh: renderConversations,
+    refreshSummaries: () => { summaryRefreshPending = true; summaryRefreshAt = Date.now(); bridge()?.requestConversations?.(); },
+    updateMetadata: (id, changes) => {
+      if (!state.workspaceFeatures) { toast("此操作需要新版客户端，请先检查更新"); return false; }
+      bridge()?.updateConversationMetadata?.(id, JSON.stringify(changes));
+      return true;
+    },
+    togglePin: (id) => {
+      const pins = pinnedIds(); const added = !pins.has(id);
+      if (state.workspaceFeatures) bridge()?.updateConversationMetadata?.(id, JSON.stringify({ pinned: added }));
+      else { if (added) pins.add(id); else pins.delete(id); localStorage.setItem("wit_pinned_conversations", JSON.stringify([...pins])); renderConversations(); }
+    },
+    refreshMath: () => { document.querySelectorAll(".message").forEach((node) => delete node.dataset.fingerprint); renderMessages(true); },
+  };
   updateModelControls();
   renderDeliveries();
   document.addEventListener("visibilitychange", () => setAppVisible(!document.hidden));

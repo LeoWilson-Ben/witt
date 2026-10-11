@@ -342,6 +342,8 @@ public final class UpdateManager {
                 int read;
                 while ((read = input.read(buffer)) >= 0) output.write(buffer, 0, read);
                 JSONObject json = new JSONObject(output.toString("UTF-8"));
+                if (!BuildConfig.APPLICATION_ID.equals(json.optString("applicationId", BuildConfig.APPLICATION_ID)))
+                    throw new IllegalStateException("更新包不属于当前应用");
                 return new Release(
                     json.getInt("versionCode"),
                     json.getString("versionName"),

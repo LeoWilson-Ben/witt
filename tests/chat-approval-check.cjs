@@ -9,6 +9,7 @@ const { ChatService } = require("../backend/chat-service");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "witt-approval-"));
 let lastResponse = null;
 const service = new ChatService({
+  serverAdministrator: true,
   chatDir: path.join(root, "chats"),
   dataDir: path.join(root, "uploads"),
   imageDir: path.join(root, "images"),
