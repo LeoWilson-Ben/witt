@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { DAY_MS, latestTurn } = require("./history-policy");
 const { DatabaseSync } = require("node:sqlite");
 
 class ConversationStore {
@@ -44,6 +45,18 @@ class ConversationStore {
     this.selectMessagePage = this.db.prepare(`
       SELECT position, payload_json FROM messages
       WHERE conversation_id = ? AND position < ? ORDER BY position DESC LIMIT ?`);
+    this.selectTurnStart = this.db.prepare(`
+      SELECT position FROM messages WHERE conversation_id = ?
+      AND json_extract(payload_json, '$.role') = 'user'
+      AND COALESCE(json_extract(payload_json, '$.steeredInto'), '') = ''
+      ORDER BY position DESC LIMIT 1`);
+    this.selectMessageRange = this.db.prepare(`
+      SELECT payload_json FROM messages WHERE conversation_id = ? AND position >= ? AND position < ?
+      ORDER BY position`);
+    this.selectHistoryStart = this.db.prepare(`
+      SELECT MIN(position) AS position FROM messages WHERE conversation_id = ? AND position < ?
+      AND (julianday(json_extract(payload_json, '$.createdAt')) >= julianday(?)
+        OR julianday(json_extract(payload_json, '$.createdAt')) IS NULL)`);
     this.selectSummary = this.db.prepare(`
       SELECT COUNT(*) AS totalMessages,
         COALESCE(MAX(CASE WHEN json_extract(payload_json, '$.role') = 'assistant'
@@ -259,6 +272,43 @@ class ConversationStore {
       : rows.map((item) => JSON.parse(item.payload_json));
     const offset = cached ? Math.max(0, end - size) : (rows[0]?.position ?? end);
     return { ...metadata, messages, messageOffset: offset, totalMessages: count, hasMore: offset > 0 };
+  }
+
+  loadLatest(id) {
+    const cached = this.cache.get(id);
+    if (cached) return latestTurn({ ...cached, ...this.metadata(cached) });
+    const row = this.selectConversation.get(id);
+    if (!row) return null;
+    const metadata = this.metadata(JSON.parse(row.payload_json));
+    const count = metadata.totalMessages;
+    const offset = this.selectTurnStart.get(id)?.position ?? Math.max(0, count - 1);
+    const messages = this.selectMessageRange.all(id, offset, count).map((r) => JSON.parse(r.payload_json));
+    return { ...metadata, messages, messageOffset: offset, totalMessages: count, hasMore: offset > 0,
+      historyBefore: messages[0]?.createdAt || metadata.createdAt || new Date().toISOString() };
+  }
+
+  loadDay(id, { before, until } = {}) {
+    const cached = this.cache.get(id);
+    const row = cached ? null : this.selectConversation.get(id);
+    if (!cached && !row) return null;
+    const metadata = this.metadata(cached || JSON.parse(row.payload_json));
+    const count = metadata.totalMessages;
+    const end = Math.max(0, Math.min(count, Number(before)));
+    const edge = until || (cached ? cached.messages[end]?.createdAt
+      : JSON.parse(this.selectMessageRange.all(id, end, end + 1)[0]?.payload_json || '{}').createdAt)
+      || metadata.createdAt || new Date().toISOString();
+    const rangeEnd = new Date(edge).toISOString();
+    const rangeStart = new Date(Date.parse(rangeEnd) - DAY_MS).toISOString();
+    let offset;
+    if (cached) {
+      offset = cached.messages.findIndex((m, i) => i < end &&
+        (!Number.isFinite(Date.parse(m.createdAt)) || Date.parse(m.createdAt) >= Date.parse(rangeStart)));
+      if (offset < 0) offset = end;
+    } else offset = this.selectHistoryStart.get(id, end, rangeStart)?.position ?? end;
+    const messages = cached ? cached.messages.slice(offset, end)
+      : this.selectMessageRange.all(id, offset, end).map((r) => JSON.parse(r.payload_json));
+    return { ...metadata, messages, messageOffset: offset, totalMessages: count, hasMore: offset > 0,
+      historyBefore: rangeStart, rangeStart, rangeEnd, pageEnd: end };
   }
 
   search(query, { limit = 50, attachmentsOnly = false } = {}) {

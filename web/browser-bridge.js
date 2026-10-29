@@ -57,19 +57,37 @@
       success, "onAppServerActionError", "操作失败，请重试");
   }
 
-  function download(path, name) {
-    Promise.resolve().then(async () => {
+  function download(path, name, artifact = null) {
+    const progress = (status, loaded = 0, total = 0, error = "") => {
+      if (artifact) callback("onArtifactDownloadProgress", payload({ ...artifact, status, loaded, total, error }));
+    };
+    return Promise.resolve().then(async () => {
+      progress("starting");
       const response = await fetch(API + path, { credentials: "same-origin", cache: "no-store" });
-      if (!response.ok) throw new Error("下载失败");
-      const url = URL.createObjectURL(await response.blob());
+      if (!response.ok) throw new Error(`下载失败（${response.status}）`);
+      const total = Number(response.headers.get("Content-Length")) || 0;
+      let loaded = 0; const chunks = [];
+      if (response.body) {
+        const reader = response.body.getReader();
+        for (;;) {
+          const result = await reader.read();
+          if (result.done) break;
+          chunks.push(result.value); loaded += result.value.byteLength;
+          progress("downloading", loaded, total);
+        }
+      } else { const buffer = await response.arrayBuffer(); chunks.push(buffer); loaded = buffer.byteLength; }
+      progress("saving", loaded, total);
+      const url = URL.createObjectURL(new Blob(chunks, { type: response.headers.get("Content-Type") || "application/octet-stream" }));
       const link = document.createElement("a");
       link.href = url;
       link.download = name || "Witt-文件";
-      document.body.append(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }).catch((error) => callback("onChatError", error.message || "下载失败"));
+      document.body.append(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      progress("completed", loaded, total || loaded);
+    }).catch((error) => {
+      if (artifact) progress("failed", 0, 0, error.message || "下载失败");
+      else callback("onChatError", error.message || "下载失败");
+    });
   }
 
   const bridge = {
@@ -120,7 +138,7 @@
       run("chat/capabilities", {}, "onCapabilities", "onCapabilitiesError", "无法读取服务能力");
     },
     requestConversation(id) {
-      if (validId(id)) run(`chat/conversations/${id}?limit=40`, {}, "onConversation", "onChatError", "无法读取对话");
+      if (validId(id)) run(`chat/conversations/${id}?view=latest`, {}, "onConversation", "onChatError", "无法读取对话");
     },
     requestConversationDelta(id) {
       if (validId(id)) run(`chat/conversations/${id}/sync`, {}, "onConversationDelta", "onChatError", "同步失败");
@@ -133,9 +151,23 @@
     subscribeConversationEvents(id) {
       if (!validId(id)) return;
       this.unsubscribeConversationEvents();
-      events = new EventSource(`${API}chat/conversations/${id}/events?limit=40`);
-      events.addEventListener("snapshot", (event) => callback("onConversation", event.data));
-      events.addEventListener("delta", (event) => callback("onConversationDelta", event.data));
+      events = new EventSource(`${API}chat/conversations/${id}/events?view=latest`);
+      const source = events;
+      let receivedSnapshot = false, fallbackRequested = false;
+      events.addEventListener("snapshot", (event) => {
+        if (events !== source) return;
+        receivedSnapshot = true;
+        callback("onConversation", event.data);
+      });
+      events.addEventListener("delta", (event) => {
+        if (events === source) callback("onConversationDelta", event.data);
+      });
+      events.addEventListener("error", () => {
+        if (events === source && !receivedSnapshot && !fallbackRequested) {
+          fallbackRequested = true;
+          this.requestConversation(id);
+        }
+      });
     },
     unsubscribeConversationEvents() {
       events?.close();
@@ -279,7 +311,7 @@
       xhr.send(file);
     },
     downloadArtifact(conversationId, messageId, artifactId, name) {
-      download(`chat/conversations/${conversationId}/messages/${messageId}/artifacts/${artifactId}`, name);
+      return download(`chat/conversations/${conversationId}/messages/${messageId}/artifacts/${artifactId}`, name, { conversationId, messageId, artifactId });
     },
     downloadImage(url, name) {
       const resolved = new URL(String(url), location.origin);
@@ -303,6 +335,7 @@
       workspaceFeatures: true,
       supportsSse: true,
       browser: true,
+      artifactDownloadProgress: true,
     });
   };
   ready();

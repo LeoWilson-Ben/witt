@@ -33,13 +33,13 @@ try {
   conversation.messages[5].text = "独一无二的历史搜索内容";
   conversation.messages[5].attachments = [{ id: crypto.randomUUID(), name: "test.txt" }];
   service.writeConversation(conversation);
-  const latest = request("GET", `conversations/${conversation.id}?limit=40`).payload.conversation;
+  const latest = request("GET", `conversations/${conversation.id}?view=page&limit=40`).payload.conversation;
   assert.equal(latest.messages.length, 40);
   assert.equal(latest.messageOffset, 85);
   assert.equal(latest.totalMessages, 125);
   assert.equal(latest.hasMore, true);
-  assert.equal(request("GET", `conversations/${conversation.id}`).payload.conversation.messages.length, 125,
-    "legacy clients keep their full history without an explicit page limit");
+  assert.equal(request("GET", `conversations/${conversation.id}`).payload.conversation.messages.length, 1,
+    "default opens only the latest interaction");
   const previous = request("GET", `conversations/${conversation.id}/messages?before=85&limit=40`).payload.conversation;
   assert.equal(previous.messageOffset, 45);
   assert.equal(previous.messages.at(-1).id, conversation.messages[84].id);

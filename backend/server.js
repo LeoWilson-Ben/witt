@@ -12,6 +12,8 @@ const {
 } = require("./chat-service");
 const { CodexAccountService } = require("./codex-account-service");
 const { ClaudeAccountService } = require("./claude-account-service");
+const { AntigravityAccountService } = require("./antigravity-account-service");
+const { ProviderRuntime } = require("./provider-runtime");
 const { claimStandby } = require("./failover");
 
 const host = "127.0.0.1";
@@ -51,6 +53,8 @@ const codexProfiles = {
     workDir: "/home/ubuntu",
   },
 };
+codexProfiles.claude = {id:"claude",label:"Claude",provider:"claude",workDir:"/home/ubuntu"};
+codexProfiles.antigravity = {id:"antigravity",label:"Gemini · Antigravity",provider:"antigravity",workDir:"/home/ubuntu"};
 const licreBuildDir = "/data/builds";
 const licreConsoleDir = "/data/xuanyu-build-console";
 const xuanyuPreviewDir = "/data/xuanyu-build-console/repo/build/web";
@@ -220,9 +224,20 @@ const claudeAccountService = new ClaudeAccountService({
       device.userId === ticket.owner && device.admin && !device.disabled);
   },
 });
+const antigravityAccountService = new AntigravityAccountService({
+  sendJson, readJsonBody,
+  isAuthorized: (ticket) => {
+    if (ticket.owner === "legacy") return !authService.initialized();
+    return authService.read().devices.some((device) => device.id === ticket.deviceId &&
+      device.userId === ticket.owner && device.admin && !device.disabled);
+  },
+});
+const providerRuntimeFor = (owner) => new ProviderRuntime({owner,
+  services:{claude:claudeAccountService,antigravity:antigravityAccountService}});
+chatService.providerRuntime = providerRuntimeFor("legacy");
 const codexAccountService = new CodexAccountService({
   codexBin,
-  profiles: codexProfiles,
+  profiles: Object.fromEntries(Object.entries(codexProfiles).filter(([, profile]) => !profile.provider)),
   sendJson,
 });
 const userChatServices = new Map();
@@ -290,6 +305,7 @@ function chatFor(principal) {
     defaultModel: principal.admin || principal.unrestrictedModels ? "gpt-6.1-sol" : "gpt-5.5",
     quotaExhausted: !principal.admin && !principal.unrestrictedModels,
     codexProfiles,
+    providerRuntime: providerRuntimeFor(principal.userId),
     allowedCodexProfiles: principal.admin
       ? Object.keys(codexProfiles)
       : (principal.codexProfiles || ["default"]),
@@ -750,6 +766,7 @@ http.createServer((req, res) => {
     return;
   }
   if (claudeAccountService.handle(req, res, url)) return;
+  if (antigravityAccountService.handle(req, res, url)) return;
   const legacyAuthorized = authorized(req);
   const imageRequest = /^\/chat-images\/[a-f0-9-]{36}$/.test(url.pathname);
   let principal = principalFor(req);
@@ -784,8 +801,9 @@ http.createServer((req, res) => {
       sendJson(res, 405, { error: "请求方式不支持" });
       return;
     }
-    const extraAccounts = principal.admin ? claudeAccountService.card(principal).then((card) => [card])
-      .catch(() => []) : Promise.resolve([]);
+    const extraAccounts = principal.admin ? Promise.allSettled([
+      claudeAccountService.card(principal),antigravityAccountService.card(principal),
+    ]).then(results=>results.filter(r=>r.status==="fulfilled").map(r=>r.value)) : Promise.resolve([]);
     extraAccounts.then((accounts) => codexAccountService.list(res,
       principal.admin ? null : (principal.codexProfiles || ["default"]), accounts));
     return;

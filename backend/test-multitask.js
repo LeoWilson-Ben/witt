@@ -5,7 +5,7 @@ const {test} = require('node:test'); const {ChatService} = require('./chat-servi
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function fixture(t, maxConcurrentTurns = 2) {
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'witt-multitask-'));
- const service=new ChatService({serverAdministrator:true,chatDir:path.join(root,'chat'),dataDir:path.join(root,'files'),imageDir:path.join(root,'images'),codexBin:'/bin/false',codexWorkDir:root,maxConcurrentTurns,allowedModels:null,sendJson(res,status,payload){res.status=status;res.payload=payload},readJsonBody(req,_limit,cb){cb(null,req.body||{})}});
+ const service=new ChatService({chatDir:path.join(root,'chat'),dataDir:path.join(root,'files'),imageDir:path.join(root,'images'),codexBin:'/bin/false',codexWorkDir:root,maxConcurrentTurns,allowedModels:null,sendJson(res,status,payload){res.status=status;res.payload=payload},readJsonBody(req,_limit,cb){cb(null,req.body||{})}});
  const client=service.clientFor(service.codexProfiles.default);const calls=[];let number=0;
  client.start=async()=>{};
  client.request=async(method,args)=>{ calls.push({method,args}); if(method==='thread/start')return {thread:{id:`thread-${++number}`}};if(method==='thread/resume')return {thread:{id:args.threadId}};if(method==='turn/start')return {turn:{id:`turn-${args.threadId}`}};return {}; };

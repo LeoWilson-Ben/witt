@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
   <meta name="theme-color" id="themeColor" content="#ffffff">
   <script>
     (() => {
@@ -78,7 +78,9 @@
 }
 @media (prefers-reduced-motion: reduce) { .task-status-strip, .workspace-overview, .history-load { animation: none; transition: none; } }
   </style>
-  <link rel="stylesheet" href="/vault/witt-interface-20261008.css?v=4-usage-restored">
+  <link rel="stylesheet" href="/vault/witt-interface-20261008.css?v=8-file-transfer-20261026">
+  <link rel="stylesheet" href="/vault/conversation-entry.css?v=20261028-6">
+  <link rel="stylesheet" href="/vault/provider-accounts.css?v=20261028-1">
 </head>
 <body>
   <div class="app-atmosphere" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -147,9 +149,6 @@
         </button>
         <button id="moreGroupButton" class="chat-more-item"><span>项目分组</span><small>整理历史，不更改工作目录</small></button>
         <button id="moreNotifyButton" class="chat-more-item" aria-pressed="false"><span>完成提醒（仅前台）</span><small id="completionNotifyLabel">已关闭</small></button>
-        <button id="deliveryButton" class="chat-more-item delivery-button" aria-label="查看交付文件">
-          <svg viewBox="0 0 24 24"><path d="M4 8.5h6l2-2h8v11H4v-9Z"/><path d="M12 10v5m0 0-2-2m2 2 2-2"/></svg><span>交付文件</span><b id="deliveryBadge">0</b>
-        </button>
         <button id="quotaButton" class="chat-more-item quota-button" aria-label="查看 Codex 额度" hidden>
           <svg viewBox="0 0 24 24"><path d="M5 18V9m7 9V5m7 13v-6"/></svg><span>额度与用量</span>
           <small><b id="fiveHourQuotaLabel">5小时 —</b><b id="weeklyQuotaLabel">本周 —</b></small>
@@ -176,16 +175,36 @@
     </header>
 
     <main class="chat-stage" id="chatStage">
-      <section class="welcome" id="welcome">
-        <div class="welcome-mark animate-blur-fade-up" style="animation-delay:100ms" aria-hidden="true"><span>W</span><i></i><b>SERVER NATIVE</b></div>
-        <span class="lumora-badge liquid-glass animate-blur-fade-up" style="animation-delay:160ms"><i></i>你的私人 Codex 已就绪</span>
-        <h1 class="animate-blur-fade-up" style="animation-delay:220ms">有什么可以帮忙的？</h1>
-        <p class="animate-blur-fade-up" style="animation-delay:280ms">在你的服务器上持续工作、调用工具、整理结果。上下文、文件和执行过程始终归你所有。</p>
-        <div class="suggestions">
-          <button data-prompt="我有一个新任务，先帮我梳理目标和下一步。"><span>01</span><b>开始新任务</b><small>从目标到交付，完整推进</small><i>↗</i></button>
-          <button data-prompt="查看我接下来发送的文件，先分析内容，不要修改任何数据。"><span>02</span><b>分析文件</b><small>表格、图片与文档</small><i>↗</i></button>
-          <button data-prompt="检查服务器当前状态，先告诉我是否有异常。"><span>03</span><b>检查服务器</b><small>服务、资源与异常</small><i>↗</i></button>
+      <section class="welcome" id="welcome" aria-labelledby="entryTitle">
+        <div class="entry-sculpture" aria-hidden="true">
+          <svg viewBox="0 0 216 164" fill="none">
+            <defs>
+              <linearGradient id="wittFoldA" x1="56" y1="35" x2="102" y2="128" gradientUnits="userSpaceOnUse"><stop stop-color="#f2dcff"/><stop offset=".5" stop-color="#ad82e8"/><stop offset="1" stop-color="#8156bd"/></linearGradient>
+              <linearGradient id="wittFoldB" x1="102" y1="50" x2="140" y2="127" gradientUnits="userSpaceOnUse"><stop stop-color="#fff2df"/><stop offset=".6" stop-color="#f2b9bd"/><stop offset="1" stop-color="#d68ca9"/></linearGradient>
+              <linearGradient id="wittFoldC" x1="170" y1="42" x2="119" y2="122" gradientUnits="userSpaceOnUse"><stop stop-color="#b5e3df"/><stop offset=".48" stop-color="#80b8cf"/><stop offset="1" stop-color="#5173b1"/></linearGradient>
+              <radialGradient id="wittShadow"><stop stop-color="#6686bf" stop-opacity=".22"/><stop offset="1" stop-color="#6686bf" stop-opacity="0"/></radialGradient>
+            </defs>
+            <ellipse cx="108" cy="139" rx="72" ry="17" fill="url(#wittShadow)"/>
+            <ellipse class="entry-orbit" cx="108" cy="85" rx="100" ry="57" transform="rotate(-18 108 85)" stroke="#bccbdf" stroke-opacity=".55" stroke-dasharray="2 6"/>
+            <path d="M45 43 72 38 98 111 79 130Z" fill="url(#wittFoldA)"/>
+            <path d="m79 130 24-82 24-3-29 66Z" fill="#7957b8"/>
+            <path d="m103 48 24-3 27 72-21 13Z" fill="url(#wittFoldB)"/>
+            <path d="m133 130 26-87 24-6-29 80Z" fill="url(#wittFoldC)"/>
+            <path d="m45 43 27-5m31 10 24-3m32-2 24-6" stroke="white" stroke-opacity=".85" stroke-width="1.4"/>
+            <path d="m72 38 26 73m29-66 27 72" stroke="#f5f9ff" stroke-opacity=".5"/>
+            <circle cx="22" cy="99" r="3" fill="#90b8d9"/><circle cx="192" cy="63" r="4" fill="#9acdc7"/>
+            <path d="M159 17v10m-5-5h10" stroke="#98aecf" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
         </div>
+        <div class="entry-hello">你的私人工作空间</div>
+        <h1 id="entryTitle">Hello, I&#39;m Witt.</h1>
+        <p>今天，想把什么变成现实？<br>从一个想法开始，我们一起把它完成。</p>
+        <div class="suggestions" aria-label="选择一个起点">
+          <button type="button" data-prompt="我想做一个新作品，先和我一起梳理想法，再把它实现。"><span><svg viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></svg></span><b>做点新东西</b><small>把灵感写成代码，做成作品</small><i aria-hidden="true">↗</i></button>
+          <button type="button" data-prompt="帮我读懂接下来添加的文件，提炼重点，并整理成清晰的结论。"><span><svg viewBox="0 0 24 24"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8Z M14 3v5h5M8 12h8m-8 4h5"/></svg></span><b>读懂一份文件</b><small>理清内容，找到有用的答案</small><i aria-hidden="true">↗</i></button>
+          <button type="button" data-prompt="帮我排查一个问题。先根据我提供的现象定位原因，再给出解决办法。"><span><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5M7.5 10.5h6m-3-3v6"/></svg></span><b>解决一个问题</b><small>一起排查，让事情顺利运转</small><i aria-hidden="true">↗</i></button>
+        </div>
+        <small class="entry-footnote">也可以直接输入，或添加文件开始</small>
       </section>
       <section class="task-status-strip" id="taskStatusStrip" aria-live="polite" hidden></section>
       <button class="history-load" id="loadOlderMessages" type="button" hidden>加载更早消息</button>
@@ -330,7 +349,7 @@
           </button>
           <button class="drawer-profile drawer-admin-entry" id="codexAccountsButton" hidden>
             <span class="profile-monogram"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg></span>
-            <span><strong>账号</strong><small>Codex</small></span>
+            <span><strong>账号</strong><small>GPT / Claude / Gemini</small></span>
             <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
           </button>
         </div>
@@ -475,10 +494,10 @@
     <div class="sheet-panel codex-account-panel">
       <div class="sheet-handle"></div>
       <div class="sheet-head">
-        <div><span class="eyebrow">CODEX ACCOUNTS</span><h2>账号与项目</h2></div>
+        <div><span class="eyebrow">AI ACCOUNTS</span><h2>账号管理</h2></div>
         <button class="icon-button" id="closeCodexAccounts" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </div>
-      <p class="codex-account-intro">每个账号的登录状态、会话与额度相互独立。</p>
+      <p class="codex-account-intro">按 GPT、Claude、Gemini 分类管理，模型与思考设置随账号切换。</p>
       <div class="codex-account-list" id="codexAccountList">
         <article class="codex-account-card loading"><span class="codex-account-avatar"></span><div class="codex-account-identity"><strong>正在读取账号</strong><small>请稍候…</small></div></article>
       </div>
@@ -563,21 +582,6 @@
     </div>
   </aside>
 
-  <aside class="delivery-sheet" id="deliverySheet" aria-hidden="true">
-    <div class="sheet-backdrop" id="deliveryBackdrop"></div>
-    <div class="sheet-panel delivery-panel">
-      <div class="sheet-handle"></div>
-      <div class="sheet-head delivery-sheet-head">
-        <div class="delivery-title-lockup">
-          <span class="delivery-head-icon"><svg viewBox="0 0 24 24"><path d="M4 8.5h6l2-2h8v11H4v-9Z"/><path d="M12 10v5m0 0-2-2m2 2 2-2"/></svg></span>
-          <div><span class="eyebrow">DELIVERABLES</span><h2>交付文件</h2><small id="deliverySummary">当前对话暂无文件</small></div>
-        </div>
-        <button class="icon-button" id="closeDelivery" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
-      </div>
-      <p class="delivery-intro"><span>✓</span>只有你明确要求交付的文件才会保存在这里，可直接下载到手机。</p>
-      <div class="delivery-list" id="deliveryList"></div>
-    </div>
-  </aside>
 
 
 
@@ -635,8 +639,8 @@
       <button class="workspace-refresh" id="refreshWorkspace">刷新状态</button>
     </section>
   </aside>
-  <script src="/vault/browser-bridge.js?v=1.0.0"></script>
-  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1"></script>
+  <script src="/vault/browser-bridge.js?v=20261028-history"></script>
+  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2"></script>
   <script src="/vault/sidebar-layout.js?v=20261008-2"></script>
   <script src="/vault/ui-upgrades.js?v=20261008-2"></script>
   <script src="/vault/witt-features.js?v=20261008-1"></script>

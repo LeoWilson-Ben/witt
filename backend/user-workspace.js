@@ -83,6 +83,15 @@ class UserWorkspace {
   if(route==='/chat/schedules'&&req.method==='GET'){reply(200,{schedules:this.data.schedules.map(x=>this.publicSchedule({...x,runs:x.runs.map(run=>{const c=run.conversationId&&s.readConversation(run.conversationId);return c?{...run,taskStatus:s.publicConversation(c,false).taskStatus.state}:run;})}))});return true;}
   const project=route.match(/^\/chat\/projects\/([a-f0-9-]{36})(\/conversations)?$/),schedule=route.match(/^\/chat\/schedules\/([a-f0-9-]{36})(\/run)?$/),action=route.match(/^\/chat\/conversations\/([a-f0-9-]{36})\/(cancel|retry|artifact-content)$/);
   if(project&&req.method==='GET'){const p=this.data.projects.find(p=>p.id===project[1]);reply(p?200:404,p?{project:this.projectPayload(p)}:{error:'项目不存在'});return true;}
+  // Existing Android clients whitelist this conversation-content route. Keep the
+  // normal file preview intact and dispatch the explicit history view to the
+  // same validated day-pagination handler used by browsers.
+  if(action && action[2] === 'artifact-content' && req.method === 'GET' && url.searchParams.get('view') === 'history') {
+    const historyUrl = new URL(url);
+    historyUrl.pathname = `/chat/conversations/${action[1]}/messages`;
+    historyUrl.searchParams.set('window', '24h');
+    return s.handle(req, res, historyUrl, principal);
+  }
   if(action&&action[2]==='artifact-content'&&req.method==='GET'){this.artifactContent(res,action[1],url.searchParams.get('messageId'),url.searchParams.get('artifactId'),Number(url.searchParams.get('page'))||1).catch(()=>reply(422,{error:'此文件无法生成预览，请下载查看'}));return true;}
   if(!(route==='/chat/projects'&&req.method==='POST'||route==='/chat/schedules'&&req.method==='POST'||project&&['PATCH','POST'].includes(req.method)||schedule&&['PATCH','POST'].includes(req.method)||action&&['cancel','retry'].includes(action[2])&&req.method==='POST'))return false;
   s.readJsonBody(req,32*1024,async(error,body)=>{if(error){reply(400,{error:error.message});return;}try{

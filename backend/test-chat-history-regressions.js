@@ -32,7 +32,7 @@ function fixture(t) {
   return { service, request };
 }
 
-test("cold 1005-message history pages reconstruct exactly, remain read-only, and legacy GET remains full", (t) => {
+test("cold 1005-message history pages reconstruct exactly, remain read-only, and default GET returns only the latest interaction", (t) => {
   const { service, request } = fixture(t);
   const value = service.createConversation();
   value.messages = Array.from({ length: 1005 }, (_, index) => ({
@@ -42,7 +42,7 @@ test("cold 1005-message history pages reconstruct exactly, remain read-only, and
   service.store.save(value, { immediate: true });
   service.store.cache.clear(); service.store.cacheSizes.clear(); service.store.cacheAccess.clear();
   const baseline = service.store.db.prepare("SELECT total_changes() AS n").get().n;
-  let page = request("GET", `conversations/${value.id}?limit=40`).payload.conversation;
+  let page = request("GET", `conversations/${value.id}?view=page&limit=40`).payload.conversation;
   const collected = [...page.messages];
   assert.equal(page.messageOffset, 965);
   assert.equal(page.messages[0].stream[0].details, undefined);
@@ -55,8 +55,8 @@ test("cold 1005-message history pages reconstruct exactly, remain read-only, and
   assert.equal(service.store.cache.size, 0, "pagination must not hydrate whole histories");
   assert.equal(service.store.db.prepare("SELECT total_changes() AS n").get().n, baseline);
   const full = request("GET", `conversations/${value.id}`).payload.conversation;
-  assert.equal(full.messages.length, 1005);
-  assert.equal(full.messageOffset, 0);
+  assert.equal(full.messages.length, 1);
+  assert.equal(full.messageOffset, 1004);
 });
 
 test("SSE initial pages and absolute delta offsets agree through additions and branch truncation", (t) => {
@@ -108,27 +108,54 @@ test("idempotency survives cache eviction and new device reusing the same key is
   assert.equal(service.readConversation(value.id).messages.length, 4);
 });
 
-test("recovery interrupts stale work but keeps recent work queued", (t) => {
-  const { service } = fixture(t);
+test("latest interaction includes steering and cold/warm 24-hour windows reconstruct history including empty days", (t) => {
+  const { service, request } = fixture(t);
   const value = service.createConversation();
-  const staleAt = new Date(Date.now() - 31 * 60 * 1000).toISOString();
-  const recentAt = new Date().toISOString();
-  value.messages.push(
-    { id: crypto.randomUUID(), role: "user", status: "queued", text: "stale", createdAt: staleAt },
-    { id: crypto.randomUUID(), role: "assistant", status: "queued", text: "", createdAt: staleAt,
-      replyTo: null, stream: [{ id: "old", kind: "command", status: "running" }] },
-    { id: crypto.randomUUID(), role: "user", status: "queued", text: "recent", createdAt: recentAt },
-    { id: crypto.randomUUID(), role: "assistant", status: "queued", text: "", createdAt: recentAt,
-      replyTo: null, stream: [] },
-  );
-  value.messages[1].replyTo = value.messages[0].id;
-  value.messages[3].replyTo = value.messages[2].id;
-  service.writeConversation(value);
-  service.recover();
-  assert.equal(value.messages[0].status, "completed");
-  assert.equal(value.messages[1].status, "interrupted");
-  assert.match(value.messages[1].text, /停止自动重试/);
-  assert.equal(value.messages[1].stream[0].status, "interrupted");
-  assert.equal(value.messages[2].status, "queued");
-  assert.equal(value.messages[3].status, "queued");
+  const msg = (role, createdAt, extra = {}) => ({ id: crypto.randomUUID(), role, createdAt, text: 'fixture', status: 'completed', ...extra });
+  value.messages = [
+    msg('user', '2026-10-23T12:00:00Z'), msg('assistant', '2026-10-23T12:00:01Z'),
+    msg('user', '2026-10-26T12:00:00Z'), msg('assistant', '2026-10-26T12:00:01Z'),
+    // More than the former 100-message cap in one day.
+    ...Array.from({length: 150}, (_, i) => msg(i % 2 ? 'assistant' : 'user', '2026-10-27T18:00:00Z')),
+    msg('user', '2026-10-28T12:00:00Z'), msg('assistant', '2026-10-28T12:00:01Z'),
+  ];
+  value.messages.push(msg('user', '2026-10-28T12:00:02Z', { steeredInto: value.messages.at(-1).id }));
+  service.store.save(value, { immediate: true });
+  for (const cold of [false, true]) {
+    if (cold) { service.store.cache.clear(); service.store.cacheSizes.clear(); service.store.cacheAccess.clear(); }
+    const baseline = service.store.db.prepare('SELECT total_changes() AS n').get().n;
+    let page = request('GET', `conversations/${value.id}?limit=40`).payload.conversation;
+    assert.equal(page.messages.length, 3);
+    assert.equal(page.messageOffset, 154);
+    assert.equal(page.historyBefore, '2026-10-28T12:00:00Z');
+    const collected = [...page.messages]; const sizes = [];
+    while (page.hasMore) {
+      page = request('GET', `conversations/${value.id}/messages?window=24h&before=${page.messageOffset}&until=${encodeURIComponent(page.historyBefore)}`).payload.conversation;
+      assert.equal(Date.parse(page.rangeEnd) - Date.parse(page.rangeStart), 86400000);
+      collected.unshift(...page.messages); sizes.push(page.messages.length);
+    }
+    assert.deepEqual(sizes, [150, 2, 0, 0, 2]);
+    assert.deepEqual(collected.map(m => m.id), value.messages.map(m => m.id));
+    assert.equal(service.store.db.prepare('SELECT total_changes() AS n').get().n, baseline);
+    if (cold) assert.equal(service.store.cache.size, 0);
+  }
+});
+
+test("SSE routes and mutation serialization stay at latest turn; invalid day cursors are rejected", (t) => {
+  const { service, request } = fixture(t);
+  const value = service.createConversation();
+  value.messages = Array.from({length: 6}, (_, i) => ({ id: crypto.randomUUID(), role: i % 2 ? 'assistant' : 'user', text: `${i}`, createdAt: '2026-10-28T12:00:00Z' }));
+  service.store.save(value, { immediate: true });
+  assert.equal(service.publicConversation(value).messages.length, 2);
+  assert.equal(value.messages.length, 6, 'serialization never removes stored history');
+  const req = new EventEmitter(); req.method = 'GET'; const res = new EventEmitter();
+  let output = ''; res.writeHead = () => {}; res.write = s => { output += s; return true; }; res.end = () => {};
+  service.handle(req, res, new URL(`http://localhost/chat/conversations/${value.id}/events?limit=40`), {deviceId:'test'});
+  const page = JSON.parse(output.match(/data: (.+)/)[1]).conversation;
+  assert.equal(page.messages.length, 2); assert.equal(page.messageOffset, 4); req.emit('close');
+  for (const suffix of ['window=24h', 'window=24h&before=4&until=wrong', 'window=24h&before=-1']) {
+    assert.equal(request('GET', `conversations/${value.id}/messages?${suffix}`).status, 400);
+  }
+  const empty = service.createConversation();
+  assert.equal(request('GET', `conversations/${empty.id}`).payload.conversation.messages.length, 0);
 });

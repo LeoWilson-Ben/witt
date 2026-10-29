@@ -1,4 +1,5 @@
 "use strict";
+const { latestTurn } = require("./history-policy");
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -23,6 +24,7 @@ const ALLOWED_ACCESS = new Set(["read-only", "workspace-write", "danger-full-acc
 const MAX_ARTIFACT_BYTES = 500 * 1024 * 1024;
 const MAX_INLINE_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_INLINE_PREVIEW_BYTES = 5 * 1024 * 1024;
+const TEXT_ARTIFACT_PATTERN = /\.(txt|md|markdown|csv|tsv|json|jsonl|js|mjs|cjs|ts|tsx|jsx|py|java|kt|dart|css|scss|html?|xml|svg|yaml|yml|log|sh|bash|sql|c|h|cpp|hpp|rs|go|rb|php|swift|toml|ini|conf|vue|svelte)$/i;
 const ARTIFACT_PREVIEW_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_RECOVERY_MAX_AGE_MS = 30 * 60 * 1000;
 const DEFAULT_TURN_IDLE_TIMEOUT_MS = 20 * 60 * 1000;
@@ -69,6 +71,7 @@ class ChatService {
     this.turnIdleTimeoutMs = Number.isFinite(options.turnIdleTimeoutMs)
       ? Math.max(1_000, options.turnIdleTimeoutMs)
       : DEFAULT_TURN_IDLE_TIMEOUT_MS;
+    this.providerRuntime = options.providerRuntime || null;
     this.codexProfiles = options.codexProfiles || {
       default: {
         id: "default",
@@ -153,7 +156,7 @@ class ChatService {
       "model_providers.witt-deepseek.stream_max_retries=2",
       "model_providers.witt-deepseek.stream_idle_timeout_ms=300000",
     );
-    const client = sharedAppServer({
+    const client = profile.provider && this.providerRuntime ? this.providerRuntime.client(profile) : sharedAppServer({
       codexBin: this.codexBin,
       cwd: profile.workDir,
       home: "/home/ubuntu",
@@ -190,7 +193,20 @@ class ChatService {
     return client;
   }
 
+  defaultModelFor(profileId) {
+    const profile=this.codexProfiles[profileId];
+    return profile?.provider && this.providerRuntime ? this.providerRuntime.defaultModel(profile.provider) : this.defaultModel;
+  }
+
+  reasoningFor(model, profileId, effort) {
+    const profile=this.codexProfiles[profileId];
+    return profile?.provider && this.providerRuntime ? this.providerRuntime.reasoning(model,profile,effort)
+      : ALLOWED_REASONING.has(effort) ? effort : "medium";
+  }
+
   modelAllowed(model, profileId = this.defaultCodexProfile) {
+    const profile=this.codexProfiles[profileId];
+    if(profile?.provider) return Boolean(this.providerRuntime && this.providerRuntime.allowed(model,profile));
     if (DEEPSEEK_MODELS.has(model)) return this.deepseekEnabled &&
       (this.allowedModels === null || this.allowedModels.has(model));
     const dynamic = this.availableModels.get(profileId);
@@ -271,8 +287,8 @@ class ChatService {
   }
 
   subscribeConversation(req, res, conversationId, limit = null) {
-    const conversation = limit === null ? this.readConversation(conversationId)
-      : this.store.loadPage(conversationId, { limit });
+    const conversation = limit === "latest" ? this.store.loadLatest(conversationId)
+      : limit === null ? this.readConversation(conversationId) : this.store.loadPage(conversationId, { limit });
     if (!conversation || conversation.archived) {
       this.sendJson(res, 404, { error: "对话不存在" });
       return;
@@ -374,8 +390,7 @@ class ChatService {
   }
 
   issueArtifactPreviewToken(messageId, artifact) {
-    const extension = path.extname(String(artifact?.name || "")).toLowerCase();
-    if (!artifact?.id || !artifact?.sourcePath || !['.html', '.htm'].includes(extension) ||
+    if (!artifact?.id || !artifact?.sourcePath || !TEXT_ARTIFACT_PATTERN.test(artifact.name || '') ||
         Number(artifact.size || 0) > MAX_INLINE_PREVIEW_BYTES) return "";
     const now = Date.now();
     for (const [token, entry] of artifactPreviewTokens) {
@@ -411,7 +426,7 @@ class ChatService {
     const active = [...this.activeTurns.values()].find((turn) => turn.messageId === assistant.id);
     const verified = this.deliveryArtifact(requestedPath);
     const extension = path.extname(String(verified?.name || "")).toLowerCase();
-    if (!verified || !['.html', '.htm'].includes(extension) ||
+    if (!verified || !TEXT_ARTIFACT_PATTERN.test(artifact.name || '') ||
         verified.size > MAX_INLINE_PREVIEW_BYTES) return false;
     let source;
     try {
@@ -473,6 +488,7 @@ class ChatService {
   }
 
   publicConversation(conversation, includeMessages = true) {
+    if (includeMessages && !Number.isInteger(conversation.messageOffset)) conversation = latestTurn(conversation);
     const profile = this.profileFor(conversation);
     const messages = conversation.messages || [];
     const active = this.activeFor(conversation.id);
@@ -503,13 +519,14 @@ class ChatService {
         completed: "已完成", interrupted: "已暂停", idle: "尚未开始",
       }[taskState] },
       activeDeviceLabel: active?.ownerDeviceId ? this.deviceLabel(active.ownerDeviceId) : null,
+      provider: profile.provider || "codex",
       codexProfile: profile.id,
       codexProfileLabel: profile.label,
       codexProfileAllowed: this.profileAllowed(conversation),
       hasCodexContext: Boolean(conversation.codexThreadId),
       model: this.modelAllowed(conversation.model, profile.id)
-        ? conversation.model : this.defaultModel,
-      reasoning: conversation.reasoning || "medium",
+        ? conversation.model : this.defaultModelFor(profile.id),
+      reasoning: this.reasoningFor(conversation.model, profile.id, conversation.reasoning),
       accessMode: executionPolicy(this.serverAdministrator, conversation).sandbox,
       workDir: Object.hasOwn(conversation, "workDir")
         ? (conversation.workDir || "") : this.codexWorkDir,
@@ -530,6 +547,9 @@ class ChatService {
       result.messageOffset = conversation.messageOffset || 0;
       result.totalMessages = conversation.totalMessages ?? messages.length;
       result.hasMore = result.messageOffset > 0;
+      for (const key of ["historyBefore", "rangeStart", "rangeEnd", "pageEnd"]) {
+        if (conversation[key] !== undefined) result[key] = conversation[key];
+      }
     }
     return result;
   }
@@ -783,7 +803,8 @@ class ChatService {
 
   profileFor(conversation) {
     const requested = String(conversation?.codexProfile || "default");
-    return this.codexProfiles[requested] || this.codexProfiles.default;
+    const profile=this.codexProfiles[requested] || this.codexProfiles.default;
+    return profile.provider && this.providerRuntime ? {...profile,codexHome:this.providerRuntime.home(profile.provider)} : profile;
   }
 
   profileAllowed(conversation) {
@@ -799,6 +820,8 @@ class ChatService {
       throw new Error("该用户不能使用这个 Codex 账号");
     }
     const profile = this.codexProfiles[requestedProfile];
+    const selectedModel=this.modelAllowed(model,profile.id)?model:this.defaultModelFor(profile.id);
+    if (!selectedModel) throw new Error("请先登录对应账号并刷新模型列表");
     const requestedWorkDir = workDir || (profile.id === "default" ? "" : profile.workDir);
     const now = new Date().toISOString();
     const conversation = {
@@ -809,8 +832,8 @@ class ChatService {
       archived: false,
       codexThreadId: null,
       codexProfile: profile.id,
-      model: this.modelAllowed(model, profile.id) ? model : this.defaultModel,
-      reasoning: ALLOWED_REASONING.has(reasoning) ? reasoning : "medium",
+      model: selectedModel,
+      reasoning: this.reasoningFor(selectedModel,profile.id,reasoning),
       accessMode: ALLOWED_ACCESS.has(accessMode) ? accessMode : "danger-full-access",
       workDir: this.normalizeWorkDir(requestedWorkDir),
       messages: [],
@@ -860,6 +883,11 @@ class ChatService {
       return;
     }
     const profile = this.codexProfiles[profileId];
+    if(profile.provider){
+      if(!this.providerRuntime){respond(res,503,{error:"账号路由尚未就绪"});return;}
+      try{respond(res,200,await this.providerRuntime.capabilities(profile));}catch{respond(res,503,{error:"无法读取这个账号的模型列表，请检查登录状态"});}
+      return;
+    }
     const cached = this.capabilityCache.get(profile.id);
     if (cached && Date.now() - cached.cachedAt < 5 * 60 * 1000) {
       respond(res, 200, cached.payload);
@@ -1043,7 +1071,14 @@ class ChatService {
         this.sendJson(res, 400, { error: "分页参数无效" });
         return true;
       }
-      const conversation = this.store.loadPage(messageMatch[1], {
+      const dayWindow = url.searchParams.get("window") === "24h";
+      const until = url.searchParams.get("until");
+      if (dayWindow && (before === null || (until !== null && !Number.isFinite(Date.parse(until))))) {
+        this.sendJson(res, 400, { error: "历史时间范围无效" });
+        return true;
+      }
+      const conversation = dayWindow ? this.store.loadDay(messageMatch[1], { before: Number(before), until })
+        : this.store.loadPage(messageMatch[1], {
         ...(before !== null ? { before: Number(before) } : {}),
         limit: Math.min(100, Number(limit || 40)),
       });
@@ -1075,7 +1110,7 @@ class ChatService {
         this.sendJson(res, 400, { error: "分页参数无效" });
         return true;
       }
-      this.subscribeConversation(req, res, eventsMatch[1], limit === null ? null : Math.min(100, Number(limit)));
+      this.subscribeConversation(req, res, eventsMatch[1], "latest");
       return true;
     }
 
@@ -1139,8 +1174,9 @@ class ChatService {
         this.sendJson(res, 400, { error: "分页参数无效" });
         return true;
       }
-      const conversation = limit === null ? this.readConversation(conversationMatch[1])
-        : this.store.loadPage(conversationMatch[1], { limit: Math.min(100, Number(limit)) });
+      const conversation = url.searchParams.get("view") === "page"
+        ? this.store.loadPage(conversationMatch[1], { limit: Math.min(100, Number(limit || 40)) })
+        : this.store.loadLatest(conversationMatch[1]);
       if (!conversation || conversation.archived) {
         this.sendJson(res, 404, { error: "对话不存在" });
         return true;
@@ -1354,19 +1390,21 @@ class ChatService {
         this.sendJson(res, 200, { conversation: this.publicConversation(conversation) });
         return;
       }
+      const targetProfile=Object.hasOwn(body || {}, "codexProfile") ? this.codexProfiles[String(body.codexProfile||"")] : this.profileFor(conversation);
+      if(!targetProfile || !this.allowedCodexProfiles.has(targetProfile.id)) {this.sendJson(res,403,{error:"该账号不可用"});return;}
       const requestedModel = body?.model == null
-        ? (this.modelAllowed(conversation.model, this.profileFor(conversation).id)
-          ? conversation.model : this.defaultModel)
+        ? (this.modelAllowed(conversation.model, targetProfile.id)
+          ? conversation.model : this.defaultModelFor(targetProfile.id))
         : body.model;
       const requestedReasoning = body?.reasoning == null
-        ? (ALLOWED_REASONING.has(conversation.reasoning) ? conversation.reasoning : "medium")
+        ? this.reasoningFor(requestedModel,targetProfile.id,conversation.reasoning)
         : body.reasoning;
       const requestedAccess = body?.accessMode == null
         ? (ALLOWED_ACCESS.has(conversation.accessMode)
           ? conversation.accessMode : "danger-full-access")
         : body.accessMode;
-      if (!this.modelAllowed(requestedModel, this.profileFor(conversation).id) ||
-          !ALLOWED_REASONING.has(requestedReasoning) ||
+      if (!this.modelAllowed(requestedModel, targetProfile.id) ||
+          (!ALLOWED_REASONING.has(requestedReasoning) || this.reasoningFor(requestedModel,targetProfile.id,requestedReasoning)!==requestedReasoning) ||
           !ALLOWED_ACCESS.has(requestedAccess)) {
         this.sendJson(res, 400, { error: "模型、智能程度或访问权限不可用" });
         return;
@@ -1392,7 +1430,7 @@ class ChatService {
           return;
         }
       }
-      let requestedProfile = this.profileFor(conversation);
+      let requestedProfile = targetProfile;
       if (Object.hasOwn(body || {}, "codexProfile")) {
         requestedProfile = this.codexProfiles[String(body.codexProfile || "")];
         if (!requestedProfile) {
@@ -1548,6 +1586,8 @@ class ChatService {
   }
 
   async readAccountUsage(res, conversationId = null) {
+    const providerConversation=conversationId && this.readConversation(conversationId);
+    if(providerConversation && this.profileFor(providerConversation).provider){this.sendJson(res,200,{provider:this.profileFor(providerConversation).provider,rateLimits:null,usage:null});return;}
     if (this.readConversation(conversationId)) this.lastUsageConversationId = conversationId;
     if (this.quotaExhausted) {
       this.sendJson(res, 200, this.withConversationUsage({
@@ -1635,6 +1675,9 @@ class ChatService {
   }
 
   async consumeRateLimitReset(res, conversationId = null) {
+    const providerConversation=conversationId && this.readConversation(conversationId);
+    if(providerConversation && this.profileFor(providerConversation).provider){this.sendJson(res,400,{error:"这个账号不支持 Codex 额度重置"});return;}
+
     if (this.quotaExhausted) {
       this.sendJson(res, 429, { error: QUOTA_EXHAUSTED_MESSAGE });
       return;
@@ -2282,7 +2325,7 @@ class ChatService {
   buildDeveloperInstructions(conversation) {
     const workDir = this.effectiveWorkDir(conversation);
     return [
-      "你是运行在用户私人服务器上的 Codex 助手 Witt。",
+      "你是运行在用户私人服务器上的 AI 助手维特（Witt）。",
       `固定工作目录：${workDir}`,
       `Witt 附件目录：${this.dataDir}`,
       "记住用户在本线程中的上下文，回答使用简洁自然的中文。",
@@ -2296,8 +2339,8 @@ class ChatService {
       "修改服务代码后先完成语法或构建校验，再重启对应服务并检查健康状态。",
       "删除大量数据、覆盖数据库、修改防火墙或其他难以恢复的操作，执行前仍需向用户明确说明目标和影响。",
       "兼容备用通道：修改 drop-vault 后端但不适合直接重启时，仍可写入 /data/drop-vault/restart-request 请求延迟校验重启。",
-      "右上角交付区是用户主动索取文件时使用的下载通道，不是每轮回复存档。",
-      "仅当用户明确要求交付、打包、下载，或要求把服务器上的某个文件放入交付区时，才在最终回复末尾逐行输出 [[deliver:/绝对/文件路径]]。普通回答或普通代码修改绝对不要输出该标记。只能交付普通文件，目录需先打包。",
+      "用户索取的文件显示在所属回复尾部的文件主题块中，附下载按钮；文本类文件可点击进入预览页，其他文件不显示进入箭头。没有独立交付区。",
+      "仅当用户明确要求交付、打包、下载，或要求提供服务器上的某个文件时，才在最终回复末尾逐行输出 [[deliver:/绝对/文件路径]]。普通回答或普通代码修改绝对不要输出该标记。只能交付普通文件，目录需先打包。",
       "用户明确要求制作或展示前端动画、交互网页、网页演示，或要求像 Claude Artifact 一样直接预览时，视为明确要求交付：请创建一个自包含的单文件 .html，且仅在这种情况下在最终回复末尾输出对应 [[deliver:/绝对/文件路径]]。不要使用外部 CDN、远程图片、网络请求或额外本地资源；Witt 会在独立 Artifact 工作区运行页面，桌面端位于聊天右侧、手机端使用单栏工作区。页面只实现作品内容，不要自行重复宿主的标题栏、版本、预览/源码、复制、下载或返回控件。",
       "制作交互网页时使用 Claude Artifact 式增量预览协议：始终维护同一个自包含 .html 文件；完成第一个可独立运行且结构闭合的版本后，在 commentary 中单独输出 [[preview:/绝对/文件路径]]。此控制行不会展示给用户。之后每次完成一轮可独立运行的界面更新，再输出同一控制行。只有在 HTML、BODY 均完整闭合且当前版本可运行时才能发布；不要发布正在写入的半成品。",
       "Artifact 页面必须响应式适配手机宽度和横竖屏，避免固定桌面画布。聊天中直接展示内容本体，不要在 HTML 内再绘制外层设备框、预览卡标题栏、下载按钮或放大按钮。",
@@ -2387,8 +2430,8 @@ class ChatService {
     this.writeConversation(conversation);
 
     const model = this.modelAllowed(conversation.model, this.profileFor(conversation).id)
-      ? conversation.model : this.defaultModel;
-    const reasoning = ALLOWED_REASONING.has(conversation.reasoning) ? conversation.reasoning : "medium";
+      ? conversation.model : this.defaultModelFor(this.profileFor(conversation).id);
+    const reasoning = this.reasoningFor(model,this.profileFor(conversation).id,conversation.reasoning);
     const policy = executionPolicy(this.serverAdministrator, conversation);
     const accessMode = policy.sandbox;
     const workDir = this.effectiveWorkDir(conversation);
@@ -2434,7 +2477,7 @@ class ChatService {
       const latestConversation = this.readConversation(conversation.id) || conversation;
       latestConversation.codexThreadId = threadResult.thread.id;
       active.threadId = threadResult.thread.id;
-      active.generatedImageFiles =
+      active.generatedImageFiles = profile.provider ? new Set() :
         this.generatedImageFiles(threadResult.thread.id, profile.codexHome);
       this.writeConversation(latestConversation);
       const turnResult = await client.request("turn/start", {
@@ -2462,7 +2505,7 @@ class ChatService {
       this.flushPendingSteers(active);
     } catch (error) {
       if (this.activeFor(conversation.id) === active) {
-        this.failActive(`无法启动 Codex：${error.message}`, conversation.id);
+        this.failActive(`无法启动 ${profile.label || "Codex"}：${error.message}`, conversation.id);
       }
     }
   }
@@ -2792,7 +2835,7 @@ class ChatService {
         this.storeImagePath(artifact.sourcePath, "delivery", artifact.id),
       );
     }
-    if (success && active?.threadId === conversation.codexThreadId) {
+    if (success && !this.profileFor(conversation).provider && active?.threadId === conversation.codexThreadId) {
       this.captureNewGeneratedImages(assistant, active.threadId,
         active.generatedImageFiles, active.codexHome).forEach((image, index) => {
         this.upsertStream(assistant, `generated-image-${image.id}-${index}`, {
@@ -2921,7 +2964,7 @@ class ChatService {
       ".jpeg": "image/jpeg",
       ".webp": "image/webp",
       ".gif": "image/gif",
-    })[extension] || "application/octet-stream";
+    })[extension] || (TEXT_ARTIFACT_PATTERN.test(filePath) ? "text/plain" : "application/octet-stream");
   }
 
   downloadArtifact(res, conversationId, messageId, artifactId) {
@@ -3004,8 +3047,7 @@ class ChatService {
     const artifact = this.artifactForToken(entry);
     if (!artifact) return false;
     const verified = this.deliveryArtifact(artifact.sourcePath);
-    const extension = path.extname(String(artifact.name || "")).toLowerCase();
-    if (!verified || !['.html', '.htm'].includes(extension) ||
+    if (!verified || !TEXT_ARTIFACT_PATTERN.test(artifact.name || '') ||
         verified.size > MAX_INLINE_PREVIEW_BYTES) return false;
     let source;
     try { source = fs.readFileSync(verified.sourcePath, "utf8"); } catch { return false; }
@@ -3022,7 +3064,7 @@ class ChatService {
 
   sendArtifactPreview(res, artifact) {
     const extension = path.extname(String(artifact?.name || "")).toLowerCase();
-    if (!artifact?.sourcePath || !['.html', '.htm'].includes(extension)) {
+    if (!artifact?.sourcePath || !TEXT_ARTIFACT_PATTERN.test(artifact.name || '')) {
       this.sendJson(res, 404, { error: "该交付文件不支持预览" });
       return;
     }
@@ -3041,6 +3083,11 @@ class ChatService {
     } catch {
       this.sendJson(res, 410, { error: "交付文件已移动或不可预览" });
       return;
+    }
+    if (!['.html', '.htm'].includes(extension)) {
+      const escapeText = (value) => String(value).replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      source = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeText(artifact.name)}</title><style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;padding:28px 24px;color:#302e2a;background:#faf9f6}pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:2;font:14px/1.85 ui-monospace,SFMono-Regular,Consolas,monospace}@media(max-width:480px){body{padding:20px 16px}pre{font-size:13px}}@media(prefers-color-scheme:dark){body{color:#e5e2dc;background:#232220}}</style></head><body><pre>${escapeText(source)}</pre></body></html>`;
     }
     const bridge = `<script>(()=>{const post=(value)=>parent.postMessage(value,"*");const send=()=>{const d=document.documentElement,b=document.body;post({type:"witt-artifact-ready",height:Math.max(d.scrollHeight,d.offsetHeight,b?b.scrollHeight:0,b?b.offsetHeight:0)})};addEventListener("error",e=>post({type:"witt-artifact-error",message:e.message||"页面运行错误",line:e.lineno||0}));addEventListener("unhandledrejection",e=>post({type:"witt-artifact-error",message:String(e.reason?.message||e.reason||"页面运行错误")}));addEventListener("load",send);addEventListener("resize",send);if(typeof ResizeObserver!=="undefined")new ResizeObserver(send).observe(document.documentElement);setTimeout(send,0);setTimeout(send,250)})()<\/script>`;
     source = /<\/body\s*>/i.test(source)
