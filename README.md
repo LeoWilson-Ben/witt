@@ -10,9 +10,9 @@ Witt 是一个自托管的 AI 工作台。它把服务器上的 CLI 代理连接
 
 ## 一分钟认识维特
 
-[![观看维特一分钟介绍：任务执行、作品预览、多任务并行、文件交付与跨设备接续](docs/media/witt-intro-play.png)](https://leowilson-ben.github.io/witt/video.html)
+https://github.com/user-attachments/assets/eb5d7584-f53d-49c2-81bb-b66343b81266
 
-**[▶ 打开播放器观看](https://leowilson-ben.github.io/witt/video.html)** · 60 秒 · 1080p · 含音乐
+60 秒 · 1080p · 含音乐。展示任务执行、作品预览、多任务并行、文件交付与跨设备接续。
 
 [下载 MP4](https://github.com/LeoWilson-Ben/witt/raw/refs/heads/main/docs/media/witt-intro-60s.mp4)
 
