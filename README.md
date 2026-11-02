@@ -1,3 +1,5 @@
+<img src="docs/media/witt-icon.svg" alt="维特 Witt 应用图标" width="112" height="112">
+
 # 维特 · Witt
 
 **在自己的服务器上运行 AI 助手，在浏览器和 Android 手机上接着工作。**
