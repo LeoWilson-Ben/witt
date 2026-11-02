@@ -8,6 +8,14 @@
 
 Witt 是一个自托管的 AI 工作台。它把服务器上的 CLI 代理连接到聊天界面，让你通过手机或电脑继续会话、查看命令与文件修改、管理项目，并预览和下载助手生成的作品。
 
+## 一分钟认识维特
+
+[![观看维特一分钟介绍：任务执行、作品预览、多任务并行、文件交付与跨设备接续](docs/media/witt-intro-cover.jpg)](docs/media/witt-intro-60s.mp4)
+
+**[▶ 观看完整视频](docs/media/witt-intro-60s.mp4)** · 60 秒 · 1080p · 含音乐
+
+[下载 MP4](https://github.com/LeoWilson-Ben/witt/raw/refs/heads/main/docs/media/witt-intro-60s.mp4)
+
 当前源码接入 **Codex、Claude Code 和 Antigravity CLI**。模型能力由各自的 CLI、登录账号和上游服务决定；Witt 不提供模型账号、订阅、共享密钥或免费额度。
 
 Witt is a self-hosted AI workspace for the browser and Android, connecting server-side CLI agents to persistent conversations, project files, and interactive artifacts.
