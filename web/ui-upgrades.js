@@ -42,6 +42,7 @@
     const sheet = $(`#${id}`); sheet.hidden = false;
     sheet.querySelector('section button, form input')?.focus({ preventScroll: true });
   };
+  const pendingTaskActions = new Set();
   const taskLabels = { running:'正在执行', queued:'排队中', awaiting_confirmation:'等待确认', waiting_confirmation:'等待确认', completed:'已完成', failed:'失败', interrupted:'已暂停', idle:'尚未开始' };
   function renderTasks(conversations, limit) {
     const list = $('#taskOverviewList');
@@ -61,7 +62,7 @@
     const recent = conversations.filter(item => !active.includes(item) && ['completed','failed','interrupted'].includes(ui.task(item).state)).slice(0,8);
     const group = (title, entries) => entries.length ? `<h3>${title}</h3>${entries.map(item => {
       const task = ui.task(item);
-      return `<button class="task-overview-row" type="button" data-select-task="${item.id}"><span class="task-overview-dot" data-state="${escape(task.state)}"></span><span><strong>${escape(item.title)}</strong><small>${escape(taskLabels[task.state] || task.label)}${item.queuePosition ? ' · 第 '+item.queuePosition+' 位' : ''}${item.waitingForProject ? ' · 等待项目：'+escape(item.waitingForProject) : ''}${item.activeDeviceLabel ? ' · '+escape(item.activeDeviceLabel) : ''}</small></span><span aria-hidden="true">↗</span></button>${task.state==='queued'?`<div class="task-controls"><button data-task-action="cancel" data-id="${item.id}">取消排队</button></div>`:['failed','interrupted'].includes(task.state)?`<div class="task-controls"><button data-task-action="retry" data-id="${item.id}">重试</button></div>`:''}`;
+      return `<button class="task-overview-row" type="button" data-select-task="${item.id}"><span class="task-overview-dot" data-state="${escape(task.state)}"></span><span><strong>${escape(item.title)}</strong><small>${escape(taskLabels[task.state] || task.label)}${item.queuePosition ? ' · 第 '+item.queuePosition+' 位' : ''}${item.waitingForProject ? ' · 等待项目：'+escape(item.waitingForProject) : ''}${item.activeDeviceLabel ? ' · '+escape(item.activeDeviceLabel) : ''}</small></span><span aria-hidden="true">↗</span></button>${task.state==='queued'?`<div class="task-controls"><button data-task-action="cancel" data-id="${item.id}" ${pendingTaskActions.has(item.id) ? 'disabled' : ''}>取消排队</button></div>`:['failed','interrupted'].includes(task.state)?`<div class="task-controls"><button data-task-action="retry" data-id="${item.id}" ${pendingTaskActions.has(item.id) ? 'disabled' : ''}>重试</button></div>`:''}`;
     }).join('')}` : '';
     $('#taskOverviewList').innerHTML = group('进行中',active) + group('最近结束',recent) || '<p class="tasks-empty">还没有任务。新建对话，开始第一项工作。</p>';
     // Summary updates replace the buttons; keep keyboard users on the same task.
@@ -124,8 +125,28 @@
   $('#conversationArchiveButton').addEventListener('click', () => { const id = menuId; close(false); ui.archive(id); });
   $('#taskOverviewButton').addEventListener('click', () => { open('taskOverviewSheet'); ui.refreshSummaries(); });
   $('#taskOverviewRefresh').addEventListener('click', () => { ui.refreshSummaries(); ui.toast('正在刷新任务状态'); });
-  $('#taskOverviewList').addEventListener('click', event => {
-    const action=event.target.closest('[data-task-action]');if(action){action.disabled=true;window.WittFeatures?.request(`chat/conversations/${action.dataset.id}/${action.dataset.taskAction}`,'POST',{}).then(()=>{ui.toast(action.dataset.taskAction==='cancel'?'已取消排队':'已提交重试');ui.refreshSummaries();}).catch(e=>ui.toast(e.message)).finally(()=>action.disabled=false);return;}
+  $('#taskOverviewList').addEventListener('click', async event => {
+    const action = event.target.closest('[data-task-action]');
+    if (action) {
+      const { id, taskAction } = action.dataset;
+      if (action.disabled || pendingTaskActions.has(id)) return;
+      // Summary refreshes replace DOM buttons; keep pending state by task ID.
+      pendingTaskActions.add(id);
+      action.disabled = true;
+      try {
+        await window.WittFeatures.request(`chat/conversations/${id}/${taskAction}`, 'POST', {});
+        ui.toast(taskAction === 'cancel' ? '已取消排队' : '已提交重试');
+        ui.refreshSummaries();
+      } catch (error) {
+        ui.toast(error.message);
+      } finally {
+        pendingTaskActions.delete(id);
+        for (const button of $('#taskOverviewList').querySelectorAll('[data-task-action]')) {
+          if (button.dataset.id === id) button.disabled = false;
+        }
+      }
+      return;
+    }
     const button = event.target.closest('[data-select-task]'); if (!button) return;
     close(false); ui.select(button.dataset.selectTask);
   });
