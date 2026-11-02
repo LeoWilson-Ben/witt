@@ -602,9 +602,9 @@
   </aside>
   <aside class="upgrade-sheet" id="conversationRenameSheet" hidden>
     <button class="upgrade-backdrop" type="button" data-close-upgrade aria-label="取消重命名"></button>
-    <form class="upgrade-panel rename-panel" id="conversationRenameForm" role="dialog" aria-modal="true" aria-labelledby="conversationRenameTitle">
+    <form class="upgrade-panel rename-panel" id="conversationRenameForm" novalidate role="dialog" aria-modal="true" aria-labelledby="conversationRenameTitle">
       <header><h2 id="conversationRenameTitle">重命名对话</h2><button type="button" data-close-upgrade aria-label="关闭">×</button></header>
-      <label for="conversationRenameInput">对话名称</label><input id="conversationRenameInput" maxlength="100" required autocomplete="off">
+      <label for="conversationRenameInput">对话名称 <span id="conversationRenameError" role="status" aria-live="polite"></span></label><input id="conversationRenameInput" maxlength="100" required autocomplete="off" aria-describedby="conversationRenameError">
       <div class="rename-actions"><button type="button" data-close-upgrade>取消</button><button type="submit">保存</button></div>
     </form>
   </aside>
@@ -641,7 +641,7 @@
   <script src="/vault/browser-bridge.js?v=20261028-history"></script>
   <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102&groupDialog=20261102-1&codeCopy=20261102-1"></script>
   <script src="/vault/sidebar-layout.js?v=20261008-2"></script>
-  <script src="/vault/ui-upgrades.js?v=20261008-2&simplify=20261102-1&actions=20261102-2&groupDialog=20261102-1&keyboard=20261102-1&focusReturn=20261102-1"></script>
+  <script src="/vault/ui-upgrades.js?v=20261008-2&simplify=20261102-1&actions=20261102-2&groupDialog=20261102-1&keyboard=20261102-1&focusReturn=20261102-1&renameValidation=20261102-1"></script>
   <script src="/vault/witt-features.js?v=20261008-1&simplify=20261102-1"></script>
 </body>
 </html>

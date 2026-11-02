@@ -58,6 +58,45 @@ const conversationId = '00000000-0000-4000-8000-000000000001';
       const trigger = page.locator('#focusTestTrigger');
       const rename = page.locator('#conversationRenameSheet');
       const input = page.locator('#conversationRenameInput');
+      // Invalid names must explain why saving failed without changing metadata.
+      await trigger.click();
+      await page.locator('#conversationRenameButton').click();
+      for (const value of ['', '   ', '\u3000\u3000', 'x'.repeat(101)]) {
+        await input.evaluate((node, value) => {
+          node.value = value;
+          node.dispatchEvent(new Event('input', { bubbles: true }));
+        }, value);
+        await input.press('Enter');
+        assert.equal(await input.getAttribute('aria-invalid'), 'true');
+        assert.equal(await input.evaluate(node => node === document.activeElement), true);
+        const error = page.locator('#conversationRenameError');
+        assert.match(await error.textContent(), value.length > 100 ? /100/ : /请输入对话名称/);
+        assert.equal(await input.getAttribute('aria-describedby'), 'conversationRenameError');
+        assert.deepEqual(await page.evaluate(() => window.__writes), []);
+        assert.equal(await rename.evaluate(node => node.hidden), false);
+        const bounds = await error.boundingBox();
+        assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= viewport.height, 'error visible');
+        if (value === '\u3000\u3000' && process.env.SCREENSHOT_DIR) {
+          fs.mkdirSync(process.env.SCREENSHOT_DIR, { recursive: true });
+          await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `rename-error-${viewport.width}.png`) });
+        }
+      }
+      await input.fill('修正后的名称');
+      assert.equal(await input.getAttribute('aria-invalid'), null);
+      assert.equal(await page.locator('#conversationRenameError').textContent(), '');
+      await input.press('Enter');
+      assert.deepEqual(await page.evaluate(() => window.__writes), [{ id: conversationId, changes: { title: '修正后的名称' } }]);
+      await page.evaluate(() => { window.__writes = []; });
+      await trigger.click();
+      await page.locator('#conversationRenameButton').click();
+      await input.fill(' ');
+      await rename.locator('button[type=submit]').click();
+      await page.keyboard.press('Escape');
+      await trigger.click();
+      await page.locator('#conversationRenameButton').click();
+      assert.equal(await page.locator('#conversationRenameError').textContent(), '');
+      assert.equal(await input.getAttribute('aria-invalid'), null);
+      await page.keyboard.press('Escape');
       for (const exit of ['Escape', 'cancel', 'close', 'save']) {
         await trigger.click();
         assert.equal(await page.locator('#conversationActions').evaluate(n => n.hidden), false, JSON.stringify(await page.evaluate(() => window.WittUI.conversations())));
@@ -93,6 +132,13 @@ const conversationId = '00000000-0000-4000-8000-000000000001';
         window.visualViewport.dispatchEvent(new Event('resize'));
       });
       await page.waitForTimeout(100);
+      await input.fill(' ');
+      await input.press('Enter');
+      const errorBounds = await page.locator('#conversationRenameError').boundingBox();
+      assert.ok(errorBounds.y >= 0 && errorBounds.y + errorBounds.height <= 251, 'error stays above keyboard');
+      const actionsBounds = await rename.locator('.rename-actions').boundingBox();
+      assert.ok(errorBounds.y + errorBounds.height <= actionsBounds.y, 'error not covered by sticky actions');
+
       const bounds = await rename.locator('button[type=submit]').boundingBox();
       assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= 251, 'save stays above keyboard');
       if (process.env.SCREENSHOT_DIR) {
@@ -102,7 +148,7 @@ const conversationId = '00000000-0000-4000-8000-000000000001';
       await page.keyboard.press('Escape');
       assert.equal(await trigger.evaluate(node => node === document.activeElement), true);
       assert.deepEqual(errors, []);
-      console.log(`PASS ${viewport.width}x${viewport.height}: rename exits, save, reopen, Tab, keyboard viewport`);
+      console.log(`PASS ${viewport.width}x${viewport.height}: rename validation, correction, exits, save, reopen, Tab, keyboard viewport`);
       await page.close();
     }
   } finally { await browser.close(); }

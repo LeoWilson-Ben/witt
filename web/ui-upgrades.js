@@ -87,12 +87,24 @@
     const item = ui.conversations().find(value => value.id === menuId);
     if (!item) return;
     open('conversationRenameSheet');
+    $('#conversationRenameError').textContent = '';
+    $('#conversationRenameInput').removeAttribute('aria-invalid');
     $('#conversationRenameInput').value = item.title;
     $('#conversationRenameInput').focus(); $('#conversationRenameInput').select();
   });
+  $('#conversationRenameInput').addEventListener('input', () => {
+    $('#conversationRenameError').textContent = '';
+    $('#conversationRenameInput').removeAttribute('aria-invalid');
+  });
   $('#conversationRenameForm').addEventListener('submit', event => {
-    event.preventDefault(); const title = $('#conversationRenameInput').value.trim();
-    if (!title || title.length > 100) return;
+    event.preventDefault(); const input = $('#conversationRenameInput');
+    const title = input.value.trim();
+    if (!title || title.length > 100) {
+      $('#conversationRenameError').textContent = !title ? '请输入对话名称，不能只包含空格。' : '对话名称请保持在 100 字以内。';
+      input.setAttribute('aria-invalid', 'true');
+      input.focus({ preventScroll: true });
+      return;
+    }
     if (ui.updateMetadata(menuId, { title })) close();
   });
   $('#conversationArchiveButton').addEventListener('click', () => { const id = menuId; close(false); ui.archive(id); });
