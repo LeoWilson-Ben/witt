@@ -58,6 +58,40 @@ const conversationId = '00000000-0000-4000-8000-000000000001';
       const trigger = page.locator('#focusTestTrigger');
       const rename = page.locator('#conversationRenameSheet');
       const input = page.locator('#conversationRenameInput');
+      // Escape used by a Chinese/Japanese IME must not dismiss the active sheet.
+      // Synthetic composition flags cover modern browsers and legacy WebViews.
+      for (const target of ['rename', 'group', 'tasks', 'actions']) {
+        await trigger.click();
+        let sheet = page.locator('#conversationActions');
+        if (target === 'rename') {
+          await page.locator('#conversationRenameButton').click();
+          sheet = rename;
+          await input.fill('尚未提交的名称');
+        } else if (target === 'group') {
+          await page.evaluate(id => window.WittUpgrades.openGroupDialog(id, '尚未提交的分组'), conversationId);
+          sheet = page.locator('#conversationGroupSheet');
+        } else if (target === 'tasks') {
+          await page.keyboard.press('Escape');
+          // Invoke the existing entry independently of the responsive drawer.
+          await page.locator('#taskOverviewButton').evaluate(node => node.click());
+          sheet = page.locator('#taskOverviewSheet');
+        }
+        for (const flags of [{ isComposing: true }, { keyCode: 229 }]) {
+          const consumed = await page.evaluate(flags => {
+            return !document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {
+              key: 'Escape', code: 'Escape', bubbles: true, cancelable: true, ...flags,
+            }));
+          }, flags);
+          assert.equal(consumed, false, 'IME key remains available to the input method');
+          assert.equal(await sheet.evaluate(node => node.hidden), false, `${target}: IME Escape preserves sheet`);
+          assert.deepEqual(await page.evaluate(() => window.__writes), []);
+          if (target === 'rename') assert.equal(await input.inputValue(), '尚未提交的名称');
+          if (target === 'group') assert.equal(await page.locator('#conversationGroupInput').inputValue(), '尚未提交的分组');
+        }
+        // Once composition ends, ordinary Escape still closes the sheet.
+        await page.keyboard.press('Escape');
+        assert.equal(await sheet.evaluate(node => node.hidden), true, `${target}: ordinary Escape closes`);
+      }
       // Invalid names must explain why saving failed without changing metadata.
       await trigger.click();
       await page.locator('#conversationRenameButton').click();
@@ -148,7 +182,7 @@ const conversationId = '00000000-0000-4000-8000-000000000001';
       await page.keyboard.press('Escape');
       assert.equal(await trigger.evaluate(node => node === document.activeElement), true);
       assert.deepEqual(errors, []);
-      console.log(`PASS ${viewport.width}x${viewport.height}: rename validation, correction, exits, save, reopen, Tab, keyboard viewport`);
+      console.log(`PASS ${viewport.width}x${viewport.height}: IME Escape preservation and ordinary Escape, rename validation, correction, exits, save, reopen, Tab, keyboard viewport`);
       await page.close();
     }
   } finally { await browser.close(); }

@@ -130,6 +130,8 @@
   list.addEventListener('click', event => { if (!suppressClick) return; suppressClick=false; event.stopImmediatePropagation(); event.preventDefault(); },true);
   list.addEventListener('contextmenu', event => { const row=event.target.closest('[data-id]'); if(row){event.preventDefault();clearPress();openConversationMenu(row.dataset.id);} });
   document.addEventListener('keydown', event => {
+    // Let the input method consume Escape while dismissing a candidate window.
+    if (event.isComposing || event.keyCode === 229) return;
     const overlay = sheets.map(id => $(`#${id}`)).find(node=>!node.hidden) || (!$('#drawerAccountMenu').hidden ? $('#drawerAccountMenu') : null);
     if (!overlay) return;
     if (event.key==='Escape') { event.preventDefault(); close(); if(overlay.id==='drawerAccountMenu')$('#closeDrawerAccount').click(); }
