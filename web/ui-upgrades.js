@@ -125,7 +125,8 @@
   });
   list.addEventListener('pointermove', event => { if (pressOrigin && Math.hypot(event.clientX-pressOrigin.x,event.clientY-pressOrigin.y)>9) clearTimeout(longPressTimer); });
   const clearPress = () => { clearTimeout(longPressTimer); pressOrigin=null; };
-  ['pointerup','pointercancel','scroll'].forEach(name => list.addEventListener(name, clearPress));
+  // Leaving the list abandons the gesture even without another pointermove.
+  ['pointerup','pointercancel','pointerleave','scroll'].forEach(name => list.addEventListener(name, clearPress));
   document.addEventListener('pointerup', () => { clearPress(); if (suppressClick) setTimeout(() => { suppressClick = false; }, 350); });
   list.addEventListener('click', event => { if (!suppressClick) return; suppressClick=false; event.stopImmediatePropagation(); event.preventDefault(); },true);
   list.addEventListener('contextmenu', event => { const row=event.target.closest('[data-id]'); if(row){event.preventDefault();clearPress();openConversationMenu(row.dataset.id);} });
