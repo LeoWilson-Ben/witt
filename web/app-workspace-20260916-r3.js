@@ -557,6 +557,33 @@
     return html;
   }
 
+  async function copyCodeBlock(button) {
+    const node = button.closest(".chat-code-block")?.querySelector("code");
+    const code = node?.textContent || "";
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      button.textContent = "已复制";
+      button.classList.add("copied");
+      setTimeout(() => {
+        button.textContent = "复制";
+        button.classList.remove("copied");
+      }, 1500);
+    } catch {
+      // Keep code accessible when clipboard permission or the API is unavailable.
+      const selection = window.getSelection();
+      if (selection && node.isConnected) {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        toast("无法访问剪贴板，已选中代码，请手动复制");
+      } else {
+        toast("暂时无法复制代码，请长按代码手动复制");
+      }
+    }
+  }
+
   function codeBlockHtml(source, language = "") {
     const labels = {
       js: "JavaScript", javascript: "JavaScript", ts: "TypeScript", typescript: "TypeScript",
@@ -4435,16 +4462,7 @@
   $("#messageList").addEventListener("click", (event) => {
     const codeCopy = event.target.closest("[data-copy-code]");
     if (codeCopy) {
-      const code = codeCopy.closest(".chat-code-block")?.querySelector("code")?.textContent || "";
-      if (!code) return;
-      navigator.clipboard.writeText(code).then(() => {
-        codeCopy.textContent = "已复制";
-        codeCopy.classList.add("copied");
-        setTimeout(() => {
-          codeCopy.textContent = "复制";
-          codeCopy.classList.remove("copied");
-        }, 1500);
-      }).catch(() => toast("暂时无法复制代码"));
+      copyCodeBlock(codeCopy);
       return;
     }
     const messageToggle = event.target.closest(".user-message-toggle");
