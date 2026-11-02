@@ -3,10 +3,11 @@
   const $ = selector => document.querySelector(selector);
   const ui = window.WittUI;
   if (!ui) return;
-  let menuId = null, returnFocus = null, longPressTimer, pressOrigin, suppressClick = false;
+  let groupConversationId = null, menuId = null, returnFocus = null, longPressTimer, pressOrigin, suppressClick = false;
   const escape = value => { const node = document.createElement('span'); node.textContent = String(value || ''); return node.innerHTML; };
-  const sheets = ['conversationActions', 'conversationRenameSheet', 'taskOverviewSheet'];
+  const sheets = ['conversationGroupSheet', 'conversationActions', 'conversationRenameSheet', 'taskOverviewSheet'];
   const close = (restore = true) => {
+    groupConversationId = null;
     sheets.forEach(id => { $(`#${id}`).hidden = true; });
     if (restore && returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
   };
@@ -41,7 +42,21 @@
     $('#conversationActions small').textContent = item.busy ? '任务进行中，暂停或完成后即可归档。' : '归档只移出列表，历史记录仍会保留。';
     open('conversationActions');
   }
-  window.WittUpgrades = { renderTasks, openConversationMenu };
+  function openGroupDialog(id, currentGroup = '') {
+    open('conversationGroupSheet');
+    groupConversationId = id;
+    returnFocus = $('#chatMoreButton');
+    $('#conversationGroupInput').value = currentGroup;
+    $('#conversationGroupInput').focus();
+    $('#conversationGroupInput').select();
+  }
+  $('#conversationGroupForm').addEventListener('submit', event => {
+    event.preventDefault();
+    const project = $('#conversationGroupInput').value.trim();
+    if (project.length > 80) { ui.toast('分组名称请保持在 80 字以内'); return; }
+    if (groupConversationId && ui.updateMetadata(groupConversationId, { project })) close();
+  });
+  window.WittUpgrades = { renderTasks, openConversationMenu, openGroupDialog };
   document.querySelectorAll('[data-close-upgrade]').forEach(button => button.addEventListener('click', () => close()));
   $('#conversationRenameButton').addEventListener('click', () => {
     const item = ui.conversations().find(value => value.id === menuId);

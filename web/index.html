@@ -608,6 +608,16 @@
       <div class="rename-actions"><button type="button" data-close-upgrade>取消</button><button type="submit">保存</button></div>
     </form>
   </aside>
+  <aside class="upgrade-sheet" id="conversationGroupSheet" hidden>
+    <button class="upgrade-backdrop" type="button" data-close-upgrade aria-label="取消分组"></button>
+    <form class="upgrade-panel rename-panel" id="conversationGroupForm" role="dialog" aria-modal="true" aria-labelledby="conversationGroupTitle" aria-describedby="conversationGroupHint">
+      <header><h2 id="conversationGroupTitle">分组</h2><button type="button" data-close-upgrade aria-label="关闭">×</button></header>
+      <label for="conversationGroupInput">分组名称</label>
+      <input id="conversationGroupInput" maxlength="80" autocomplete="off" placeholder="例如：工作、学习">
+      <p id="conversationGroupHint" class="feature-note">留空保存，可将这条对话移出分组。</p>
+      <div class="rename-actions"><button type="button" data-close-upgrade>取消</button><button type="submit">保存</button></div>
+    </form>
+  </aside>
   <aside class="upgrade-sheet" id="taskOverviewSheet" hidden>
     <button class="upgrade-backdrop" type="button" data-close-upgrade aria-label="关闭任务列表"></button>
     <section class="upgrade-panel tasks-panel" role="dialog" aria-modal="true" aria-labelledby="taskOverviewTitle">
@@ -629,9 +639,9 @@
     </section>
   </aside>
   <script src="/vault/browser-bridge.js?v=20261028-history"></script>
-  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102"></script>
+  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102&groupDialog=20261102-1"></script>
   <script src="/vault/sidebar-layout.js?v=20261008-2"></script>
-  <script src="/vault/ui-upgrades.js?v=20261008-2&simplify=20261102-1&actions=20261102-2"></script>
+  <script src="/vault/ui-upgrades.js?v=20261008-2&simplify=20261102-1&actions=20261102-2&groupDialog=20261102-1"></script>
   <script src="/vault/witt-features.js?v=20261008-1&simplify=20261102-1"></script>
 </body>
 </html>

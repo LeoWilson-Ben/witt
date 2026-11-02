@@ -3939,10 +3939,8 @@
     setChatMoreMenu(false);
     if (!state.activeId) return;
     if (!state.workspaceFeatures) { toast("当前客户端暂不支持分组"); return; }
-    const project = window.prompt("输入分组名称（留空移出分组）", state.active?.project || "");
-    if (project === null) return;
-    if (project.trim().length > 80) { toast("分组名称请保持在 80 字以内"); return; }
-    bridge()?.updateConversationMetadata?.(state.activeId, JSON.stringify({ project: project.trim() }));
+    if (!window.WittUpgrades?.openGroupDialog) { toast("分组设置尚未就绪，请刷新后重试"); return; }
+    window.WittUpgrades.openGroupDialog(state.activeId, state.active?.project || "");
   });
   $("#moreNotifyButton").setAttribute("aria-pressed", String(completionReminder));
   $("#completionNotifyLabel").textContent = completionReminder ? "已开启" : "已关闭";
