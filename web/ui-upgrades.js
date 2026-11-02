@@ -32,7 +32,11 @@
     if (restore && returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
   };
   const open = id => {
-    returnFocus = document.activeElement;
+    // Keep the external launcher when moving between sheets (for example,
+    // actions -> rename); a button inside the old sheet will become hidden.
+    if (!sheets.some(sheetId => !$(`#${sheetId}`).hidden)) {
+      returnFocus = document.activeElement;
+    }
     close(false);
     syncSheetViewport();
     const sheet = $(`#${id}`); sheet.hidden = false;
