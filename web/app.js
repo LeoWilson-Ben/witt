@@ -3441,24 +3441,6 @@
   });
   $("#chatMoreButton").addEventListener("click", () =>
     setChatMoreMenu(!$("#chatMoreMenu").classList.contains("open")));
-  $("#moreShareButton").addEventListener("click", async () => {
-    setChatMoreMenu(false);
-    const payload = { title: state.active?.title || "Witt 对话", text: "来自 Witt 的对话" };
-    try {
-      if (navigator.share) await navigator.share(payload);
-      else { await navigator.clipboard.writeText(payload.text); toast("分享说明已复制"); }
-    } catch (error) { if (error?.name !== "AbortError") toast("暂时无法打开分享面板"); }
-  });
-  $("#morePinButton").addEventListener("click", () => {
-    if (!state.activeId) { toast("当前没有可置顶的对话"); return; }
-    const pinned = new Set(JSON.parse(localStorage.getItem("wit_pinned_conversations") || "[]"));
-    const added = !pinned.has(state.activeId);
-    if (added) pinned.add(state.activeId); else pinned.delete(state.activeId);
-    localStorage.setItem("wit_pinned_conversations", JSON.stringify([...pinned]));
-    renderConversations();
-    setChatMoreMenu(false);
-    toast(added ? "已置顶这条对话" : "已取消置顶");
-  });
   $("#closeDrawer").addEventListener("click", closeDrawer);
   $("#drawerBackdrop").addEventListener("click", closeDrawer);
   $("#profileButton").addEventListener("click", openProfile);
@@ -3662,33 +3644,6 @@
   $("#moreProjectButton").addEventListener("click", () => {
     setChatMoreMenu(false);
     openProject();
-  });
-  $("#moreUploadsButton").addEventListener("click", () => {
-    setChatMoreMenu(false);
-    const count = (state.active?.messages || []).reduce((total, message) =>
-      total + (Array.isArray(message.attachments) ? message.attachments.length : 0), 0);
-    toast(count ? `本对话已有 ${count} 个上传文件` : "本对话还没有上传文件");
-  });
-  $("#moreFindButton").addEventListener("click", () => {
-    setChatMoreMenu(false);
-    const term = window.prompt("查找聊天内容");
-    if (!term) return;
-    const found = window.find?.(term, false, false, true, false, true, false);
-    if (!found) toast("没有找到相关内容");
-  });
-  $("#moreHomeButton").addEventListener("click", () => {
-    setChatMoreMenu(false);
-    toast("请使用浏览器菜单中的“添加到主屏幕”");
-  });
-  $("#moreArchiveButton").addEventListener("click", () => {
-    setChatMoreMenu(false);
-    if (!state.activeId) { toast("当前没有可归档的对话"); return; }
-    openArchiveDialog(state.activeId);
-  });
-  $("#moreDeleteButton").addEventListener("click", () => {
-    setChatMoreMenu(false);
-    if (!state.activeId) { toast("当前没有可删除的对话"); return; }
-    openArchiveDialog(state.activeId);
   });
   $("#closeDelivery").addEventListener("click", closeDelivery);
   $("#deliveryBackdrop").addEventListener("click", closeDelivery);

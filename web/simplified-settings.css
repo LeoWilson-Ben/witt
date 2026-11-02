@@ -1,0 +1,5 @@
+/* Consolidated task reminders share the existing settings visual language. */
+#drawerAccountMenu #moreNotifyButton{--settings-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='black' stroke-width='1.7' d='M5 17h14l-2-3V9a5 5 0 0 0-10 0v5zM9 20h6'/%3E%3C/svg%3E")}
+#drawerAccountMenu #moreNotifyButton::after{display:none}
+#drawerAccountMenu #completionNotifyLabel{margin-left:auto;color:var(--sd-muted);font-size:12px}
+#drawerAccountMenu #featureNotifications[hidden]{display:none!important}

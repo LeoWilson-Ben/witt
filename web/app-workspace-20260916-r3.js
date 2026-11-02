@@ -1815,8 +1815,6 @@
     const visible = Boolean(open);
     if (visible) {
       $("#chatMoreTitle").textContent = state.active?.title || "当前对话";
-      const pinned = pinnedIds();
-      $("#morePinLabel").textContent = pinned.has(state.activeId) ? "取消置顶" : "置顶";
     }
     menu.classList.toggle("open", visible);
     menu.setAttribute("aria-hidden", String(!visible));
@@ -1859,7 +1857,7 @@
 
   function renderConversations() {
     $("#conversationCount").textContent = String(state.conversations.length);
-    const pinned = pinnedIds();
+    const pinned = new Set();
     const selectedProject = $("#historyProject").value;
     const projects = [...new Set(state.conversations.map(historyProjectName))].sort();
     $("#historyProject").innerHTML = '<option value="">全部项目</option>' + projects.map((project) => `<option value="${escapeHtml(project)}">${escapeHtml(project)}</option>`).join("");
@@ -3937,36 +3935,11 @@
   });
   $("#chatMoreButton").addEventListener("click", () =>
     setChatMoreMenu(!$("#chatMoreMenu").classList.contains("open")));
-  $("#moreShareButton").addEventListener("click", async () => {
-    setChatMoreMenu(false);
-    const payload = { title: state.active?.title || "Witt 对话", text: "来自 Witt 的对话" };
-    try {
-      if (navigator.share) await navigator.share(payload);
-      else { await navigator.clipboard.writeText(payload.text); toast("分享说明已复制"); }
-    } catch (error) { if (error?.name !== "AbortError") toast("暂时无法打开分享面板"); }
-  });
-  $("#morePinButton").addEventListener("click", () => {
-    if (!state.activeId) { toast("当前没有可置顶的对话"); return; }
-    const pinned = pinnedIds();
-    const added = !pinned.has(state.activeId);
-    if (state.workspaceFeatures) {
-      bridge()?.updateConversationMetadata?.(state.activeId, JSON.stringify({ pinned: added }));
-      setChatMoreMenu(false);
-      return;
-    }
-    if (added) pinned.add(state.activeId); else pinned.delete(state.activeId);
-    try {
-      localStorage.setItem(`wit_pinned_conversations:${state.cacheScope}`, JSON.stringify([...pinned]));
-    } catch { toast("设备存储不可用，未能保存置顶"); return; }
-    renderConversations();
-    setChatMoreMenu(false);
-    toast(added ? "已置顶这条对话" : "已取消置顶");
-  });
   $("#moreGroupButton").addEventListener("click", () => {
     setChatMoreMenu(false);
     if (!state.activeId) return;
-    if (!state.workspaceFeatures) { toast("当前客户端暂不支持项目分组"); return; }
-    const project = window.prompt("项目分组名称（留空取消分组，不更改工作目录）", state.active?.project || "");
+    if (!state.workspaceFeatures) { toast("当前客户端暂不支持对话分组"); return; }
+    const project = window.prompt("对话分组名称（留空取消分组，不更改工作目录）", state.active?.project || "");
     if (project === null) return;
     if (project.trim().length > 80) { toast("分组名称请保持在 80 字以内"); return; }
     bridge()?.updateConversationMetadata?.(state.activeId, JSON.stringify({ project: project.trim() }));
@@ -4256,33 +4229,6 @@
   $("#moreProjectButton").addEventListener("click", () => {
     setChatMoreMenu(false);
     openProject();
-  });
-  $("#moreUploadsButton").addEventListener("click", () => {
-    setChatMoreMenu(false);
-    const count = (state.active?.messages || []).reduce((total, message) =>
-      total + (Array.isArray(message.attachments) ? message.attachments.length : 0), 0);
-    toast(count ? `本对话已有 ${count} 个上传文件` : "本对话还没有上传文件");
-  });
-  $("#moreFindButton").addEventListener("click", () => {
-    setChatMoreMenu(false);
-    const term = window.prompt("查找聊天内容");
-    if (!term) return;
-    const found = window.find?.(term, false, false, true, false, true, false);
-    if (!found) toast("没有找到相关内容");
-  });
-  $("#moreHomeButton").addEventListener("click", () => {
-    setChatMoreMenu(false);
-    toast("请使用浏览器菜单中的“添加到主屏幕”");
-  });
-  $("#moreArchiveButton").addEventListener("click", () => {
-    setChatMoreMenu(false);
-    if (!state.activeId) { toast("当前没有可归档的对话"); return; }
-    openArchiveDialog(state.activeId);
-  });
-  $("#moreDeleteButton").addEventListener("click", () => {
-    setChatMoreMenu(false);
-    if (!state.activeId) { toast("当前没有可删除的对话"); return; }
-    openArchiveDialog(state.activeId);
   });
   $("#closeImageViewer").addEventListener("click", closeImageViewer);
   $("#downloadImageViewer").addEventListener("click", () => {
