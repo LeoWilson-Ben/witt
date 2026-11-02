@@ -1859,8 +1859,10 @@
     $("#drawer").setAttribute("aria-hidden", "true");
   }
 
-  function openImageViewer(url, name, mimeType = "") {
+  let imageViewerReturnFocus = null;
+  function openImageViewer(url, name, mimeType = "", trigger = document.activeElement) {
     if (!url) return;
+    if (!$("#imageViewer").classList.contains("open")) imageViewerReturnFocus = trigger;
     $("#imageViewerImage").src = url;
     $("#imageViewerImage").alt = name || "Witt 图片";
     $("#imageViewerName").textContent = name || "Witt 图片";
@@ -1869,14 +1871,36 @@
     $("#downloadImageViewer").dataset.mimeType = mimeType;
     $("#imageViewer").classList.add("open");
     $("#imageViewer").setAttribute("aria-hidden", "false");
+    $("#closeImageViewer").focus({ preventScroll: true });
   }
 
   function closeImageViewer() {
+    if (!$("#imageViewer").classList.contains("open")) return;
     $("#imageViewer").classList.remove("open");
     $("#imageViewer").setAttribute("aria-hidden", "true");
     $("#imageViewerImage").removeAttribute("src");
     delete $("#downloadImageViewer").dataset.url;
+    const target = imageViewerReturnFocus;
+    imageViewerReturnFocus = null;
+    (target?.isConnected && target.getClientRects().length ? target : $("#messageInput"))?.focus({ preventScroll: true });
   }
+
+  // Capture preview keys before shortcuts belonging to the covered workspace.
+  document.addEventListener("keydown", event => {
+    if (!$("#imageViewer").classList.contains("open") || event.isComposing || event.keyCode === 229) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeImageViewer();
+    } else if (event.key === "Tab") {
+      const controls = [$("#downloadImageViewer"), $("#closeImageViewer")].filter(node => !node.disabled && node.getClientRects().length);
+      const index = controls.indexOf(document.activeElement);
+      const next = index < 0 ? (event.shiftKey ? controls.at(-1) : controls[0]) : controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length];
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      next?.focus({ preventScroll: true });
+    }
+  }, true);
 
   function conversationTask(item) {
     return item.taskStatus || { state: item.busy ? "running" : "idle", label: item.busy ? "正在执行" : "" };
@@ -4497,7 +4521,7 @@
     }
     const image = event.target.closest("[data-inline-image]");
     if (image) {
-      openImageViewer(image.dataset.inlineImage, image.dataset.imageName, image.dataset.imageMime);
+      openImageViewer(image.dataset.inlineImage, image.dataset.imageName, image.dataset.imageMime, image);
       return;
     }
     const retry = event.target.closest("[data-process-retry]");
