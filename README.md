@@ -1,14 +1,30 @@
-<img src="docs/media/witt-icon.svg" alt="维特 Witt 应用图标" width="112" height="112">
+<p align="center">
+  <img src="docs/media/witt-icon.svg" alt="维特 Witt" width="96" height="96">
+</p>
 
-# 维特 · Witt
+<h1 align="center">维特 · Witt</h1>
 
-**在自己的服务器上运行 AI 助手，在浏览器和 Android 手机上接着工作。**
+<p align="center">
+  <strong>工作，随你继续。</strong><br>
+  在自己的服务器上运行 AI，在手机与浏览器上接着工作。
+</p>
 
-[![MIT License](https://img.shields.io/badge/license-MIT-18181b)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-22.16%2B-43853d)](https://nodejs.org/)
-[![Android](https://img.shields.io/badge/Android-8.0%2B-3ddc84)](android/)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-398775?style=flat-square" alt="MIT License"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22.16%2B-555555?style=flat-square" alt="Node.js 22.16+"></a>
+  <a href="android/"><img src="https://img.shields.io/badge/Android-8.0%2B-555555?style=flat-square" alt="Android 8.0+"></a>
+</p>
 
-Witt 是一个自托管的 AI 工作台。它把服务器上的 CLI 代理连接到聊天界面，让你通过手机或电脑继续会话、查看命令与文件修改、管理项目，并预览和下载助手生成的作品。
+<p align="center">
+  <a href="docs/DEPLOYMENT.md">开始部署</a> &nbsp; · &nbsp;
+  <a href="#一分钟认识维特">观看演示</a> &nbsp; · &nbsp;
+  <a href="docs/PROVIDERS.md">连接账号</a> &nbsp; · &nbsp;
+  <a href="CONTRIBUTING.md">参与贡献</a>
+</p>
+
+---
+
+Witt 是一个自托管的 AI 工作台，连接 **Codex、Claude Code 和 Antigravity CLI**。在对话中发起任务、查看执行过程、预览作品，让服务器上的工作随时继续。
 
 ## 一分钟认识维特
 
@@ -18,11 +34,16 @@ https://github.com/user-attachments/assets/eb5d7584-f53d-49c2-81bb-b66343b81266
 
 [下载 MP4](https://github.com/LeoWilson-Ben/witt/raw/refs/heads/main/docs/media/witt-intro-60s.mp4)
 
-当前源码接入 **Codex、Claude Code 和 Antigravity CLI**。模型能力由各自的 CLI、登录账号和上游服务决定；Witt 不提供模型账号、订阅、共享密钥或免费额度。
+<details>
+<summary>账号、服务与项目说明</summary>
+
+模型能力由各自的 CLI、登录账号和上游服务决定；Witt 不提供模型账号、订阅、共享密钥或免费额度。
 
 Witt is a self-hosted AI workspace for the browser and Android, connecting server-side CLI agents to persistent conversations, project files, and interactive artifacts.
 
 这是独立社区项目，与 OpenAI、Anthropic、Google 没有隶属关系。
+
+</details>
 
 ## 可以用它做什么
 
