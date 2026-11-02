@@ -3938,8 +3938,8 @@
   $("#moreGroupButton").addEventListener("click", () => {
     setChatMoreMenu(false);
     if (!state.activeId) return;
-    if (!state.workspaceFeatures) { toast("当前客户端暂不支持对话分组"); return; }
-    const project = window.prompt("对话分组名称（留空取消分组，不更改工作目录）", state.active?.project || "");
+    if (!state.workspaceFeatures) { toast("当前客户端暂不支持分组"); return; }
+    const project = window.prompt("输入分组名称（留空移出分组）", state.active?.project || "");
     if (project === null) return;
     if (project.trim().length > 80) { toast("分组名称请保持在 80 字以内"); return; }
     bridge()?.updateConversationMetadata?.(state.activeId, JSON.stringify({ project: project.trim() }));

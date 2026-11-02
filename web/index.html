@@ -142,7 +142,7 @@
       </div>
       <section class="chat-more-menu" id="chatMoreMenu" aria-hidden="true">
         <p id="chatMoreTitle">当前对话</p>
-        <button id="moreGroupButton" class="chat-more-item"><span>对话分组</span><small>只分类历史，不更改工作目录</small></button>
+        <button id="moreGroupButton" class="chat-more-item"><span>分组</span><small>整理聊天记录</small></button>
         <button id="quotaButton" class="chat-more-item quota-button" aria-label="查看 Codex 额度" hidden>
           <svg viewBox="0 0 24 24"><path d="M5 18V9m7 9V5m7 13v-6"/></svg><span>额度与用量</span>
           <small><b id="fiveHourQuotaLabel">5小时 —</b><b id="weeklyQuotaLabel">本周 —</b></small>
@@ -290,7 +290,7 @@
         </div>
         <div class="history-controls" id="drawerSearchControls" hidden>
           <input id="historySearch" type="search" placeholder="搜索对话和消息" aria-label="搜索历史对话" autocomplete="off">
-          <div><select id="historyProject" aria-label="按对话分组筛选"><option value="">全部分组</option></select><label><input type="checkbox" id="historyAttachments"> 含附件</label></div>
+          <div><select id="historyProject" aria-label="按分组筛选"><option value="">全部分组</option></select><label><input type="checkbox" id="historyAttachments"> 含附件</label></div>
           <small id="historySearchHint">按分组筛选，最近更新优先</small>
         </div>
         <div class="conversation-list" id="conversationList"></div>
@@ -629,7 +629,7 @@
     </section>
   </aside>
   <script src="/vault/browser-bridge.js?v=20261028-history"></script>
-  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2"></script>
+  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102"></script>
   <script src="/vault/sidebar-layout.js?v=20261008-2"></script>
   <script src="/vault/ui-upgrades.js?v=20261008-2&simplify=20261102-1&actions=20261102-2"></script>
   <script src="/vault/witt-features.js?v=20261008-1&simplify=20261102-1"></script>
