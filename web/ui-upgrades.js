@@ -6,6 +6,26 @@
   let groupConversationId = null, menuId = null, returnFocus = null, longPressTimer, pressOrigin, suppressClick = false;
   const escape = value => { const node = document.createElement('span'); node.textContent = String(value || ''); return node.innerHTML; };
   const sheets = ['conversationGroupSheet', 'conversationActions', 'conversationRenameSheet', 'taskOverviewSheet'];
+  let sheetViewportFrame = 0;
+  function syncSheetViewport() {
+    const viewport = window.visualViewport;
+    // Pinch zoom must not be mistaken for an on-screen keyboard.
+    if (viewport && Math.abs(viewport.scale - 1) > 0.05) return;
+    const height = Math.max(1, Math.min(window.innerHeight, viewport?.height || window.innerHeight));
+    const top = Math.max(0, viewport?.offsetTop || 0);
+    document.documentElement.style.setProperty('--upgrade-visible-height', `${height}px`);
+    document.documentElement.style.setProperty('--upgrade-visible-top', `${top}px`);
+  }
+  function queueSheetViewport() {
+    if (sheetViewportFrame) return;
+    sheetViewportFrame = requestAnimationFrame(() => { sheetViewportFrame = 0; syncSheetViewport(); });
+  }
+  window.visualViewport?.addEventListener('resize', queueSheetViewport);
+  window.visualViewport?.addEventListener('scroll', queueSheetViewport);
+  window.addEventListener('resize', queueSheetViewport);
+  document.addEventListener('focusin', queueSheetViewport);
+  document.addEventListener('focusout', queueSheetViewport);
+  syncSheetViewport();
   const close = (restore = true) => {
     groupConversationId = null;
     sheets.forEach(id => { $(`#${id}`).hidden = true; });
@@ -14,6 +34,7 @@
   const open = id => {
     returnFocus = document.activeElement;
     close(false);
+    syncSheetViewport();
     const sheet = $(`#${id}`); sheet.hidden = false;
     sheet.querySelector('section button, form input')?.focus({ preventScroll: true });
   };
