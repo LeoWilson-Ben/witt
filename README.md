@@ -1,229 +1,144 @@
-# Witt
+# 维特 · Witt
 
-> 把 Codex 安全地带到自己的服务器和 Android 手机上。
+**在自己的服务器上运行 AI 助手，在浏览器和 Android 手机上接着工作。**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-0f766e.svg)](LICENSE)
-[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-3c873a.svg)](https://nodejs.org/)
-[![Android 8+](https://img.shields.io/badge/Android-8%2B-3ddc84.svg)](android/)
+[![MIT License](https://img.shields.io/badge/license-MIT-18181b)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-22.16%2B-43853d)](https://nodejs.org/)
+[![Android](https://img.shields.io/badge/Android-8.0%2B-3ddc84)](android/)
 
-Witt 是一个自托管的 Codex 客户端，由轻量 Node.js 后端、可直接登录的响应式 Web 界面和 Android WebView 外壳组成。它把 Codex App Server 的连续会话、执行进度、审批、附件、图片、交付文件和多账号能力整合到浏览器与手机端，同时让代码、会话和文件继续留在自己的服务器上。
+Witt 是一个自托管的 AI 工作台。它把服务器上的 CLI 代理连接到聊天界面，让你通过手机或电脑继续会话、查看命令与文件修改、管理项目，并预览和下载助手生成的作品。
 
-Witt is a self-hosted mobile client for Codex. It combines a dependency-light Node.js service, a responsive web UI, and an Android shell while keeping conversations and project data on infrastructure you control.
+当前源码接入 **Codex、Claude Code 和 Antigravity CLI**。模型能力由各自的 CLI、登录账号和上游服务决定；Witt 不提供模型账号、订阅、共享密钥或免费额度。
 
-> [!IMPORTANT]
-> Witt 是社区项目，不是 OpenAI 官方产品。使用前需要自行安装并登录 Codex CLI，并遵守相关服务条款。Witt 可以执行命令和修改文件，请只部署在你信任并正确隔离的服务器上。
+Witt is a self-hosted AI workspace for the browser and Android, connecting server-side CLI agents to persistent conversations, project files, and interactive artifacts.
 
-## 主要能力
+这是独立社区项目，与 OpenAI、Anthropic、Google 没有隶属关系。
 
-- 连续 Codex 会话、历史记录和本地缓存
-- 同一用户的多对话并发、排队、取消与重试，执行事件按对话隔离
-- App Server 动态模型目录及 Low 到 Ultra 推理强度
-- 实时展示计划、命令、文件修改、MCP、审批和最终答复
-- Claude 风格 Artifact 工作区，支持完整 HTML 快照的增量预览、版本切换和源码查看
-- 对话分支、上下文压缩和代码审查
-- 图片、文档及大文件附件上传，生成图片、交付文件下载和隔离式交互预览
-- 邀请码激活、独立设备凭据、设备停用和管理员能力
-- ChatGPT 风格桌面网页版，使用 HttpOnly 安全会话 Cookie
-- 默认账号与子账号隔离，会话、项目和额度互不混用
-- SQLite 持久化、WAL、定时备份及 JSON 旧数据迁移
-- 白天、夜晚两种外观，兼容横屏与移动端安全区
-- 项目归类、常用指令、计划任务与项目文件预览
-- 设备管理滚动列表、重新布局的侧栏和项目与服务连接面板
-- Android Keystore 凭据保存、原生下载和应用内更新
-- Android 后台任务通知、通知跳转和原生启动动画
-- Android 本地 SSH 终端，支持 Keystore 加密的多服务器配置和点击直连
+## 可以用它做什么
 
-## 架构
+| 场景 | 已有实现 |
+| --- | --- |
+| 随时接着工作 | 连续会话、历史分页、多个对话并发、任务取消与重试 |
+| 看清执行过程 | 流式回复、命令与工具事件、文件修改、审批交互 |
+| 组织工作 | 项目归类、常用指令、计划任务及项目文件预览 |
+| 处理文件 | 图片和文档上传、文件交付、下载、文本预览 |
+| 预览作品 | 独立 Artifact 工作区，HTML 增量预览、版本切换与源码查看 |
+| 管理接入 | 账号选择、动态能力目录、邀请码、设备停用、浏览器会话 |
+| 在手机上使用 | Android WebView、Keystore 凭据保护、后台通知及应用更新 |
+| 连接服务器 | Android 原生 SSH 连接，终端界面使用 xterm.js |
+
+Codex 通过 App Server 接入；Claude 和 Antigravity 通过 CLI 适配器接入。分支、压缩、审查、技能和 MCP 等功能不能假定在不同适配器间完全一致，详见[账号与代理接入](docs/PROVIDERS.md)。
+
+## 项目结构
 
 ```text
-Android App / Mobile Browser
-          │ HTTPS
-          ▼
-  Nginx reverse proxy
-     ├── /vault/      静态 Web UI
-     └── /vault-api/  Witt API
-                         │
-                         ▼
-                 Node.js service
-                  ├── Auth / SQLite
-                  ├── files & images
-                  └── Codex App Server
-                              │
-                              ▼
-                        local projects
+浏览器 / Android
+       │ HTTPS
+       ▼
+Nginx ─┬─ /vault/      → 静态 Web 界面
+       └─ /vault-api/  → Node.js 服务（回环地址）
+                             ├─ 认证、设备与用户策略
+                             ├─ 会话、SQLite、附件与 Artifact
+                             └─ Codex App Server / CLI 代理
+                                            └─ 项目工作目录
 
-Android App ── SSH ──► 用户指定的服务器
+Android 本地终端 ── SSH ── 用户指定的服务器
 ```
 
-| 目录 | 用途 |
+| 目录 | 内容 |
 | --- | --- |
-| `backend/` | HTTP API、认证、会话、App Server 客户端与备份 |
-| `web/` | 无构建步骤的 HTML、CSS、JavaScript 客户端 |
-| `android/` | Android WebView 外壳、Keystore、下载与更新 |
-| `deploy/` | systemd、Nginx 和备份定时器示例 |
-| `tests/` | Node.js 服务测试和 Playwright UI 回归测试 |
+| [`backend/`](backend/) | HTTP 服务、认证、代理适配、存储与备份 |
+| [`web/`](web/) | 原生 HTML、CSS、JavaScript，无前端打包步骤 |
+| [`android/`](android/) | Java WebView 客户端及原生桥接 |
+| [`deploy/`](deploy/) | Nginx、systemd、环境变量示例 |
+| [`tests/`](tests/) | 服务回归检查和浏览器检查 |
+| [`tools/`](tools/) | Web 样式合并工具 |
 
-更详细的数据流和安全边界见 [架构文档](docs/ARCHITECTURE.md)。
+## 部署之前
 
-## 环境要求
+- Linux 服务器及 Node.js **22.16 或更新版本**；持久化使用内置 `node:sqlite`，备份使用其在线备份 API。
+- 安装并登录准备使用的 CLI；Codex 是默认接入路径，其他适配器按需配置。
+- 公网访问需要域名、HTTPS 和反向代理。
+- 构建 Android 时需要 JDK 17、Android SDK 35 和与 Android Gradle Plugin 8.9.1 兼容的 Gradle。
 
-- Linux 服务器，建议 Ubuntu 24.04 或同等版本
-- Node.js 22.5 或更高版本（项目使用内置 `node:sqlite`）
-- 已安装并完成登录的 Codex CLI
-- Nginx 及有效 HTTPS 证书
-- Android 构建可选：JDK 17、Android SDK 35、Gradle 8.x
-- UI 测试可选：Playwright 与 Chromium
+**本仓库仍包含原部署环境的路径约定，不是开箱即用的多租户托管产品。** 除环境变量外，`backend/server.js` 的账号目录和可选项目集成、Claude/Antigravity 服务的 CLI 路径也需要按部署环境调整。首次启动、管理员初始化和路径核对见[部署指南](docs/DEPLOYMENT.md)。
 
-后端没有第三方 npm 运行时依赖，`backend/package.json` 仅声明 CommonJS 模式。
+后端没有第三方 npm 运行时依赖；浏览器测试使用的 Playwright 属于开发工具。
 
-## 快速开始
-
-### 1. 克隆并准备目录
+## 从哪里开始
 
 ```bash
 git clone https://github.com/LeoWilson-Ben/witt.git
 cd witt
-mkdir -p runtime/{files,tasks,chat,chat-images,users,auth}
 ```
 
-### 2. 创建兼容令牌文件
+1. 按[部署指南](docs/DEPLOYMENT.md)配置运行目录、令牌文件和 CLI 路径。
+2. 初始化管理员，在本机安全取得首次激活信息。
+3. 启动后端，确认 `GET /health` 返回的 `ok` 字段为 `true`。
+4. 配置 HTTPS 和 `/vault/`、`/vault-api/` 路由，再激活浏览器或 Android 设备。
 
-兼容令牌只用于受信任的服务端或旧客户端接入。不要提交到 Git，也不要写入 APK。
-
-```bash
-install -d -m 700 runtime/secrets
-openssl rand -hex 32 > runtime/secrets/api-token
-chmod 600 runtime/secrets/api-token
-```
-
-### 3. 配置并启动后端
-
-```bash
-export DROP_VAULT_PORT=3003
-export DROP_VAULT_DATA_DIR="$PWD/runtime/files"
-export DROP_VAULT_TASK_DIR="$PWD/runtime/tasks"
-export DROP_VAULT_CHAT_DIR="$PWD/runtime/chat"
-export DROP_VAULT_IMAGE_DIR="$PWD/runtime/chat-images"
-export DROP_VAULT_USERS_DIR="$PWD/runtime/users"
-export DROP_VAULT_AUTH_DIR="$PWD/runtime/auth"
-export DROP_VAULT_TOKEN_FILE="$PWD/runtime/secrets/api-token"
-export DROP_VAULT_CODEX_BIN="$(command -v codex)"
-export DROP_VAULT_CODEX_WORKDIR="$PWD"
-node backend/server.js
-```
-
-验证服务：
-
-```bash
-curl http://127.0.0.1:3003/health
-```
-
-预期返回 `{"ok":true}`。
-
-### 4. 发布 Web UI
-
-将 `web/` 复制到 Web 根目录，并参考 [Nginx 示例](deploy/upload-entry-https.conf) 把 `/vault-api/` 代理到 `127.0.0.1:3003`。生产环境必须使用 HTTPS，否则 Android 凭据桥接、下载和浏览器安全能力可能受限。
-
-### 5. 激活设备
-
-首次启动后，通过管理员界面创建一次性邀请码，在新设备上输入即可激活。设备获得独立凭据；管理员可以随时停止单台设备，而不影响其他设备。
-
-## 配置
-
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `DROP_VAULT_PORT` | `3003` | 仅监听本机的 API 端口 |
-| `DROP_VAULT_DATA_DIR` | `/data/drop-vault/files` | 上传文件目录 |
-| `DROP_VAULT_TASK_DIR` | `/data/drop-vault/tasks` | 任务状态目录 |
-| `DROP_VAULT_CHAT_DIR` | `/data/drop-vault/chat` | 会话数据库目录 |
-| `DROP_VAULT_IMAGE_DIR` | `/data/drop-vault/chat-images` | 会话图片目录 |
-| `DROP_VAULT_USERS_DIR` | `/data/drop-vault/users` | 用户隔离目录 |
-| `DROP_VAULT_AUTH_DIR` | `/data/drop-vault/auth` | 认证数据库目录 |
-| `DROP_VAULT_TOKEN_FILE` | 本机配置目录 | 兼容令牌文件路径 |
-| `DROP_VAULT_CODEX_BIN` | 用户安装的 `codex` | Codex CLI 路径 |
-| `DROP_VAULT_CODEX_WORKDIR` | 部署者项目目录 | 默认工作目录 |
-
-`deploy/` 中的文件是示例，不应原样用于公网环境。请替换域名、用户、路径和证书位置，并把敏感值放进权限为 `600` 的 `EnvironmentFile` 或系统密钥管理工具。
+仅启动后端、仅通过健康检查，并不代表模型登录和执行任务已经可用。
 
 ## Android 客户端
 
-Android 外壳要求 Android 8.0（API 26）以上。构建前通过 `~/.gradle/gradle.properties`、命令行 `-P` 参数或对应环境变量配置：
-
-- `wittWebUrl` / `WITT_WEB_URL`
-- `wittApiUrl` / `WITT_API_URL`
-- `wittUpdateUrl` / `WITT_UPDATE_URL`
-- `wittSigningProperties` / `WITT_SIGNING_PROPERTIES`
-- `applicationId`（如果需要独立安装）
-
-当前源码默认版本为大阪版 `2.2.27`（versionCode `46`），服务地址使用 `https://witt.example.com` 占位，部署时必须替换为自己的 HTTPS 地址。独立安装使用 `wittApplicationId` / `WITT_APPLICATION_ID` 参数。开放版可以使用 `wittOpenAccess` / `WITT_OPEN_ACCESS` 参数启用，配置及权限边界见 [开放版说明](docs/open-edition.md)。
-
-发布签名请放在未跟踪的 `signing.properties` 中，不要把 keystore、密码、令牌或签名 APK 提交到仓库。复制 `web/update.example.json` 为部署目录中的 `update.json`，并填写 Release APK 的版本、URL、大小和 SHA-256。
+客户端支持 Android 8.0（API 26）及以上。默认服务地址使用 `witt.example.com` 占位，必须换成自己的地址。
 
 ```bash
 cd android
-gradle :app:assembleRelease
+gradle :app:assembleRelease -PwittWebUrl=https://witt.example.com/vault/index.html -PwittApiUrl=https://witt.example.com/vault-api/ -PwittUpdateUrl=https://witt.example.com/vault/update.json
 ```
 
-项目不提供官方通用 APK。Release APK 应由部署者使用自己的域名、签名和更新清单构建。
+可通过 `wittApplicationId`、`wittAppLabel`、`wittVersionCode`、`wittVersionName` 自定义应用身份和版本，通过 `wittSigningProperties` 指定私有签名配置。配置文件路径相对于 `android/app/` 解析，也可以使用绝对路径。以上参数也有对应的 `WITT_*` 环境变量，完整名称见 [`android/app/build.gradle`](android/app/build.gradle)。
 
-## 测试
+备用地址需同时设置 `wittFallbackWebUrl` 和 `wittFallbackApiUrl`。版本升级必须保持包名、签名身份一致，并提高 versionCode。更新清单模板为 [`web/update.example.json`](web/update.example.json)。
 
-浏览器测试需要安装 Playwright 及 Chromium，例如 `npm install --no-save playwright` 和 `npx playwright install chromium`。这些是开发依赖，不是后端运行依赖。
+不使用 Android 也可以通过浏览器使用 Witt。开放登记属于额外部署模式，默认不应仅为尝试项目而启用，见[开放版说明](docs/open-edition.md)。
+
+## 开发与检查
+
+基础语法及不需要真实模型账号的检查：
 
 ```bash
 node --check backend/server.js
 node --check backend/chat-service.js
 node tests/auth-service-check.cjs
-node tests/chat-images-check.cjs
-node tests/chat-approval-check.cjs
-node tests/app-server-capabilities-check.cjs
+node tests/browser-session-check.cjs
 node tests/execution-isolation-check.cjs
-node tests/account-migration-check.cjs
+node --test backend/test-chat-access-policy.js backend/test-claude-account-service.js
 node --test backend/test-multitask.js backend/test-chat-history-regressions.js
 node --test tests/open-enrollment-check.cjs
-node tests/account-migration-ui-check.cjs
-node tests/workspace-overview-check.cjs
-node tests/ui-check.mjs
 ```
 
-UI 测试会在 `tests/` 生成本地截图，这些截图默认不进入版本控制。
+浏览器检查需要自行安装 Playwright 及 Chromium。`tests/app-server-capabilities-check.cjs` 会调用真实 Codex，运行前需核对其中的本机路径与账号。不要把它当成离线测试。
 
-Web 页面使用 `web/web-style-manifest.json` 维护样式顺序。修改源样式后运行 `python3 tools/rebuild-web-styles.py`，重新生成页面引用的两个 CSS 文件。
+Web 样式按 [`web/web-style-manifest.json`](web/web-style-manifest.json) 排序。修改源样式后运行：
 
-## 安全模型
+```bash
+python3 tools/rebuild-web-styles.py
+```
 
-- API 只监听 `127.0.0.1`，公网入口交给 HTTPS 反向代理。
-- 邀请码只能使用一次，设备凭据相互隔离并可单独停用。
-- Android 端使用 Keystore 保护设备凭据和已保存的 SSH 密码，不将凭据持久化到网页存储。
-- 会话和认证数据使用 SQLite；敏感目录应限制为服务用户可读。
-- 删除数据、发送外部消息和高权限命令仍需要应用层审批策略。
-- 普通用户执行任务使用隔离工作目录与受限沙箱；服务器访问权限通过设备策略明确授予。
-- 完全访问模式允许 Codex 操作服务器，请使用专用用户、最小 sudo 规则、备份和网络隔离。
+更多开发约定见[贡献指南](CONTRIBUTING.md)。
 
-公开报告漏洞前请先阅读 [SECURITY.md](SECURITY.md)。
+## 数据与执行权限
 
-## 备份与恢复
+代码仓库和运行数据分开保存。数据库、附件、CLI 登录目录、设备凭据、Android 签名和 SSH 密钥不属于开源内容，不要上传到 Git、Issue 或 Release。
 
-`backend/backup.js` 使用 SQLite 在线备份 API，避免直接复制 WAL 数据库造成不一致。`deploy/witt-backup.service` 和 `deploy/witt-backup.timer` 提供 systemd 定时任务示例。建议把备份保存在不同磁盘，并定期演练恢复。
+Witt 可以调用代理执行命令、编辑文件。设备认证、会话分目录与应用权限检查不等于操作系统级隔离，也不保证所有操作都会弹出审批。部署者需要核对不同适配器的执行参数、运行用户、目录权限和 sudo 策略。不要将主机 root 权限无差别授予开放登记用户。
 
-## 路线图
+备份工具 `backend/backup.js` 支持 SQLite 在线备份和 SHA-256 校验。配置自定义数据目录时，应同时配置备份范围，详见[部署指南](docs/DEPLOYMENT.md)。
 
-- 提供可复用的环境配置生成器
-- 完善项目访问策略、任务恢复与计划任务管理
-- 提供容器化部署与健康监控示例
-- 增加端到端安全测试和无障碍检查
-- 把特定项目集成拆分成可选适配器
+## 文档
 
-## 参与贡献
+- [部署与管理员初始化](docs/DEPLOYMENT.md)
+- [架构与数据边界](docs/ARCHITECTURE.md)
+- [账号与代理接入](docs/PROVIDERS.md)
+- [Claude 登录实现](docs/claude-login.md)
+- [开放版登记](docs/open-edition.md)
+- [安全策略](SECURITY.md)
+- [贡献指南](CONTRIBUTING.md)
 
-欢迎 Issue 和 Pull Request。开始前请阅读 [贡献指南](CONTRIBUTING.md) 与 [行为准则](CODE_OF_CONDUCT.md)。较大的功能建议先提交 Issue，说明使用场景、安全边界和兼容性影响。
+## 许可与致谢
 
-## 许可
+Witt 源代码采用 [MIT License](LICENSE)。第三方依赖分别遵循其许可证，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。模型服务、账号订阅、商标、运行数据和部署者提供的素材不包含在代码授权中。
 
-Witt 源代码采用 [MIT License](LICENSE)。仓库中包含的第三方组件仍遵循各自许可证，详情见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。名称、第三方服务、账号、生成内容、部署数据和部署者自行提供的视觉媒体不因本许可证自动获得授权。
-
-## 致谢
-
-- [OpenAI Codex](https://developers.openai.com/codex/) 提供代理能力
-- [KaTeX](https://katex.org/) 提供公式渲染
-- 所有测试、反馈和贡献 Witt 的用户与开发者
+感谢 Codex、Claude Code、Antigravity CLI，以及 KaTeX、xterm.js、mwiede/JSch 和参与反馈与贡献的开发者。
