@@ -3647,6 +3647,16 @@
   });
   $("#closeDelivery").addEventListener("click", closeDelivery);
   $("#deliveryBackdrop").addEventListener("click", closeDelivery);
+  $("#moreArchiveButton").addEventListener("click", () => {
+    setChatMoreMenu(false);
+    if (!state.activeId) { toast("当前没有可归档的对话"); return; }
+    openArchiveDialog(state.activeId);
+  });
+  $("#moreDeleteButton").addEventListener("click", () => {
+    setChatMoreMenu(false);
+    if (!state.activeId) { toast("当前没有可删除的对话"); return; }
+    openArchiveDialog(state.activeId);
+  });
   $("#closeImageViewer").addEventListener("click", closeImageViewer);
   $("#downloadImageViewer").addEventListener("click", () => {
     const button = $("#downloadImageViewer");

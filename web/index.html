@@ -150,6 +150,12 @@
         <button id="moreProjectButton" class="chat-more-item">
           <svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17v-11Z"/></svg><span>当前项目</span><small id="moreProjectLabel">空白</small>
         </button>
+        <button id="moreArchiveButton" class="chat-more-item">
+          <svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="M8 9h8"/></svg><span>归档对话</span>
+        </button>
+        <button id="moreDeleteButton" class="chat-more-item danger">
+          <svg viewBox="0 0 24 24"><path d="M5 7h14M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5"/></svg><span>删除</span>
+        </button>
       </section>
     </header>
 
@@ -590,6 +596,8 @@
     <section class="upgrade-panel conversation-actions-panel" role="dialog" aria-modal="true" aria-labelledby="conversationActionsTitle">
       <header><h2 id="conversationActionsTitle">对话操作</h2><button type="button" data-close-upgrade aria-label="关闭">×</button></header>
       <button type="button" id="conversationRenameButton">重命名 <span>↗</span></button>
+      <button type="button" id="conversationArchiveButton">归档 <span>↓</span></button>
+      <small>归档只移出列表，历史记录仍会保留。</small>
     </section>
   </aside>
   <aside class="upgrade-sheet" id="conversationRenameSheet" hidden>
@@ -621,9 +629,9 @@
     </section>
   </aside>
   <script src="/vault/browser-bridge.js?v=20261028-history"></script>
-  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1"></script>
+  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2"></script>
   <script src="/vault/sidebar-layout.js?v=20261008-2"></script>
-  <script src="/vault/ui-upgrades.js?v=20261008-2&simplify=20261102-1"></script>
+  <script src="/vault/ui-upgrades.js?v=20261008-2&simplify=20261102-1&actions=20261102-2"></script>
   <script src="/vault/witt-features.js?v=20261008-1&simplify=20261102-1"></script>
 </body>
 </html>

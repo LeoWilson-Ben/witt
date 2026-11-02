@@ -37,6 +37,8 @@
     if (!item) return;
     menuId = id;
     $('#conversationActionsTitle').textContent = item.title;
+    $('#conversationArchiveButton').disabled = Boolean(item.busy);
+    $('#conversationActions small').textContent = item.busy ? '任务进行中，暂停或完成后即可归档。' : '归档只移出列表，历史记录仍会保留。';
     open('conversationActions');
   }
   window.WittUpgrades = { renderTasks, openConversationMenu };
@@ -53,6 +55,7 @@
     if (!title || title.length > 100) return;
     if (ui.updateMetadata(menuId, { title })) close();
   });
+  $('#conversationArchiveButton').addEventListener('click', () => { const id = menuId; close(false); ui.archive(id); });
   $('#taskOverviewButton').addEventListener('click', () => { open('taskOverviewSheet'); ui.refreshSummaries(); });
   $('#taskOverviewRefresh').addEventListener('click', () => { ui.refreshSummaries(); ui.toast('正在刷新任务状态'); });
   $('#taskOverviewList').addEventListener('click', event => {
