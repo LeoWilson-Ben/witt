@@ -44,6 +44,13 @@
   };
   const taskLabels = { running:'正在执行', queued:'排队中', awaiting_confirmation:'等待确认', waiting_confirmation:'等待确认', completed:'已完成', failed:'失败', interrupted:'已暂停', idle:'尚未开始' };
   function renderTasks(conversations, limit) {
+    const list = $('#taskOverviewList');
+    const focused = list.contains(document.activeElement) ? document.activeElement : null;
+    const focusTarget = focused ? {
+      task: focused.dataset.selectTask,
+      action: focused.dataset.taskAction,
+      id: focused.dataset.id,
+    } : null;
     window.WittFeatures?.watch(conversations);
     const active = conversations.filter(item => item.busy || ['queued','running','awaiting_confirmation','waiting_confirmation'].includes(ui.task(item).state));
     $('#taskOverviewCount').textContent = String(active.length);
@@ -57,6 +64,13 @@
       return `<button class="task-overview-row" type="button" data-select-task="${item.id}"><span class="task-overview-dot" data-state="${escape(task.state)}"></span><span><strong>${escape(item.title)}</strong><small>${escape(taskLabels[task.state] || task.label)}${item.queuePosition ? ' · 第 '+item.queuePosition+' 位' : ''}${item.waitingForProject ? ' · 等待项目：'+escape(item.waitingForProject) : ''}${item.activeDeviceLabel ? ' · '+escape(item.activeDeviceLabel) : ''}</small></span><span aria-hidden="true">↗</span></button>${task.state==='queued'?`<div class="task-controls"><button data-task-action="cancel" data-id="${item.id}">取消排队</button></div>`:['failed','interrupted'].includes(task.state)?`<div class="task-controls"><button data-task-action="retry" data-id="${item.id}">重试</button></div>`:''}`;
     }).join('')}` : '';
     $('#taskOverviewList').innerHTML = group('进行中',active) + group('最近结束',recent) || '<p class="tasks-empty">还没有任务。新建对话，开始第一项工作。</p>';
+    // Summary updates replace the buttons; keep keyboard users on the same task.
+    if (focusTarget && !$('#taskOverviewSheet').hidden) {
+      const replacement = [...list.querySelectorAll('button:not([disabled])')].find(button =>
+        focusTarget.task ? button.dataset.selectTask === focusTarget.task :
+          button.dataset.taskAction === focusTarget.action && button.dataset.id === focusTarget.id);
+      (replacement || $('#taskOverviewRefresh')).focus({ preventScroll: true });
+    }
   }
   function openConversationMenu(id) {
     const item = ui.conversations().find(value => value.id === id);
