@@ -189,17 +189,42 @@
     older.textContent = state.loadingOlder ? "正在读取此前 24 小时…" : "下拉查看此前 24 小时 · 也可点此加载";
   }
 
+  let workspaceOverviewTimer = null;
+  let workspaceOverviewLoading = false;
+  let workspaceServices = [];
+  let workspaceServiceFilter = "all";
   function requestWorkspaceOverview() {
-    $("#workspaceOverviewContent").textContent = state.workspaceFeatures ? "正在检查连接…" : "此功能需要支持工作区的新客户端，当前安装版本暂不支持。";
-    if (!state.workspaceFeatures) return;
-    // Current Osaka APKs use workspaceRequest rather than a dedicated native method.
-    if (state.workspaceOperations && typeof window.WittFeatures?.request === "function") {
-      window.WittFeatures.request("chat/workspace-overview")
-        .then((payload) => window.DropVault.onWorkspaceOverview(JSON.stringify(payload)))
-        .catch((error) => window.DropVault.onWorkspaceOverviewError(error.message || "检查失败，请重试"));
+    if (!state.workspaceFeatures) {
+      $("#workspaceOverviewContent").textContent = "请更新客户端后查看服务状态";
       return;
     }
-    bridge()?.requestWorkspaceOverview?.();
+    if (workspaceOverviewLoading) return;
+    workspaceOverviewLoading = true;
+    $("#refreshWorkspace").disabled = true;
+    if (!$("#workspaceServiceList")) $("#workspaceOverviewContent").textContent = "正在发现服务…";
+    if (state.workspaceOperations && typeof window.WittFeatures?.request === "function") {
+      const endpoint = window.WittNative ? "chat/projects?view=service-status" : "chat/workspace-overview";
+      window.WittFeatures.request(endpoint)
+        .then(payload => window.DropVault.onWorkspaceOverview(JSON.stringify(payload)))
+        .catch(error => window.DropVault.onWorkspaceOverviewError(error.message || "检查失败，请重试"));
+      return;
+    }
+    const currentBridge = bridge();
+    if (typeof currentBridge?.requestWorkspaceOverview === "function") currentBridge.requestWorkspaceOverview();
+    else window.DropVault.onWorkspaceOverviewError("当前客户端不支持状态检查，请更新客户端");
+  }
+
+  function renderWorkspaceServices() {
+    const list = $("#workspaceServiceList");
+    if (!list) return;
+    const query = ($("#workspaceServiceSearch")?.value || "").trim().toLocaleLowerCase();
+    const labels = {active:"运行中",inactive:"未运行",failed:"失败",activating:"启动中",deactivating:"停止中",reloading:"重载中",maintenance:"维护中",unknown:"未知"};
+    const enabled = {enabled:"开机启动",disabled:"未设自启",static:"按需启动",indirect:"间接启动",masked:"已屏蔽",generated:"自动生成",transient:"临时服务",alias:"别名"};
+    const matches = workspaceServices.filter(row => (workspaceServiceFilter === "all" || row.status === workspaceServiceFilter) &&
+      (!query || [row.name,row.unit,row.description].join(" ").toLocaleLowerCase().includes(query)));
+    list.innerHTML = matches.length ? matches.map(row => `<article class="service-status-card" data-state="${escapeHtml(row.status || "unknown")}"><div class="service-status-identity"><strong>${escapeHtml(row.name || row.id)}</strong><span class="service-status-badge">${escapeHtml(row.status === "active" && row.subState === "exited" ? "已就绪" : labels[row.status] || row.status || "未知")}</span></div><code>${escapeHtml(row.unit || row.id)}</code><p>${escapeHtml(row.description || "")}</p><small>${escapeHtml(row.template ? "服务模板" : enabled[row.enabled] || "")}${row.subState ? ` · ${escapeHtml(row.subState)}` : ""}</small></article>`).join("") : '<p class="services-empty">没有符合条件的服务，试试其他关键词或筛选条件。</p>';
+    $("#workspaceServiceResult").textContent = `显示 ${matches.length} / ${workspaceServices.length} 项`;
+    document.querySelectorAll('[data-service-filter]').forEach(button => button.setAttribute("aria-pressed", String(button.dataset.serviceFilter === workspaceServiceFilter)));
   }
 
   function openWorkspaceOverview() {
@@ -209,9 +234,15 @@
     $("#workspaceOverview").setAttribute("aria-hidden", "false");
     $("#closeWorkspace").focus();
     requestWorkspaceOverview();
+    clearInterval(workspaceOverviewTimer);
+    workspaceOverviewTimer = setInterval(() => {
+      if (state.appVisible && !document.hidden && $("#workspaceOverview").classList.contains("open")) requestWorkspaceOverview();
+    }, 15000);
   }
 
   function closeWorkspaceOverview() {
+    clearInterval(workspaceOverviewTimer);
+    workspaceOverviewTimer = null;
     $("#workspaceOverview").classList.remove("open");
     $("#workspaceOverview").setAttribute("aria-hidden", "true");
   }
@@ -3677,12 +3708,25 @@
     },
     onConversationMetadataError(message) { toast(message || "同步失败，请重试"); },
     onWorkspaceOverview(json) {
+      workspaceOverviewLoading = false;
+      $("#refreshWorkspace").disabled = false;
       const payload = JSON.parse(json);
-      const labels = { active: "运行中", inactive: "未运行", available: "可用", configured: "已配置", missing: "未配置", unknown: "待检查", connected: "已连接", error: "检查失败", running: "运行中" };
-      const section = (title, rows) => `<section class="workspace-section"><h3>${escapeHtml(title)}</h3>${(rows || []).map((row) => `<article><div><strong>${escapeHtml(row.name || row.id)}</strong><small>${escapeHtml(row.description || row.role || row.detail || "")}</small>${row.workDir ? `<code>${escapeHtml(row.workDir)}</code>` : ""}</div>${row.status ? `<span>${escapeHtml(labels[row.status] || row.status)}</span>` : ""}</article>`).join("") || '<p>暂无信息</p>'}</section>`;
-      $("#workspaceOverviewContent").innerHTML = section("项目", payload.projects) + section("服务器用途", payload.servers) + section("服务", payload.services) + section("服务连接", payload.connections) + `<p class="workspace-checked">核实时间：${escapeHtml(payload.checkedAt ? new Date(payload.checkedAt).toLocaleString() : "未知")}<br>${escapeHtml(payload.notice || "")}</p>`;
+      workspaceServices = Array.isArray(payload.services) ? payload.services : [];
+      const query = $("#workspaceServiceSearch")?.value || "";
+      const focused = document.activeElement?.id === "workspaceServiceSearch";
+      const cursor = focused ? $("#workspaceServiceSearch").selectionStart : 0;
+      const count = status => workspaceServices.filter(row=>row.status===status).length;
+      const warning = payload.serviceDiscovery?.available === false ? '<p class="services-warning" role="status">服务发现暂时不可用，请刷新重试。</p>' : payload.serviceDiscovery?.complete === false ? '<p class="services-warning" role="status">已读取部分服务，完整列表暂时不可用。</p>' : '';
+      const context = (title, rows) => rows?.length ? `<section class="workspace-section"><h3>${escapeHtml(title)}</h3>${rows.map(row=>`<article><div><strong>${escapeHtml(row.name||row.id)}</strong><small>${escapeHtml(row.description||row.role||row.detail||"")}</small>${row.workDir?`<code>${escapeHtml(row.workDir)}</code>`:""}</div></article>`).join("")}</section>` : "";
+      $("#workspaceOverviewContent").innerHTML = `${warning}<section class="services-summary"><div><small>${payload.serviceDiscovery?.scope === "all" ? "本机全部服务" : "当前可见服务"}</small><strong>${workspaceServices.length}<span>项</span></strong></div><p>运行 ${count("active")} · 失败 ${count("failed")} · 未运行 ${count("inactive")}</p></section><label class="service-search-label" for="workspaceServiceSearch">查找服务</label><input type="search" id="workspaceServiceSearch" placeholder="搜索名称、用途或服务名" value="${escapeHtml(query)}" autocomplete="off"><div class="service-status-filters" role="group" aria-label="筛选服务状态">${[["all","全部"],["active","运行"],["failed","失败"],["inactive","未运行"]].map(([id,label])=>`<button type="button" data-service-filter="${id}" aria-pressed="${workspaceServiceFilter===id}">${label}</button>`).join("")}</div><small id="workspaceServiceResult" role="status"></small><div id="workspaceServiceList" class="service-status-list"></div><details class="service-workspace-context"><summary>工作区与其他连接</summary>${context("项目",payload.projects)}${context("服务器",payload.servers)}${context("其他连接",payload.connections)}</details><p class="workspace-checked">最近检查：${escapeHtml(payload.checkedAt?new Date(payload.checkedAt).toLocaleTimeString():"未知")}<br>面板打开时每 15 秒刷新。未运行不一定异常，定时和按需服务执行后会停止。</p>`;
+      renderWorkspaceServices();
+      if (focused) { $("#workspaceServiceSearch").focus({preventScroll:true}); $("#workspaceServiceSearch").setSelectionRange(cursor,cursor); }
     },
-    onWorkspaceOverviewError(message) { $("#workspaceOverviewContent").textContent = message || "检查失败，请重试"; },
+    onWorkspaceOverviewError(message) {
+      workspaceOverviewLoading = false;
+      $("#refreshWorkspace").disabled = false;
+      $("#workspaceOverviewContent").innerHTML = `<p class="services-warning" role="status">${escapeHtml(message || "检查失败，请重试")}</p>`;
+    },
     onAppVisibility(visible) {
       setAppVisible(visible);
     },
@@ -4075,6 +4119,23 @@
   $("#closeWorkspace").addEventListener("click", closeWorkspaceOverview);
   $("#workspaceBackdrop").addEventListener("click", closeWorkspaceOverview);
   $("#refreshWorkspace").addEventListener("click", requestWorkspaceOverview);
+  document.addEventListener("keydown", event => {
+    if (!$("#workspaceOverview").classList.contains("open") || event.isComposing || event.keyCode === 229) return;
+    if (event.key === "Escape") { event.preventDefault(); closeWorkspaceOverview(); $("#menuButton").focus({preventScroll:true}); }
+    if (event.key === "Tab") {
+      const nodes = [...$("#workspaceOverview .workspace-panel").querySelectorAll('button:not(:disabled),input,select,summary')].filter(node=>node.getClientRects().length);
+      const first = nodes[0], last = nodes.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+  });
+  $("#workspaceOverviewContent").addEventListener("input", event => {
+    if (event.target.id === "workspaceServiceSearch") renderWorkspaceServices();
+  });
+  $("#workspaceOverviewContent").addEventListener("click", event => {
+    const button = event.target.closest('[data-service-filter]');
+    if (button) { workspaceServiceFilter = button.dataset.serviceFilter; renderWorkspaceServices(); }
+  });
   document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeWorkspaceOverview(); });
   $("#closeDrawer").addEventListener("click", closeDrawer);
   $("#drawerBackdrop").addEventListener("click", closeDrawer);

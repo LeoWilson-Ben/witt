@@ -6,6 +6,7 @@ const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const run = promisify(execFile);
 const cache = new Map();
+const { discoverServiceStatus } = require("./service-status");
 const units = [
   ["witt", "维特服务", "drop-vault.service"],
   ["gateway", "网页入口", "nginx.service"],
@@ -27,15 +28,16 @@ async function serviceState(unit) {
 
 // Status checks are read-only and demand-driven. Never return credential contents or
 // infer that a present file means authentication succeeded. Cache per user directory.
-async function workspaceOverview({ workDir = "", dataDir = "" } = {}) {
-  const key = JSON.stringify([workDir, dataDir]);
+async function workspaceOverview({ workDir = "", dataDir = "", includeAllServices = false } = {}) {
+  const key = JSON.stringify([workDir, dataDir, includeAllServices]);
   const previous = cache.get(key);
-  if (previous && Date.now() - previous.at < 15000) return previous.promise;
+  if (previous && Date.now() - previous.at < 5000) return previous.promise;
   const promise = (async () => {
     const resolvedWorkDir = path.resolve(workDir || "/nonexistent");
     const isXuanyu = resolvedWorkDir === "/data/xuanyu-build-console" || resolvedWorkDir.startsWith("/data/xuanyu-build-console/");
     const services = await Promise.all(units.filter(([id]) => id !== "builder" || isXuanyu)
       .map(async ([id, name, unit]) => ({ id, name, status: await serviceState(unit) })));
+    const discovery = includeAllServices ? await discoverServiceStatus() : { services, serviceDiscovery: { available: true, complete: true, scope: "limited" } };
     const connections = [];
     if (isXuanyu) {
       const appleKeyPresent = dataDir && await exists(path.join(dataDir,
@@ -53,8 +55,8 @@ async function workspaceOverview({ workDir = "", dataDir = "" } = {}) {
         { name: "业务服务器", role: "运行维特、接口与构建调度；不执行玄遇 APK 编译。" },
         { name: "远程构建机", role: "执行玄遇 Android 编译；未在此面板唤醒或轮询远程主机。" },
       ] : [{ name: "当前服务器", role: "运行维特与当前工作区服务。" }],
-      services, connections,
-      notice: "仅在打开面板时查询。文件存在不等于授权有效；这里不显示密钥、Token、发布版本或审核状态。",
+      ...discovery, connections,
+      notice: "仅在打开面板时查询。服务运行状态来自 systemd；未运行不一定异常，定时与按需服务执行后会停止。这里不显示凭据。",
     };
   })();
   cache.set(key, { at: Date.now(), promise });

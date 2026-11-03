@@ -1000,6 +1000,16 @@ class ChatService {
   handle(req, res, url, principal = {}) {
     if (!url.pathname.startsWith("/chat/")) return false;
     const deviceId = String(principal.deviceId || "legacy");
+    // Compatibility for installed Android clients whose workspace bridge only
+    // allows the established projects endpoint. GET-only, same permissions as
+    // the direct overview route; no project writes or wider execution access.
+    if (req.method === "GET" && url.pathname === "/chat/projects" && url.searchParams.get("view") === "service-status") {
+      Promise.resolve().then(() => workspaceOverview({ workDir: this.codexWorkDir, dataDir: this.dataDir,
+        includeAllServices: Boolean(principal.admin || principal.fullServerAccess) }))
+        .then(payload => this.sendJson(res, 200, payload))
+        .catch(() => this.sendJson(res, 503, { error: "暂时无法读取服务状态，请重试" }));
+      return true;
+    }
     if (this.workspace.handle(req, res, url, principal)) return true;
 
     if (req.method === "GET" && url.pathname === "/chat/conversations") {
@@ -1023,7 +1033,7 @@ class ChatService {
     }
 
     if (req.method === "GET" && url.pathname === "/chat/workspace-overview") {
-      Promise.resolve().then(() => workspaceOverview({ workDir: this.codexWorkDir, dataDir: this.dataDir }))
+      Promise.resolve().then(() => workspaceOverview({ workDir: this.codexWorkDir, dataDir: this.dataDir, includeAllServices: Boolean(principal.admin || principal.fullServerAccess) }))
         .then((payload) => this.sendJson(res, 200, payload))
         .catch(() => this.sendJson(res, 503, { error: "暂时无法读取项目与服务状态" }));
       return true;
