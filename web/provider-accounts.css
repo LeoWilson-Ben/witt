@@ -24,3 +24,6 @@
 :root[data-theme="dark"] #codexAccountSheet .codex-account-avatar.provider-icon.gpt{color:#91cebb!important;background:#284139!important}
 :root[data-theme="dark"] #codexAccountSheet .codex-account-avatar.provider-icon.claude{color:#e2a885!important;background:#49372b!important}
 :root[data-theme="dark"] #codexAccountSheet .codex-account-avatar.provider-icon.gemini{color:#9dbaff!important;background:#2c3957!important}
+
+/* One GPT sign-in entry; account slots remain private backend state. */
+.account-provider-heading>.login{min-height:38px;padding:8px 18px;border:0;border-radius:12px;background:var(--accent,#6c5ce7);color:#fff;font:inherit;font-size:13px;cursor:pointer}.account-provider-heading>span{margin-left:auto}

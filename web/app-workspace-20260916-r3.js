@@ -1682,11 +1682,19 @@
     if(!groups.includes(state.accountCategory)) state.accountCategory="gpt";
     const names={gpt:"GPT",claude:"Claude",gemini:"Gemini"};
     const icon = name => providerIcons[name === "gpt" ? "openai" : name];
-    const cards = accounts.filter(account => category(account) === state.accountCategory).map(account => {
+    const gptAccounts = accounts.filter(account => category(account) === "gpt");
+    const loginProfile = gptAccounts.find(account => account.id !== "default" && account.authenticationRequired)
+      || gptAccounts.find(account => account.id !== "default" && !account.authenticated)
+      || gptAccounts.find(account => account.id === "xuanyu");
+    const gptLogin = state.admin ? `<button type="button" class="login" data-login-codex="${escapeHtml(loginProfile?.id || "xuanyu")}">登录</button>` : "";
+    const gptWarning = state.accountCategory === "gpt" && gptAccounts.some(account => account.readError)
+      ? '<p class="account-provider-empty" role="status">部分账号授权已失效或暂时不可用，可通过“登录”重新连接；其他账号可正常使用。</p>' : "";
+    const cards = accounts.filter(account => category(account) === state.accountCategory &&
+      (state.accountCategory !== "gpt" || account.authenticated || account.id === "default")).map(account => {
       const kind=category(account),signedIn=Boolean(account.authenticated);
-      const detail=signedIn ? `${account.account?.email||"已登录"}${account.account?.planType ? ` · ${account.account.planType}` : ""}`
-        : kind === "gemini" ? "通过官方 Antigravity CLI 登录" : kind === "claude" ? "通过官方 Claude Code 登录" : "尚未登录";
-      const canLogin=state.admin && account.id!=="default";
+      const detail=account.readError || (signedIn ? `${account.account?.email||"已登录"}${account.account?.planType ? ` · ${account.account.planType}` : ""}`
+        : kind === "gemini" ? "通过官方 Antigravity CLI 登录" : kind === "claude" ? "通过官方 Claude Code 登录" : "尚未登录");
+      const canLogin=state.admin && account.id!=="default" && kind!=="gpt";
       const loginAttr=kind === "gpt" ? `data-login-codex="${escapeHtml(account.id)}"` : `data-login-provider="${escapeHtml(account.provider)}"`;
       const actions=`${canLogin ? `<button class="${signedIn ? "relogin":"login"}" ${loginAttr}>${signedIn ? (kind === "gpt" ? "重新登录":"管理登录") : "登录账号"}</button>` : ""}
         ${signedIn ? `<button class="new-chat" data-new-codex-chat="${escapeHtml(account.id)}">使用此账号</button>` : ""}`;
@@ -1695,8 +1703,8 @@
         <div class="codex-account-identity"><strong>${escapeHtml(account.label||account.id)}</strong><small>${escapeHtml(detail)}</small></div>
         <div class="codex-account-actions">${actions}</div></article>`;
     }).join("");
-    $("#codexAccountList").innerHTML=`<div class="account-provider-tabs" role="tablist" aria-label="账号类型">${groups.map(kind=>`<button type="button" role="tab" aria-selected="${state.accountCategory===kind}" aria-controls="accountProviderPanel" data-account-category="${kind}" class="${state.accountCategory===kind ? "selected":""}"><span class="provider-icon ${kind}">${icon(kind)}</span><b>${names[kind]}</b><small>${accounts.filter(a=>category(a)===kind).length}</small></button>`).join("")}</div>
-      <section class="account-provider-panel" id="accountProviderPanel" role="tabpanel" aria-label="${names[state.accountCategory]} 账号"><div class="account-provider-heading"><strong>${names[state.accountCategory]} 账号</strong><span>${state.accountCategory === "gpt" ? "Codex CLI" : state.accountCategory === "claude" ? "Claude Code" : "Antigravity CLI"}</span></div>${cards||'<p class="account-provider-empty">暂时无法读取账号信息，请稍后重新打开。</p>'}</section>`;
+    $("#codexAccountList").innerHTML=`<div class="account-provider-tabs" role="tablist" aria-label="账号类型">${groups.map(kind=>`<button type="button" role="tab" aria-selected="${state.accountCategory===kind}" aria-controls="accountProviderPanel" data-account-category="${kind}" class="${state.accountCategory===kind ? "selected":""}"><span class="provider-icon ${kind}">${icon(kind)}</span><b>${names[kind]}</b><small>${accounts.filter(a=>category(a)===kind && (kind!=="gpt" || a.authenticated || a.id==="default")).length}</small></button>`).join("")}</div>
+      <section class="account-provider-panel" id="accountProviderPanel" role="tabpanel" aria-label="${names[state.accountCategory]} 账号"><div class="account-provider-heading"><strong>${names[state.accountCategory]} 账号</strong><span>${state.accountCategory === "gpt" ? "Codex CLI" : state.accountCategory === "claude" ? "Claude Code" : "Antigravity CLI"}</span>${state.accountCategory === "gpt" ? gptLogin : ""}</div>${gptWarning}${cards||'<p class="account-provider-empty">暂时无法读取账号信息，请稍后重新打开。</p>'}</section>`;
   }
 
   function setCodexLoginFlow(open) {
