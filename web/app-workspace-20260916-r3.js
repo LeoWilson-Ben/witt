@@ -4441,6 +4441,8 @@
     draftSaveTimer = setTimeout(saveDraft, 250);
   });
   $("#messageInput").addEventListener("keydown", (event) => {
+    // Candidate confirmation belongs to the IME, including legacy WebViews.
+    if (event.isComposing || event.keyCode === 229) return;
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       sendMessage();
