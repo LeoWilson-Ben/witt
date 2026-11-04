@@ -141,10 +141,12 @@
 #adminSettingsSheet .admin-settings-panel{height:calc(var(--upgrade-visible-height,100dvh) - 16px)!important;overflow:hidden}
 #adminSettingsSheet .device-admin{padding:0 2px 20px!important;background:transparent!important}
 #adminSettingsSheet .device-admin>header{margin-top:0}
-#adminSettingsSheet .device-row{padding:15px!important;gap:10px;margin:10px 0}
-#adminSettingsSheet .device-row>div{min-width:0}
-#adminSettingsSheet .device-row strong{overflow-wrap:anywhere}
-#adminSettingsSheet .device-row button{border:1px solid var(--sg-line)!important;border-radius:12px!important;color:var(--sg-danger)!important;background:var(--sg-soft)!important;min-height:40px;padding:8px 12px}
+#adminSettingsSheet .device-admin{min-width:0;max-width:100%}
+#adminSettingsSheet .device-list{grid-template-columns:minmax(0,1fr);min-width:0;max-width:100%}
+#adminSettingsSheet .device-row{box-sizing:border-box;width:100%;min-width:0;max-width:100%;padding:15px!important;gap:10px;margin:10px 0}
+#adminSettingsSheet .device-row>div{flex:1 1 0;min-width:0}
+#adminSettingsSheet .device-row :is(strong,small){white-space:normal;overflow-wrap:anywhere;text-overflow:clip}
+#adminSettingsSheet .device-row button{flex:0 0 auto;min-width:44px;white-space:nowrap;border:1px solid var(--sg-line)!important;border-radius:12px!important;color:var(--sg-danger)!important;background:var(--sg-soft)!important;min-height:40px;padding:8px 12px}
 #adminSettingsSheet .latest-invite{border-radius:17px;background:var(--sg-soft);border:1px solid var(--sg-edge)}
 #profileSheet .profile-hero{padding:18px!important;border-radius:22px!important;gap:13px}
 #profileSheet .profile-hero strong{font-size:15px!important;line-height:1.6}
