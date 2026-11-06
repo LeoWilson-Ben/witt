@@ -963,7 +963,78 @@
     }) : "暂未提供";
   }
 
+  function validCapacityPercent(value) {
+    if (value === null || value === undefined || value === "" || typeof value === "boolean") return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.max(0, Math.min(100, Math.round(number))) : null;
+  }
+
+  function headerContextUsage() {
+    const context = state.active?.contextUsage;
+    const used = context?.usedTokens, windowSize = Number(context?.contextWindow);
+    if (used === null || used === undefined || used === "" || !Number.isFinite(Number(used)) ||
+        Number(used) < 0 || !Number.isFinite(windowSize) || windowSize <= 0) return null;
+    return { used: Number(used), windowSize, percent: validCapacityPercent(Number(used) / windowSize * 100), updatedAt: context.updatedAt };
+  }
+
+  function updateHeaderCapsule() {
+    const quota = $("#headerQuotaButton"), context = $("#headerContextButton");
+    if (!quota || !context) return;
+    const windows = [];
+    if (state.codexProfile === "antigravity") {
+      const groups = state.usage?.quota?.groups || [], thirdParty = /^gemini:(claude|gpt)-/.test(state.model || "");
+      const group = (state.model || "").includes("argon")
+        ? groups.find(g => /argon/i.test(g.name) || g.buckets?.some(b => /argon/i.test(b.id)))
+        : groups.find(g => g.family === (thirdParty ? "third-party" : "gemini"));
+      for (const bucket of group?.buckets || []) {
+        const remaining = validCapacityPercent(bucket.remainingPercent);
+        if (remaining !== null) windows.push({ remaining, label: bucket.window === "5h" ? "5小时" : bucket.window === "weekly" ? "本周" : String(group.name || "当前模型") });
+      }
+    } else if (state.codexProfile !== "claude" && state.usage?.provider !== "claude") {
+      const { fiveHour, weekly } = rateLimitWindows(state.usage?.rateLimits || {});
+      for (const [label, item] of [["5小时", fiveHour], ["本周", weekly]]) {
+        const used = validCapacityPercent(item?.usedPercent);
+        if (used !== null) windows.push({ remaining: 100 - used, label });
+      }
+    }
+    const limiting = windows.reduce((a, b) => !a || b.remaining < a.remaining ? b : a, null);
+    function paint(button, valueNode, percent, tone, description) {
+      button.dataset.known = String(percent !== null);
+      button.dataset.tone = percent === null ? "unknown" : tone;
+      button.style.setProperty("--capacity-fill", `${percent ?? 0}%`);
+      valueNode.textContent = percent === null ? "—" : `${percent}%`;
+      button.setAttribute("aria-label", description); button.title = description;
+    }
+    const remaining = limiting?.remaining ?? null;
+    paint(quota, $("#headerQuotaValue"), remaining, remaining <= 5 ? "danger" : remaining <= 20 ? "warning" : "normal",
+      remaining === null ? "额度尚未读取或此账号暂不提供额度，点击查看用量" :
+        `额度剩余 ${remaining}%，取当前限制窗口中较低的剩余额度。${windows.map(w => `${w.label}剩余 ${w.remaining}%`).join("，")}。点击查看详情`);
+    const usage = headerContextUsage();
+    paint(context, $("#headerContextValue"), usage?.percent ?? null, usage?.percent >= 95 ? "danger" : usage?.percent >= 80 ? "warning" : "normal",
+      usage ? `上下文已用 ${usage.percent}%，${formatTokens(usage.used)} / ${formatTokens(usage.windowSize)} tokens，点击查看详情` : "尚未收到当前对话的上下文统计，点击查看详情");
+    if (!$("#contextUsageSheet")?.hidden) renderContextDetails();
+  }
+
+  let contextUsageReturnFocus = null;
+  function renderContextDetails() {
+    const usage = headerContextUsage();
+    $("#contextDetailPercent").textContent = usage ? `${usage.percent}%` : "—";
+    $("#contextDetailTokens").textContent = usage ? `${formatTokens(usage.used)} / ${formatTokens(usage.windowSize)} tokens` : "尚未收到当前对话的上下文统计";
+    $("#contextDetailNote").textContent = usage
+      ? "按最近一轮输入量估算。压缩上下文或继续对话后，比例会更新；它不是整段对话的累计用量。"
+      : state.activeId ? "等待模型返回上下文数据。读取不到时保留空值，不会显示成 0%。" : "开始对话并收到模型返回的统计后，这里会显示上下文占用。";
+  }
+  function openContextDetails() {
+    setChatMoreMenu(false); contextUsageReturnFocus = document.activeElement;
+    renderContextDetails(); $("#contextUsageSheet").hidden = false; $("#closeContextUsage").focus({ preventScroll: true });
+  }
+  function closeContextDetails() {
+    $("#contextUsageSheet").hidden = true;
+    if (contextUsageReturnFocus?.isConnected) contextUsageReturnFocus.focus({ preventScroll: true });
+  }
+
   function updateQuotaStatus() {
+    updateHeaderCapsule();
     const button = $("#quotaButton");
     const { fiveHour, weekly, pro } = rateLimitWindows(state.usage?.rateLimits || {});
     const fiveHourUsed = rateLimitUsed(fiveHour);
@@ -1049,6 +1120,7 @@
     document.querySelectorAll("[data-access]").forEach((button) =>
       button.classList.toggle("selected", button.dataset.access === state.draftAccessMode));
     renderCapabilities();
+    updateHeaderCapsule();
   }
 
   function accountPreference(id = state.codexProfile) {
@@ -3623,6 +3695,7 @@
         state.active = mergeVisibleConversation(conversation);
         persistConversation(state.active);
       }
+      updateHeaderCapsule();
       closeSettings();
       toast("已开始压缩上下文");
     },
@@ -4006,6 +4079,7 @@
     persistModelPreference();
     state.activeId = null;
     state.active = null;
+    updateHeaderCapsule();
     state.loadingOlder = false;
     state.olderRequest = null;
     state.workDir = state.codexProfile === "xuanyu" ? "/data/xuanyu-build-console" : "";
@@ -4032,9 +4106,17 @@
   }
 
   $("#menuButton").addEventListener("click", openDrawer);
-  $("#newChatButton").addEventListener("click", () => {
-    setChatMoreMenu(false);
-    beginNewConversation();
+  $("#headerQuotaButton").addEventListener("click", () => { setChatMoreMenu(false); openProfile(); });
+  $("#headerContextButton").addEventListener("click", openContextDetails);
+  for (const id of ["#contextUsageBackdrop", "#closeContextUsage", "#contextUsageDone"]) $(id).addEventListener("click", closeContextDetails);
+  $("#contextUsageSheet").addEventListener("keydown", event => {
+    if (event.isComposing || event.keyCode === 229) return;
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeContextDetails(); }
+    if (event.key === "Tab") {
+      const first = $("#closeContextUsage"), last = $("#contextUsageDone");
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
   });
   $("#chatMoreButton").addEventListener("click", () =>
     setChatMoreMenu(!$("#chatMoreMenu").classList.contains("open")));
