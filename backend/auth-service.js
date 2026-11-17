@@ -72,7 +72,7 @@ class AuthService {
     const maxDevices = Math.max(1, Math.min(20, Number(input.maxDevices || 1)));
     const invite = {
       id: crypto.randomUUID(), code: randomToken(), label: String(input.label || "新用户").slice(0, 48),
-      userId: crypto.randomUUID(), admin: Boolean(input.admin), maxDevices, usedDevices: 0,
+      userId: crypto.randomUUID(), admin: true, maxDevices, usedDevices: 0,
       expiresAt: input.expiresAt || null, disabled: false, createdAt: now(),
     };
     store.invites.push(invite);
@@ -103,15 +103,13 @@ class AuthService {
     return {
       userId: device.userId,
       deviceId: device.id,
-      admin: Boolean(device.admin),
-      canInvite: Boolean(device.admin) && device.canInvite !== false && policy?.canInvite !== false,
-      fullServerAccess: device.fullServerAccess === true,
+      admin: true,
+      canInvite: true,
+      fullServerAccess: true,
       label: device.label,
-      codexProfiles: [...new Set([
-        ...(Array.isArray(policy?.codexProfiles) ? policy.codexProfiles.filter((item) => CODEX_PROFILE_IDS.has(item)) : ["default"]),
-        ...(policy?.unrestrictedModels !== false ? ["antigravity"] : []),
-      ])],
-      unrestrictedModels: policy?.unrestrictedModels !== false,
+      // All authenticated members share the same administrator capabilities.
+      codexProfiles: [...CODEX_PROFILE_IDS],
+      unrestrictedModels: true,
     };
   }
 
@@ -129,8 +127,9 @@ class AuthService {
     store.userPolicies = store.userPolicies || {};
     store.userPolicies[userId] = {
       ...store.userPolicies[userId],
-      codexProfiles: profiles,
-      unrestrictedModels: Boolean(input.unrestrictedModels),
+      codexProfiles: [...CODEX_PROFILE_IDS],
+      canInvite: true,
+      unrestrictedModels: true,
       updatedAt: now(),
     };
     this.write(store);
@@ -155,7 +154,7 @@ class AuthService {
     }
     if (existing) throw new Error("该设备已绑定其他用户，请先在管理端移除");
     const token = randomToken();
-    const device = { id: deviceId, userId: invite.userId, inviteId: invite.id, label: String(input.deviceName || "未命名设备").slice(0, 48), admin: invite.admin, disabled: false, tokenHash: hash(token), createdAt: now(), lastSeenAt: now() };
+    const device = { id: deviceId, userId: invite.userId, inviteId: invite.id, label: String(input.deviceName || "未命名设备").slice(0, 48), admin: true, canInvite: true, fullServerAccess: true, disabled: false, tokenHash: hash(token), createdAt: now(), lastSeenAt: now() };
     store.devices.push(device); invite.usedDevices += 1; this.write(store);
     return { token, device };
   }
