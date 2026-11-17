@@ -83,3 +83,9 @@
 :root[data-theme="dark"] #welcome .suggestions button{border-color:color-mix(in srgb,var(--tile-line) 86%,#c9b2da)!important;box-shadow:0 12px 28px #0004,0 2px 7px #0003,inset 0 1px 0 #ffffff12!important}
 :root[data-theme="dark"] #welcome .suggestions button:active{box-shadow:0 4px 12px #0004,inset 0 1px 0 #ffffff12!important}
 @media(prefers-reduced-motion:reduce){#welcome .suggestions button{transition:none!important}}
+
+/* History pagination has no persistent banner; content touches the capsule edge. */
+#loadOlderMessages{display:none!important}
+#chatStage:not(.empty-conversation){padding-top:var(--history-top,62px)!important}
+#chatStage:not(.empty-conversation) #messageList{padding-top:0!important;margin-top:0!important}
+#chatStage:not(.empty-conversation) #messageList>.message:first-child{margin-top:0!important}

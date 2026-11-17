@@ -1,0 +1,12 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {normalizeQuota}=require('./antigravity-quota');
+const {ChatService}=require('./chat-service');
+const q=normalizeQuota({groups:[{name:'Gemini Models',buckets:[{id:'a',window:'weekly',remaining_fraction:.375,reset_time:'2026-11-20T00:00:00Z'},{id:'b',window:'5h',remaining_fraction:null},{id:'c',window:'5h',remaining_fraction:0},{id:'d',remaining_fraction:2,disabled:true}]}],credentials:'must-not-return'});
+assert(q.available);assert.equal(q.groups[0].buckets[0].remainingPercent,37.5);assert.equal(q.groups[0].buckets[1].remainingPercent,null);assert.equal(q.groups[0].buckets[2].remainingPercent,0);assert.equal(q.groups[0].buckets[3].remainingPercent,null);assert(!JSON.stringify(q).includes('must-not-return'));
+assert.equal(normalizeQuota({groups:[]}).available,false);
+(async()=>{const service=Object.create(ChatService.prototype);let response,calls=0;
+service.readConversation=()=>({codexProfile:'antigravity'});service.profileFor=()=>({id:'antigravity',provider:'antigravity'});service.profileAllowed=()=>true;service.sendJson=(_r,status,body)=>response={status,body};service.providerRuntime={usage:async()=>{calls++;return {codexProfile:'antigravity',provider:'antigravity',quota:q}}};
+await service.readAccountUsage({},'conversation');assert.equal(response.status,200);assert.equal(response.body.quota.groups[0].buckets[0].remainingPercent,37.5);assert.equal(calls,1);
+service.profileAllowed=()=>false;await service.readAccountUsage({},'conversation');assert.equal(response.status,403);assert.equal(calls,1);
+console.log('PASS official quota normalization, unknown versus zero, credential filtering, provider routing and access revocation');})().catch(e=>{console.error(e);process.exitCode=1});

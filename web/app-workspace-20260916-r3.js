@@ -184,7 +184,7 @@
     strip.hidden = true;
     strip.replaceChildren();
     const older = $("#loadOlderMessages");
-    older.hidden = !state.workspaceFeatures || !state.active?.hasMore;
+    older.hidden = true; // History remains available through the explicit pull gesture.
     older.disabled = state.loadingOlder;
     older.textContent = state.loadingOlder ? "正在读取此前 24 小时…" : "下拉查看此前 24 小时 · 也可点此加载";
   }
@@ -777,7 +777,18 @@
 
   function modelDisplayName(modelId) {
     const capability = (state.capabilities?.models || []).find((model) => model.id === modelId);
-    return capability?.displayName || modelNames[modelId] || modelId;
+    return String(capability?.displayName || modelNames[modelId] || modelId)
+      .replace(/^(?:stellarbit:|gemini:|cn:)+/gi, "")
+      .replace(/\s*·\s*Stellarbit$/i, "")
+      .replace(/\s*\(Thinking\)\s*$/i, "")
+      .replace(/-(?:20\d{6})$/, "");
+  }
+
+  function modelSource(model) {
+    if (model.id.startsWith("stellarbit:")) return {id:"stellarbit",label:"Stellarbit"};
+    if (model.id.startsWith("gemini:")) return {id:"gemini",label:"反重力"};
+    if (model.id.startsWith("claude:")) return {id:"claude",label:"Claude"};
+    return {id:"openai",label:"官方 GPT"};
   }
 
   function renderReasoningControl() {
@@ -847,7 +858,7 @@
     $("#quickModelCurrent").textContent = modelDisplayName(selectedModel);
     $("#quickModelOptions").innerHTML = models.map((model) => {
       const selected = model.id === selectedModel;
-      return `<button type="button" data-quick-model="${escapeHtml(model.id)}" role="radio" aria-checked="${selected}" class="${selected ? "selected" : ""}"><span>${escapeHtml(model.displayName || modelNames[model.id] || model.id)}</span><i>✓</i></button>`;
+      return `<button type="button" data-quick-model="${escapeHtml(model.id)}" role="radio" aria-checked="${selected}" class="${selected ? "selected" : ""}" data-model-source="${modelSource(model).id}"><span>${escapeHtml(modelDisplayName(model.id))}</span><small class="model-source-tag">${modelSource(model).label}</small><i>✓</i></button>`;
     }).join("");
     const efforts = availableReasoningEfforts().slice().reverse();
     $("#quickReasoningOptions").innerHTML = efforts.map((effort) => {
@@ -879,13 +890,13 @@
       });
       $(".model-options").innerHTML = models.map((model) => {
         const name = model.displayName || model.id;
-        const shortName = modelNames[model.id] || name;
+        const shortName = modelDisplayName(model.id);
         const glyph = shortName.slice(0, 1).toUpperCase() || "✦";
         const efforts = (model.reasoningEfforts || []).length;
         const description = model.description || modelDescriptions[model.id] || "由当前账号提供";
         const selectedClass = model.id === (state.draftModel || state.model) ? "selected" : "";
         const selected = Boolean(selectedClass);
-        return `<button type="button" class="${selectedClass}" data-model="${escapeHtml(model.id)}" role="radio" aria-checked="${selected}"><span class="model-glyph ${escapeHtml(shortName.toLowerCase())}">${escapeHtml(glyph)}</span><span><strong>${escapeHtml(shortName)}</strong><small>${escapeHtml(description)}</small><em>${efforts || 4} 档智能程度</em></span><i></i></button>`;
+        return `<button type="button" class="${selectedClass}" data-model-source="${modelSource(model).id}" data-model="${escapeHtml(model.id)}" role="radio" aria-checked="${selected}"><span class="model-glyph ${escapeHtml(shortName.toLowerCase())}">${escapeHtml(glyph)}</span><span><strong>${escapeHtml(shortName)}</strong><small>${modelSource(model).label} · ${escapeHtml(description)}</small><em>${efforts || 4} 档智能程度</em></span><i></i></button>`;
       }).join("");
     }
     renderReasoningControl();
@@ -977,7 +988,50 @@
     return { used: Number(used), windowSize, percent: validCapacityPercent(Number(used) / windowSize * 100), updatedAt: context.updatedAt };
   }
 
+  let headerAccountsCheckedAt = 0, pendingHeaderProvider = null, headerAccountsTimer = null;
+  function chooseHeaderProvider(provider, accounts) {
+    const kind = account => account.provider === "claude" ? "claude" : account.provider === "antigravity" ? "gemini" : "gpt";
+    const usable = accounts.filter(account => kind(account) === provider && account.authenticated &&
+      (state.admin || state.allowedCodexProfiles.includes(account.id)));
+    if (usable.length === 1) { closeCodexAccounts(); beginNewConversation(usable[0].id); return; }
+    state.accountCategory = provider;
+    renderCodexAccounts(accounts);
+    openCodexAccounts();
+  }
+  function useHeaderProvider(provider) {
+    if (state.transmitting) { toast("消息正在送达，请稍候再切换"); return; }
+    if (headerAccountsCheckedAt && Date.now() - headerAccountsCheckedAt < 30000) {
+      chooseHeaderProvider(provider, state.codexAccounts); return;
+    }
+    if (pendingHeaderProvider === provider) return;
+    pendingHeaderProvider = provider;clearTimeout(headerAccountsTimer);
+    renderHeaderAccountSwitch();
+    headerAccountsTimer = setTimeout(() => {
+      if (pendingHeaderProvider) { pendingHeaderProvider = null;renderHeaderAccountSwitch();toast("账号读取超时，请重试"); }
+    }, 30000);
+    bridge()?.requestCodexAccounts?.();
+  }
+
+  function renderHeaderAccountSwitch() {
+    const current = profileProvider(state.codexProfile || "default");
+    const names = { gpt: "GPT", claude: "Claude", gemini: "Gemini" };
+    document.querySelectorAll("[data-header-provider]").forEach(button => {
+      const provider = button.dataset.headerProvider;
+      const permitted = state.admin || (provider === "gpt"
+        ? state.allowedCodexProfiles.some(id => !["claude", "antigravity"].includes(id))
+        : state.allowedCodexProfiles.includes(provider === "gemini" ? "antigravity" : "claude"));
+      button.querySelector(".header-account-logo").innerHTML = providerIcons[provider === "gpt" ? "openai" : provider] || "✦";
+      button.dataset.active = String(current === provider);
+      button.setAttribute("aria-busy", String(pendingHeaderProvider === provider));
+      button.setAttribute("aria-pressed", String(current === provider));
+      button.setAttribute("aria-label", `${names[provider]} 账号${current === provider ? "，当前使用" : ""}${permitted ? "" : "，暂无权限"}`);
+      button.title = permitted ? `切换 ${names[provider]} 账号` : `${names[provider]} 暂无权限`;
+      button.disabled = !state.authenticated || !permitted;
+    });
+  }
+
   function updateHeaderCapsule() {
+    renderHeaderAccountSwitch();
     const quota = $("#headerQuotaButton"), context = $("#headerContextButton");
     if (!quota || !context) return;
     const windows = [];
@@ -1036,6 +1090,12 @@
   function updateQuotaStatus() {
     updateHeaderCapsule();
     const button = $("#quotaButton");
+    if (["antigravity", "claude"].includes(state.codexProfile)) {
+      button.hidden = false;button.classList.remove("pro-quota");
+      $("#fiveHourQuotaLabel").hidden = false;$("#weeklyQuotaLabel").hidden = true;
+      $("#fiveHourQuotaLabel").textContent = state.codexProfile === "antigravity" ? "查看反重力额度" : "查看 Claude 额度";
+      button.setAttribute("aria-label", "查看当前账号额度");return;
+    }
     const { fiveHour, weekly, pro } = rateLimitWindows(state.usage?.rateLimits || {});
     const fiveHourUsed = rateLimitUsed(fiveHour);
     const weeklyUsed = rateLimitUsed(weekly);
@@ -1080,6 +1140,13 @@
   }
 
   function applyPrincipalPolicy(principal = {}) {
+    state.canInvite = Boolean(principal.admin) && principal.canInvite !== false;
+    const inviteForm = $("#deviceAdmin .device-invite");
+    if (inviteForm) inviteForm.style.setProperty("display", state.canInvite ? "" : "none", state.canInvite ? "" : "important");
+    $("#createInviteButton").disabled = !state.canInvite;
+    $("#latestInvite").hidden = !state.canInvite;
+    const deviceHeading = $("#deviceAdmin header h3");
+    if (deviceHeading) deviceHeading.textContent = state.canInvite ? "授权新设备" : "已授权设备";
     const profiles = principal.admin
       ? [...CODEX_PROFILE_IDS]
       : Array.isArray(principal.codexProfiles) && principal.codexProfiles.length
@@ -1090,6 +1157,7 @@
       state.codexProfile = state.allowedCodexProfiles[0];
       localStorage.setItem("wit_codex_profile", state.codexProfile);
     }
+    renderHeaderAccountSwitch();
     const xuanyuOnly = state.allowedCodexProfiles.length === 1 &&
       state.allowedCodexProfiles[0] === "xuanyu";
     const title = $("#drawerNewChat strong");
@@ -1110,6 +1178,7 @@
   function updateModelControls() {
     selectAccountCapabilities();
     $("#modelLabel").textContent = modelDisplayName(state.model);
+    $("#modelButton").dataset.modelSource = modelSource({id:state.model || ""}).id;
     $(".model-spark").innerHTML=providerIcons[profileProvider(state.codexProfile)==="gpt" ? "openai" : profileProvider(state.codexProfile)] || "✦";
     $("#reasoningLabel").textContent = reasoningNames[state.reasoning] || "均衡";
     $("#accessLabel").textContent = accessNames[state.accessMode] || "完全访问";
@@ -1193,7 +1262,23 @@
   function renderUsage() {
     const payload = state.usage;
     if (!payload) {
-      $("#usageContent").innerHTML = `<div class="usage-loading"><i></i><span>正在读取 Token 用量</span></div>`;
+      $("#usageContent").innerHTML = `<div class="usage-loading"><i></i><span>正在读取账号额度</span></div>`;
+      return;
+    }
+    if (payload.provider) {
+      const quota = payload.quota || {};
+      const label = payload.provider === "antigravity" ? "反重力" : "Claude";
+      const groups = quota.available ? (quota.groups || []) : [];
+      const reset = value => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString("zh-CN", {month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "官方暂未提供";
+      const family = /argon/i.test(state.model || "") ? "argon" : /^gemini:(claude|gpt)-/.test(state.model || "") ? "third-party" : "gemini";
+      const found = groups.findIndex(group => group.family === family);
+      const activeGroup = found < 0 ? 0 : found;
+      $("#usageContent").innerHTML = groups.length ? groups.map((group, index) => `<details class="provider-quota-group" ${index === activeGroup ? "open" : ""}><summary>${escapeHtml(group.name)}</summary>${(group.buckets || []).map(bucket => {
+        const p = bucket.remainingPercent;
+        const known = typeof p === "number" && Number.isFinite(p);
+        const title = bucket.window === "weekly" ? "本周额度" : bucket.window === "5h" ? "五小时额度" : bucket.name;
+        return `<div class="provider-quota-bucket"><div><span>${escapeHtml(title)}</span><strong>${bucket.disabled ? "未启用" : known ? `剩余 ${p}%` : bucket.remainingAmount !== null && bucket.remainingAmount !== undefined ? `剩余 ${escapeHtml(bucket.remainingAmount)}` : "暂未提供"}</strong></div>${known && !bucket.disabled ? `<i class="provider-quota-track" role="progressbar" aria-label="${escapeHtml(title)}剩余额度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}"><b style="width:${p}%"></b></i>` : ""}<small>重置时间：${escapeHtml(reset(bucket.resetsAt))}</small></div>`;
+      }).join("")}</details>`).join("") + `<p class="quota-source-note">${label} 官方额度 · 更新于 ${escapeHtml(quota.checkedAt ? new Date(quota.checkedAt).toLocaleTimeString("zh-CN") : "刚刚")}<br>不同额度池独立计算，具体模型资格以官方返回为准。</p>` : `<div class="quota-unavailable"><strong>暂时无法读取${label}额度</strong><p>${escapeHtml(quota.message || "官方尚未提供额度数据，请稍后刷新。")}</p></div>`;
       return;
     }
     const summary = payload.summary || {};
@@ -1214,8 +1299,8 @@
       <section class="quota-actions quota-compact">
         ${rateLimitSummary ? `<div class="rate-limit-summaries">${rateLimitSummary}</div>` : ""}
         <div class="quota-action-row">
-          <div><b>重置额度窗口</b><small>${resetCredits ? `可用 ${resetCredits} 次 · ${pro ? "重置本周额度" : "重置当前额度窗口"}` : "当前没有可用的重置额度"}</small></div>
-          ${resetCredits ? `<button class="quota-reset glow-reset" data-reset-rate-limit><i></i><span>确认重置</span><em>✦</em></button>` : `<button class="quota-reset" disabled>暂无额度</button>`}
+          <div><b>重置额度窗口</b><small>${resetCredits ? `可用 ${resetCredits} 次 · ${pro ? "重置本周额度" : "重置当前额度窗口"}` : "当前没有可用的重置次数"}</small></div>
+          ${resetCredits ? `<button class="quota-reset glow-reset" data-reset-rate-limit><i></i><span>确认重置</span><em>✦</em></button>` : `<button class="quota-reset" disabled>无可用重置次数</button>`}
         </div>
       </section>`;
     const buckets = new Map((payload.dailyUsageBuckets || [])
@@ -1258,12 +1343,13 @@
       weeks.push(`<span class="usage-week">${days.join("")}</span>`);
     }
     $("#usageContent").innerHTML = `
+      ${actionCard}
+      <details class="quota-history"><summary>查看用量记录</summary>
       <section class="usage-stats">
         <article class="usage-stat lifetime"><i>Σ</i><small>累计 Token</small><strong>${formatTokens(summary.lifetimeTokens)}</strong></article>
         <article class="usage-stat streak"><i>↗</i><small>连续使用</small><strong>${Number(summary.currentStreakDays || 0)}<em> 天</em></strong></article>
         <article class="usage-stat peak"><i>◆</i><small>单日峰值</small><strong>${formatTokens(summary.peakDailyTokens)}</strong></article>
       </section>
-      ${actionCard}
       <section class="usage-card">
         <header><div><strong>每日使用</strong><small>最近 16 周</small></div><span>${Number(summary.longestStreakDays || 0)} 天最长连续</span></header>
         <div class="usage-board">
@@ -1272,22 +1358,60 @@
           <aside class="usage-insight"><i style="--activity:${recentActivity}%"><b>${recentActiveDays}<small>/7</small></b></i><span><small>近 7 天</small><strong>${formatTokens(recentTokens)}</strong><em>${recentActiveDays ? `${recentActiveDays} 天有记录` : "等待首次使用"}</em></span></aside>
         </div>
         <footer><span>每天完成一点，就会在这里留下颜色</span><div>少<i class="level-0"></i><i class="level-1"></i><i class="level-2"></i><i class="level-3"></i><i class="level-4"></i>多</div></footer>
-      </section>`;
+      </section></details>`;
   }
 
   function openProfile() {
     closeDrawer();
+    $("#profileSheet .sheet-head h2").textContent = `${profileProvider(state.codexProfile) === "gemini" ? "Gemini" : profileProvider(state.codexProfile) === "claude" ? "Claude" : "GPT"} 额度`;
     $("#profileSheet").classList.add("open");
     $("#profileSheet").setAttribute("aria-hidden", "false");
     renderUsage();
     refreshUsage();
   }
 
+  let adminDevices = [];
   function renderAdminDevices(devices = []) {
-    devices = devices.filter((device) => !device.hiddenFromList);
-    $("#deviceList").innerHTML = devices.length ? devices.map((device) => `
-      <article class="device-row"><span>⌁</span><div><strong>${escapeHtml(device.label || "未命名设备")}</strong><small>${device.disabled ? "已停止访问" : `最近活跃：${formatDate(device.lastSeenAt || device.createdAt)}`}</small></div>${device.disabled ? "" : `<button data-disable-device="${escapeHtml(device.id)}">停止</button>`}</article>`).join("")
+    adminDevices = devices.filter((device) => !device.hiddenFromList);
+    $("#deviceList").innerHTML = adminDevices.length ? adminDevices.map((device) => `
+      <article class="device-row" data-device-id="${escapeHtml(device.id)}"><span>⌁</span><div class="device-info"><strong>${escapeHtml(device.label || "未命名设备")}</strong><small>${device.disabled ? "已停止访问" : `最近活跃：${formatDate(device.lastSeenAt || device.createdAt)}`}</small><small class="device-note" ${device.note ? "" : "hidden"}>${escapeHtml(device.note || "")}</small></div><div class="device-actions"><button type="button" class="device-note-toggle" data-edit-device-note="${escapeHtml(device.id)}">${device.note ? "编辑备注" : "备注"}</button>${device.disabled ? "" : `<button type="button" data-disable-device="${escapeHtml(device.id)}">停止</button>`}</div><form class="device-note-editor" data-device-note-form="${escapeHtml(device.id)}" hidden><label>设备备注（最多 200 字符）<textarea maxlength="200" rows="3" placeholder="例如：我的手机、家里的平板" aria-label="设备备注">${escapeHtml(device.note || "")}</textarea></label><div class="device-note-form-actions"><small class="device-note-hint" role="status"></small><button type="button" data-cancel-device-note="${escapeHtml(device.id)}">取消</button><button type="submit">保存备注</button></div></form></article>`).join("")
       : `<small>还没有已激活的设备。</small>`;
+  }
+
+  async function saveDeviceNote(form) {
+    const id = form.dataset.deviceNoteForm;
+    const input = form.querySelector("textarea");
+    const buttons = [...form.querySelectorAll("button")];
+    const hint = form.querySelector(".device-note-hint");
+    if (form.dataset.saving === "true") return;
+    form.dataset.saving = "true";
+    buttons.forEach(button => { button.disabled = true; });
+    input.disabled = true;
+    hint.textContent = "正在保存…";
+    try {
+      if (!window.WittFeatures?.request) throw new Error("页面尚未就绪，请刷新后重试");
+      const endpoint = window.WittNative
+        ? `chat/projects?view=device-note&deviceId=${encodeURIComponent(id)}`
+        : `admin/devices/${encodeURIComponent(id)}/note`;
+      const payload = await window.WittFeatures.request(endpoint, "PATCH", { note: input.value });
+      const device = payload.device;
+      const row = form.closest(".device-row");
+      const note = row.querySelector(".device-note");
+      note.textContent = device.note || "";
+      note.hidden = !device.note;
+      row.querySelector("[data-edit-device-note]").textContent = device.note ? "编辑备注" : "备注";
+      adminDevices = adminDevices.map(item => item.id === id ? { ...item, ...device } : item);
+      input.value = device.note || "";
+      form.hidden = true;
+      hint.textContent = "";
+      toast(device.note ? "备注已保存" : "备注已清空");
+    } catch (error) {
+      hint.textContent = error.message || "保存失败，请重试";
+    } finally {
+      form.dataset.saving = "false";
+      buttons.forEach(button => { button.disabled = false; });
+      input.disabled = false;
+    }
   }
 
   function closeProfile() {
@@ -1780,8 +1904,9 @@
   const profileProvider = (id) => id === "claude" ? "claude" : id === "antigravity" ? "gemini" : "gpt";
   function renderCodexAccounts(accounts = []) {
     state.codexAccounts = accounts;
+    renderHeaderAccountSwitch();
     const category = account => account.provider === "claude" ? "claude" : account.provider === "antigravity" ? "gemini" : "gpt";
-    const groups = state.admin ? ["gpt","claude","gemini"] : ["gpt"];
+    const groups = state.admin ? ["gpt","claude","gemini"] : ["gpt", ...(state.allowedCodexProfiles.includes("antigravity") ? ["gemini"] : [])];
     if(!groups.includes(state.accountCategory)) state.accountCategory="gpt";
     const names={gpt:"GPT",claude:"Claude",gemini:"Gemini"};
     const icon = name => providerIcons[name === "gpt" ? "openai" : name];
@@ -1797,7 +1922,7 @@
       const kind=category(account),signedIn=Boolean(account.authenticated);
       const detail=account.readError || (signedIn ? `${account.account?.email||"已登录"}${account.account?.planType ? ` · ${account.account.planType}` : ""}`
         : kind === "gemini" ? "通过官方 Antigravity CLI 登录" : kind === "claude" ? "通过官方 Claude Code 登录" : "尚未登录");
-      const canLogin=state.admin && account.id!=="default" && kind!=="gpt";
+      const canLogin=account.id!=="default" && kind!=="gpt" && (state.admin || (account.provider==="antigravity" && state.allowedCodexProfiles.includes("antigravity")));
       const loginAttr=kind === "gpt" ? `data-login-codex="${escapeHtml(account.id)}"` : `data-login-provider="${escapeHtml(account.provider)}"`;
       const actions=`${canLogin ? `<button class="${signedIn ? "relogin":"login"}" ${loginAttr}>${signedIn ? (kind === "gpt" ? "重新登录":"管理登录") : "登录账号"}</button>` : ""}
         ${signedIn ? `<button class="new-chat" data-new-codex-chat="${escapeHtml(account.id)}">使用此账号</button>` : ""}`;
@@ -1932,6 +2057,15 @@
     persistModelPreference();
     updateModelControls();
     if (state.activeId) {
+      pendingModelSettings.set(state.activeId, { model: state.model, reasoning: state.reasoning,
+        accessMode: state.accessMode, codexProfile: state.codexProfile, startedAt: Date.now() });
+      const activeSummary = state.conversations.find((item) => item.id === state.activeId);
+      if (activeSummary) {
+        activeSummary.model = state.model;
+        activeSummary.codexProfile = state.codexProfile;
+        renderConversations();
+        persistConversationList();
+      }
       if (state.supports21) {
         bridge()?.updateConversationSettings?.(
           state.activeId, state.model, state.reasoning, state.accessMode);
@@ -2017,6 +2151,56 @@
     return item.taskStatus || { state: item.busy ? "running" : "idle", label: item.busy ? "正在执行" : "" };
   }
 
+  const pendingModelSettings = new Map();
+
+  function preservePendingModel(conversation) {
+    const pending = pendingModelSettings.get(conversation?.id);
+    if (!pending) return conversation;
+    if (Date.now() - pending.startedAt > 30000) {
+      pendingModelSettings.delete(conversation.id);
+      return conversation;
+    }
+    return { ...conversation, model: pending.model, reasoning: pending.reasoning,
+      accessMode: pending.accessMode, codexProfile: pending.codexProfile };
+  }
+
+  function conversationModelBadge(item) {
+    const current = preservePendingModel(item);
+    const selected = item?.id === state.activeId ? state.model : current?.model;
+    if (selected) {
+      const source = modelSource({ id: selected });
+      return { id: source.id === "openai" ? "gpt" : source.id,
+        label: modelDisplayName(selected), source: source.label };
+    }
+    const rawModel = String(item?.model || "").toLowerCase();
+    const model = rawModel.startsWith("gemini:") ? rawModel.slice(7) : rawModel;
+    const provider = String(item?.provider || "").toLowerCase();
+    const profile = String(item?.codexProfile || "").toLowerCase();
+
+    if (model.includes("claude") || model.includes("sonnet") || model.includes("opus") || model.includes("haiku")) {
+      return { id: "claude", label: "Claude" };
+    }
+    if (model.includes("gemini")) {
+      return { id: "gemini", label: "Gemini" };
+    }
+    if (model.includes("gpt")) {
+      return { id: "gpt", label: "GPT" };
+    }
+    if (model.includes("deepseek")) {
+      return { id: "deepseek", label: "DeepSeek" };
+    }
+    if (provider === "claude" || profile === "claude") {
+      return { id: "claude", label: "Claude" };
+    }
+    if (provider === "antigravity" || profile === "antigravity") {
+      return { id: "gemini", label: "Gemini" };
+    }
+    if (provider === "deepseek") {
+      return { id: "deepseek", label: "DeepSeek" };
+    }
+    return { id: "gpt", label: "GPT" };
+  }
+
   function renderConversations() {
     $("#conversationCount").textContent = String(state.conversations.length);
     const pinned = new Set();
@@ -2043,9 +2227,17 @@
       previousGroup = group;
       const task = conversationTask(item);
       const showStatus = ["running", "queued", "awaiting_confirmation", "waiting_confirmation", "failed"].includes(task.state);
-      return `${heading}<article class="conversation-row ${item.id === state.activeId ? "active" : ""}" data-id="${item.id}" data-task-state="${escapeHtml(task.state)}">
+      const badge = conversationModelBadge(item);
+      return `${heading}<article class="conversation-row ${item.id === state.activeId ? "active" : ""}" data-id="${item.id}" data-task-state="${escapeHtml(task.state)}" data-model-badge="${escapeHtml(badge.id)}">
         <button class="conversation-open" data-open="${item.id}" title="${escapeHtml(item.title)}">
-          <span><strong>${escapeHtml(item.title)}</strong>${q ? `<small class="history-search-snippet">${escapeHtml(item.searchSnippet || item.lastMessage || "标题匹配")}</small>` : ''}${showStatus ? `<span class="conversation-task"><i></i>${escapeHtml(task.label)}</span>` : ''}</span>
+          <span class="conversation-open-main">
+            <span class="conversation-title-row">
+              <span class="conversation-model-badge model-${escapeHtml(badge.id)}" title="${escapeHtml(badge.source || badge.label)}" aria-label="${escapeHtml(`${badge.source || badge.label} · ${badge.label}`)}">${escapeHtml(badge.label)}</span>
+              <strong>${escapeHtml(item.title)}</strong>
+            </span>
+            ${q ? `<small class="history-search-snippet">${escapeHtml(item.searchSnippet || item.lastMessage || "标题匹配")}</small>` : ''}
+            ${showStatus ? `<span class="conversation-task"><i></i>${escapeHtml(task.label)}</span>` : ''}
+          </span>
         </button>
         <button class="conversation-more" data-conversation-menu="${item.id}" aria-label="${escapeHtml(item.title)}的更多操作" aria-haspopup="dialog">•••</button>
       </article>`;
@@ -3283,7 +3475,7 @@
   function applyConversation(conversation) {
     if (!conversation || conversation.id !== state.activeId) return;
     const wasBusy = state.busy;
-    conversation = mergeVisibleConversation(conversation);
+    conversation = preservePendingModel(mergeVisibleConversation(conversation));
     state.active = conversation;
     state.model = conversation.model || state.model;
     state.reasoning = conversation.reasoning || state.reasoning;
@@ -3310,6 +3502,9 @@
       summary.busy = state.busy;
       summary.taskStatus = conversation.taskStatus;
       summary.pinned = conversation.pinned;
+      summary.model = conversation.model || summary.model;
+      summary.provider = conversation.provider || summary.provider;
+      summary.codexProfile = conversation.codexProfile || summary.codexProfile;
       renderConversations();
       persistConversationList();
     }
@@ -3546,7 +3741,7 @@
       const payload = JSON.parse(json);
       const finishedElsewhere = (payload.conversations || []).filter((item) =>
         item.id !== state.activeId && !item.busy && state.conversations.some((old) => old.id === item.id && old.busy));
-      state.conversations = payload.conversations || [];
+      state.conversations = (payload.conversations || []).map(preservePendingModel);
       if (completionReminder && state.appVisible && finishedElsewhere.length) toast(finishedElsewhere.slice(0,2).map(item => `${item.title} · ${item.taskStatus?.label || "已结束"}`).join("；"));
       state.currentDeviceLabel = payload.currentDeviceLabel || "";
       const wasSummaryRefresh = summaryRefreshPending;
@@ -3577,8 +3772,19 @@
       state.capabilities = payload;
       selectAccountCapabilities();
       renderCapabilities();
+      if (pendingProviderConversation) {
+        const selected = pendingProviderConversation;
+        pendingProviderConversation = null;clearTimeout(pendingProviderConversationTimer);
+        const capabilities = payload.capabilitiesByProfile?.[selected] || (payload.codexProfile === selected ? payload : null);
+        if (capabilities?.models?.length) beginNewConversation(selected);
+        else toast(capabilities?.error || "该账号尚未返回可用模型，请检查登录状态后重试");
+      }
     },
     onCapabilitiesError(message) {
+      if (pendingProviderConversation) {
+        pendingProviderConversation = null;clearTimeout(pendingProviderConversationTimer);
+        toast(message || "无法读取模型列表，请稍后重试");
+      }
       const serverLive = $("#appServerLive");
       if (serverLive) {
         serverLive.classList.add("offline");
@@ -3871,7 +4077,18 @@
     },
     onSettingsUpdated(json) {
       const conversation = JSON.parse(json).conversation;
-      if (conversation?.id !== state.activeId) return;
+      const pending = pendingModelSettings.get(conversation?.id);
+      if (pending && (conversation.model !== pending.model || conversation.reasoning !== pending.reasoning ||
+          conversation.accessMode !== pending.accessMode)) return;
+      pendingModelSettings.delete(conversation?.id);
+      const summary = state.conversations.find((item) => item.id === conversation?.id);
+      if (summary) Object.assign(summary, { model: conversation.model, codexProfile: conversation.codexProfile,
+        provider: conversation.provider });
+      if (conversation?.id !== state.activeId) {
+        renderConversations();
+        persistConversationList();
+        return;
+      }
       state.active = mergeVisibleConversation(conversation);
       state.model = conversation.model;
       state.reasoning = conversation.reasoning;
@@ -3883,6 +4100,8 @@
       localStorage.setItem("wit_codex_profile", state.codexProfile);
       updateModelControls();
       closeSettings();
+      renderConversations();
+      persistConversationList();
       toast(`设置已更新 · ${modelDisplayName(state.model)} · ${reasoningNames[state.reasoning]}`);
       bridge()?.requestConversations?.();
     },
@@ -3902,7 +4121,11 @@
     },
     onUsage(json) {
       state.usageLoading = false;
-      state.usage = JSON.parse(json);
+      const payload = JSON.parse(json);
+      if (payload.codexProfile && payload.codexProfile !== state.codexProfile) return;
+      const provider = payload.provider === "antigravity" ? "gemini" : payload.provider === "claude" ? "claude" : "gpt";
+      if (provider !== profileProvider(state.codexProfile)) return;
+      state.usage = payload;
       updateQuotaStatus();
       renderUsage();
     },
@@ -3940,7 +4163,13 @@
     },
     onDeviceDisabled() { toast("该设备已停止访问"); bridge()?.requestAdminDevices?.(); },
     onCodexAccounts(json) {
-      renderCodexAccounts(JSON.parse(json).accounts || []);
+      const accounts = JSON.parse(json).accounts || [];
+      headerAccountsCheckedAt = Date.now();
+      renderCodexAccounts(accounts);
+      if (pendingHeaderProvider) {
+        const provider = pendingHeaderProvider;pendingHeaderProvider = null;clearTimeout(headerAccountsTimer);
+        renderHeaderAccountSwitch();chooseHeaderProvider(provider, accounts);
+      }
     },
     onCodexLoginStarted(json) {
       const login = JSON.parse(json);
@@ -3975,8 +4204,12 @@
       setCodexLoginFlow(false);
       toast("已取消账号登录");
     },
-    onAdminError(message) { toast(message || "设备管理操作失败"); },
+    onAdminError(message) {
+      if (pendingHeaderProvider) { pendingHeaderProvider = null;clearTimeout(headerAccountsTimer);renderHeaderAccountSwitch();toast(message || "无法读取账号，请重试");return; }
+      toast(message || "设备管理操作失败");
+    },
     onChatError(message) {
+      pendingModelSettings.clear();
       dismissBoot();
       setConnected(false, "连接失败");
       state.afterCreate = null;
@@ -4058,6 +4291,7 @@
     },
   };
 
+  let pendingProviderConversation = null, pendingProviderConversationTimer = null;
   function beginNewConversation(codexProfile = null) {
     if (state.transmitting) { toast("消息正在送达，完成后即可新建对话"); return; }
     saveDraft();
@@ -4066,11 +4300,30 @@
     const previousProfile = state.codexProfile;
     state.codexProfile = state.allowedCodexProfiles.includes(selectedProfile) ? selectedProfile : state.allowedCodexProfiles[0];
     selectAccountCapabilities();
-    refreshProviderCapabilities();
     const models=state.capabilities?.models||Object.keys(modelNames).filter(id=>!id.includes(":" )).map(id=>({id,defaultReasoningEffort:"medium"}));
     const preference=accountPreference(state.codexProfile);
     const chosen=models.find(m=>m.id===preference?.model)||models.find(m=>m.id===state.model)||models.find(m=>m.isDefault)||models[0];
-    if(!chosen){state.codexProfile=previousProfile;selectAccountCapabilities();toast("请先登录对应账号并刷新模型列表");return;}
+    if(!chosen){
+      state.codexProfile=previousProfile;selectAccountCapabilities();
+      if (["claude", "antigravity"].includes(selectedProfile)) {
+        if (pendingProviderConversation !== selectedProfile) {
+          pendingProviderConversation = selectedProfile;
+          clearTimeout(pendingProviderConversationTimer);
+          pendingProviderConversationTimer = setTimeout(() => {
+            if (pendingProviderConversation === selectedProfile) {
+              pendingProviderConversation = null;
+              toast("模型列表读取超时，请稍后重试");
+            }
+          }, 30000);
+          providerCapabilitiesRequestedAt = Date.now();
+          bridge()?.requestCapabilities?.();
+        }
+        toast("正在刷新该账号的模型列表，完成后自动新建聊天");return;
+      }
+      toast("请先登录对应账号并刷新模型列表");return;
+    }
+    pendingProviderConversation = null;clearTimeout(pendingProviderConversationTimer);
+    refreshProviderCapabilities();
     state.model=chosen.id;
     const offered=(chosen.reasoningEfforts||[]).map(e=>e.id);
     state.reasoning=offered.includes(preference?.reasoning)?preference.reasoning:chosen.defaultReasoningEffort||offered[0]||"medium";
@@ -4106,6 +4359,10 @@
   }
 
   $("#menuButton").addEventListener("click", openDrawer);
+  document.querySelectorAll("[data-header-provider]").forEach(button => button.addEventListener("click", () => {
+    setChatMoreMenu(false);
+    useHeaderProvider(button.dataset.headerProvider);
+  }));
   $("#headerQuotaButton").addEventListener("click", () => { setChatMoreMenu(false); openProfile(); });
   $("#headerContextButton").addEventListener("click", openContextDetails);
   for (const id of ["#contextUsageBackdrop", "#closeContextUsage", "#contextUsageDone"]) $(id).addEventListener("click", closeContextDetails);
@@ -4403,12 +4660,32 @@
   $("#cancelCodexLogin").addEventListener("click", () =>
     codexLoginAction("cancel"));
   $("#createInviteButton").addEventListener("click", () => {
+    if (!state.canInvite) { toast("此账号没有邀请用户的权限"); return; }
     const label = $("#inviteLabel").value.trim() || "新设备";
     bridge()?.createInvite?.(label, 1);
   });
   $("#deviceList").addEventListener("click", (event) => {
+    const edit = event.target.closest("[data-edit-device-note]");
+    const cancel = event.target.closest("[data-cancel-device-note]");
+    if (edit || cancel) {
+      const row = (edit || cancel).closest(".device-row");
+      const form = row.querySelector(".device-note-editor");
+      if (form.dataset.saving === "true") return;
+      const device = adminDevices.find(item => item.id === row.dataset.deviceId);
+      form.querySelector("textarea").value = device?.note || "";
+      form.querySelector(".device-note-hint").textContent = "";
+      form.hidden = Boolean(cancel);
+      if (edit) form.querySelector("textarea").focus();
+      return;
+    }
     const id = event.target.closest("[data-disable-device]")?.dataset.disableDevice;
     if (id) bridge()?.disableDevice?.(id);
+  });
+  $("#deviceList").addEventListener("submit", (event) => {
+    const form = event.target.closest("[data-device-note-form]");
+    if (!form) return;
+    event.preventDefault();
+    saveDeviceNote(form);
   });
   $("#quotaConfirmBackdrop").addEventListener("click", closeQuotaResetConfirm);
   $("#cancelQuotaReset").addEventListener("click", closeQuotaResetConfirm);
@@ -4421,6 +4698,10 @@
     const day = event.target.closest("[data-usage-date]");
     if (!day) return;
     toast(`${day.dataset.usageDate} · ${Number(day.dataset.usageTokens || 0).toLocaleString("zh-CN")} tokens`);
+  });
+  $("#refreshQuota")?.addEventListener("click", () => {
+    if (state.usageLoading) return;
+    state.usage = null;renderUsage();refreshUsage();
   });
   $("#quotaButton").addEventListener("click", () => {
     setChatMoreMenu(false);

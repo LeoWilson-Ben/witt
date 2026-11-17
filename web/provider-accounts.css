@@ -27,3 +27,34 @@
 
 /* One GPT sign-in entry; account slots remain private backend state. */
 .account-provider-heading>.login{min-height:38px;padding:8px 18px;border:0;border-radius:12px;background:var(--accent,#6c5ce7);color:#fff;font:inherit;font-size:13px;cursor:pointer}.account-provider-heading>span{margin-left:auto}
+
+/* Model origin colors, shared by quick picker and settings. */
+[data-model-source="openai"] { --model-origin: #18835c; }
+[data-model-source="stellarbit"] { --model-origin: #9160d5; }
+[data-model-source="gemini"] { --model-origin: #4285e8; }
+[data-model-source="claude"] { --model-origin: #c57448; }
+#quickModelOptions button[data-model-source], .model-options button[data-model-source] { border-left: 3px solid var(--model-origin) !important; }
+#quickModelOptions .model-source-tag { color: var(--model-origin); font-size: 10px; margin-left: auto; white-space: nowrap; }
+#quickModelOptions button > span { min-width: 0; overflow-wrap: anywhere; }
+#modelButton[data-model-source] .model-spark { color: var(--model-origin); }
+
+/* Visible origin indicators also work when the mobile spark is hidden. */
+#modelButton[data-model-source]::before,
+#quickModelOptions button[data-model-source]::before,
+.model-options button[data-model-source]::before {
+  content: ""; display: inline-block; width: 9px; height: 9px;
+  min-width: 9px; flex: 0 0 9px; border-radius: 50%;
+  background: var(--model-origin); margin-right: 7px;
+}
+#quickModelOptions button[data-model-source] { gap: 6px; }
+#quickModelOptions button[data-model-source] > span { flex: 1; }
+#quickModelOptions button[data-model-source] .model-source-tag {
+  color: var(--model-origin) !important; font-weight: 650;
+  border: 1px solid currentColor; border-radius: 5px; padding: 2px 5px;
+}
+#quickModelOptions button[data-model-source] > i { flex: 0 0 18px; }
+#modelButton[data-model-source] #modelLabel { color: var(--model-origin) !important; }
+:root[data-theme="dark"] [data-model-source="openai"] { --model-origin: #70d6ac; }
+:root[data-theme="dark"] [data-model-source="stellarbit"] { --model-origin: #c69aff; }
+:root[data-theme="dark"] [data-model-source="gemini"] { --model-origin: #8db7ff; }
+:root[data-theme="dark"] [data-model-source="claude"] { --model-origin: #efa77e; }

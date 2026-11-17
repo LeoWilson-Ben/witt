@@ -35,4 +35,21 @@
 
 #adminSettingsSheet .device-row {
   min-height: 68px;
+  display: grid;
+  grid-template-columns: 29px minmax(0, 1fr) auto;
+  align-items: center;
 }
+
+#adminSettingsSheet .device-row .device-info { min-width: 0; }
+#adminSettingsSheet .device-row :is(strong, small) { white-space: normal; overflow-wrap: anywhere; }
+#adminSettingsSheet .device-row .device-note { white-space: pre-wrap; margin-top: 7px; color: var(--sd-ink, var(--ink)); line-height: 1.6; }
+#adminSettingsSheet .device-row .device-actions { display: flex; flex: none; flex-direction: column; align-items: stretch; gap: 6px; }
+#adminSettingsSheet .device-row .device-note-toggle { color: var(--sd-accent, var(--accent)) !important; }
+#adminSettingsSheet .device-row button { min-width: 44px; min-height: 44px; }
+#adminSettingsSheet .device-note-editor { grid-column: 1 / -1; min-width: 0; width: 100%; margin-top: 8px; }
+#adminSettingsSheet .device-note-editor[hidden], #adminSettingsSheet .device-note[hidden] { display: none !important; }
+#adminSettingsSheet .device-note-editor label { display: block; font-size: 12px; color: var(--muted); }
+#adminSettingsSheet .device-note-editor textarea { box-sizing: border-box; display: block; width: 100%; min-width: 0; margin: 7px 0 10px; padding: 10px; resize: vertical; border: 1px solid var(--sd-line, var(--line)); border-radius: 8px; background: var(--sd-canvas, var(--surface)); color: var(--sd-ink, var(--ink)); font: inherit; font-size: 14px; line-height: 1.6; }
+#adminSettingsSheet .device-note-editor .device-note-form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+#adminSettingsSheet .device-note-form-actions .device-note-hint { flex: 1 1 70px; color: var(--sd-danger, var(--danger)); }
+#adminSettingsSheet .device-row button:disabled { opacity: .5; }

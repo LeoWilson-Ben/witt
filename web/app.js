@@ -941,10 +941,48 @@
     refreshUsage();
   }
 
+  let adminDevices = [];
   function renderAdminDevices(devices = []) {
-    $("#deviceList").innerHTML = devices.length ? devices.map((device) => `
-      <article class="device-row"><span>⌁</span><div><strong>${escapeHtml(device.label || "未命名设备")}</strong><small>${device.disabled ? "已停止访问" : `最近活跃：${formatDate(device.lastSeenAt || device.createdAt)}`}</small></div>${device.disabled ? "" : `<button data-disable-device="${escapeHtml(device.id)}">停止</button>`}</article>`).join("")
+    adminDevices = devices.filter((device) => !device.hiddenFromList);
+    $("#deviceList").innerHTML = adminDevices.length ? adminDevices.map((device) => `
+      <article class="device-row" data-device-id="${escapeHtml(device.id)}"><span>⌁</span><div class="device-info"><strong>${escapeHtml(device.label || "未命名设备")}</strong><small>${device.disabled ? "已停止访问" : `最近活跃：${formatDate(device.lastSeenAt || device.createdAt)}`}</small><small class="device-note" ${device.note ? "" : "hidden"}>${escapeHtml(device.note || "")}</small></div><div class="device-actions"><button type="button" class="device-note-toggle" data-edit-device-note="${escapeHtml(device.id)}">${device.note ? "编辑备注" : "备注"}</button>${device.disabled ? "" : `<button type="button" data-disable-device="${escapeHtml(device.id)}">停止</button>`}</div><form class="device-note-editor" data-device-note-form="${escapeHtml(device.id)}" hidden><label>设备备注（最多 200 字符）<textarea maxlength="200" rows="3" placeholder="例如：我的手机、家里的平板" aria-label="设备备注">${escapeHtml(device.note || "")}</textarea></label><div class="device-note-form-actions"><small class="device-note-hint" role="status"></small><button type="button" data-cancel-device-note="${escapeHtml(device.id)}">取消</button><button type="submit">保存备注</button></div></form></article>`).join("")
       : `<small>还没有已激活的设备。</small>`;
+  }
+
+  async function saveDeviceNote(form) {
+    const id = form.dataset.deviceNoteForm;
+    const input = form.querySelector("textarea");
+    const buttons = [...form.querySelectorAll("button")];
+    const hint = form.querySelector(".device-note-hint");
+    if (form.dataset.saving === "true") return;
+    form.dataset.saving = "true";
+    buttons.forEach(button => { button.disabled = true; });
+    input.disabled = true;
+    hint.textContent = "正在保存…";
+    try {
+      if (!window.WittFeatures?.request) throw new Error("页面尚未就绪，请刷新后重试");
+      const endpoint = window.WittNative
+        ? `chat/projects?view=device-note&deviceId=${encodeURIComponent(id)}`
+        : `admin/devices/${encodeURIComponent(id)}/note`;
+      const payload = await window.WittFeatures.request(endpoint, "PATCH", { note: input.value });
+      const device = payload.device;
+      const row = form.closest(".device-row");
+      const note = row.querySelector(".device-note");
+      note.textContent = device.note || "";
+      note.hidden = !device.note;
+      row.querySelector("[data-edit-device-note]").textContent = device.note ? "编辑备注" : "备注";
+      adminDevices = adminDevices.map(item => item.id === id ? { ...item, ...device } : item);
+      input.value = device.note || "";
+      form.hidden = true;
+      hint.textContent = "";
+      toast(device.note ? "备注已保存" : "备注已清空");
+    } catch (error) {
+      hint.textContent = error.message || "保存失败，请重试";
+    } finally {
+      form.dataset.saving = "false";
+      buttons.forEach(button => { button.disabled = false; });
+      input.disabled = false;
+    }
   }
 
   function closeProfile() {
@@ -1655,20 +1693,59 @@
     delete $("#downloadImageViewer").dataset.url;
   }
 
+  function conversationModelBadge(item) {
+    const rawModel = String(item?.model || "").toLowerCase();
+    const model = rawModel.startsWith("gemini:") ? rawModel.slice(7) : rawModel;
+    const provider = String(item?.provider || "").toLowerCase();
+    const profile = String(item?.codexProfile || "").toLowerCase();
+
+    if (model.includes("claude") || model.includes("sonnet") || model.includes("opus") || model.includes("haiku")) {
+      return { id: "claude", label: "Claude" };
+    }
+    if (model.includes("gemini")) {
+      return { id: "gemini", label: "Gemini" };
+    }
+    if (model.includes("gpt")) {
+      return { id: "gpt", label: "GPT" };
+    }
+    if (model.includes("deepseek")) {
+      return { id: "deepseek", label: "DeepSeek" };
+    }
+    if (provider === "claude" || profile === "claude") {
+      return { id: "claude", label: "Claude" };
+    }
+    if (provider === "antigravity" || profile === "antigravity") {
+      return { id: "gemini", label: "Gemini" };
+    }
+    if (provider === "deepseek") {
+      return { id: "deepseek", label: "DeepSeek" };
+    }
+    return { id: "gpt", label: "GPT" };
+  }
+
   function renderConversations() {
     $("#conversationCount").textContent = String(state.conversations.length);
     const pinned = new Set(JSON.parse(localStorage.getItem("wit_pinned_conversations") || "[]"));
     const conversations = state.conversations.slice().sort((a, b) =>
       Number(pinned.has(b.id)) - Number(pinned.has(a.id)));
     $("#conversationList").innerHTML = conversations.length
-      ? conversations.map((conversation) => `
-        <article class="conversation-row ${conversation.id === state.activeId ? "active" : ""}" data-id="${conversation.id}">
+      ? conversations.map((conversation) => {
+        const badge = conversationModelBadge(conversation);
+        return `
+        <article class="conversation-row ${conversation.id === state.activeId ? "active" : ""}" data-id="${conversation.id}" data-model-badge="${escapeHtml(badge.id)}">
           <button class="conversation-open" data-open="${conversation.id}">
             <span class="conversation-mark">${conversation.busy ? '<i></i>' : '<svg viewBox="0 0 24 24"><path d="M5 6h14v10H9l-4 4V6Z"/></svg>'}</span>
-            <span><strong>${pinned.has(conversation.id) ? "⌖ " : ""}${escapeHtml(conversation.title)}</strong><small>${conversation.busy ? "正在处理" : formatDate(conversation.updatedAt)} · ${escapeHtml(conversation.lastMessage || "暂无消息")}</small></span>
+            <span class="conversation-open-main">
+              <span class="conversation-title-row">
+                <span class="conversation-model-badge model-${escapeHtml(badge.id)}" aria-label="${escapeHtml(badge.label)}">${escapeHtml(badge.label)}</span>
+                <strong>${pinned.has(conversation.id) ? "⌖ " : ""}${escapeHtml(conversation.title)}</strong>
+              </span>
+              <small>${conversation.busy ? "正在处理" : formatDate(conversation.updatedAt)} · ${escapeHtml(conversation.lastMessage || "暂无消息")}</small>
+            </span>
           </button>
           <button class="conversation-more" data-archive="${conversation.id}" aria-label="移除对话">•••</button>
-        </article>`).join("")
+        </article>`;
+      }).join("")
       : `<div class="drawer-empty">还没有历史对话</div>`;
   }
 
@@ -2779,6 +2856,9 @@
       summary.lastMessage = conversation.lastMessage ||
         conversation.messages?.at(-1)?.text || summary.lastMessage;
       summary.busy = state.busy;
+      summary.model = conversation.model || summary.model;
+      summary.provider = conversation.provider || summary.provider;
+      summary.codexProfile = conversation.codexProfile || summary.codexProfile;
       renderConversations();
       persistConversationList();
     }
@@ -3618,8 +3698,27 @@
     bridge()?.createInvite?.(label, 1);
   });
   $("#deviceList").addEventListener("click", (event) => {
+    const edit = event.target.closest("[data-edit-device-note]");
+    const cancel = event.target.closest("[data-cancel-device-note]");
+    if (edit || cancel) {
+      const row = (edit || cancel).closest(".device-row");
+      const form = row.querySelector(".device-note-editor");
+      if (form.dataset.saving === "true") return;
+      const device = adminDevices.find(item => item.id === row.dataset.deviceId);
+      form.querySelector("textarea").value = device?.note || "";
+      form.querySelector(".device-note-hint").textContent = "";
+      form.hidden = Boolean(cancel);
+      if (edit) form.querySelector("textarea").focus();
+      return;
+    }
     const id = event.target.closest("[data-disable-device]")?.dataset.disableDevice;
     if (id) bridge()?.disableDevice?.(id);
+  });
+  $("#deviceList").addEventListener("submit", (event) => {
+    const form = event.target.closest("[data-device-note-form]");
+    if (!form) return;
+    event.preventDefault();
+    saveDeviceNote(form);
   });
   $("#quotaConfirmBackdrop").addEventListener("click", closeQuotaResetConfirm);
   $("#cancelQuotaReset").addEventListener("click", closeQuotaResetConfirm);

@@ -33,3 +33,25 @@ html body .compact-nav-actions .capacity-capsule{width:clamp(144px,calc(100vw - 
 @media(max-width:350px){html body .compact-nav{margin-inline:10px!important;column-gap:4px}html:root body .compact-nav .compact-nav-actions{gap:4px!important}.capacity-metric .capacity-label{font-size:9px}.capacity-metric strong{font-size:14px}}
 @media(prefers-reduced-motion:reduce){.capacity-metric .capacity-fill{transition:none}}
 @supports not (backdrop-filter:blur(1px)){html body .capacity-capsule,#contextUsageSheet .capacity-detail-panel{background:#f2f6ff}:root[data-theme="dark"] body .capacity-capsule,:root[data-theme="dark"] #contextUsageSheet .capacity-detail-panel{background:#202c42}}
+
+/* Raise the complete navigation together; its measured bottom follows the move. */
+html:root body .app-shell .compact-nav{translate:0 -10px}
+
+/* The quota capsule is replaced by one account orb in the same header slot. */
+html body .compact-nav-actions #capacityCapsule{display:none!important}
+html:root body .compact-nav-actions :is(#headerAccountSwitch,#headerClaudeSwitch,#headerGeminiSwitch){--orb-color:#458c78;position:relative;isolation:isolate;display:grid!important;place-items:center;flex:0 0 46px;width:46px!important;height:46px!important;min-width:46px;min-height:46px;padding:0!important;border-radius:50%!important;overflow:hidden;border:1px solid rgba(255,255,255,.85)!important;color:var(--orb-color)!important;background:radial-gradient(circle at 27% 18%,rgba(255,255,255,.94),rgba(255,255,255,.15) 60%),rgba(224,236,235,.48)!important;box-shadow:inset 0 1px 2px #ffffffed,inset 0 -3px 7px #5e79931a,0 5px 16px #304a6420!important;backdrop-filter:blur(22px) saturate(1.45)!important;-webkit-backdrop-filter:blur(22px) saturate(1.45)!important;cursor:pointer;touch-action:manipulation;transition:box-shadow .2s,scale .15s}
+html body :is(#headerAccountSwitch,#headerClaudeSwitch,#headerGeminiSwitch)[data-provider="gemini"]{--orb-color:#667cd6!important}
+html body :is(#headerAccountSwitch,#headerClaudeSwitch,#headerGeminiSwitch)[data-provider="claude"]{--orb-color:#bd7756!important}
+:is(#headerAccountSwitch,#headerClaudeSwitch,#headerGeminiSwitch) .header-account-logo{display:grid;place-items:center;width:26px;height:26px;pointer-events:none}
+html body :is(#headerAccountSwitch,#headerClaudeSwitch,#headerGeminiSwitch) svg{display:block;width:25px!important;height:25px!important;fill:currentColor;stroke:none!important;stroke-width:0}
+html body :is(#headerAccountSwitch,#headerClaudeSwitch,#headerGeminiSwitch):active{scale:.94}
+html body :is(#headerAccountSwitch,#headerClaudeSwitch,#headerGeminiSwitch):focus-visible{outline:2px solid var(--orb-color);outline-offset:4px}
+:root[data-theme="dark"] body .compact-nav-actions :is(#headerAccountSwitch,#headerClaudeSwitch,#headerGeminiSwitch){color:#a0d3c5!important;border-color:#b8c9de3d!important;background:radial-gradient(circle at 25% 15%,#e5efff38,transparent 65%),#3445537a!important;box-shadow:inset 0 1px 2px #ffffff40,inset 0 -3px 8px #030e2240,0 5px 18px #0003!important}
+:root[data-theme="dark"] body :is(#headerAccountSwitch,#headerClaudeSwitch,#headerGeminiSwitch)[data-provider="gemini"]{color:#b7c4ff!important}
+:root[data-theme="dark"] body :is(#headerAccountSwitch,#headerClaudeSwitch,#headerGeminiSwitch)[data-provider="claude"]{color:#edb895!important}
+@supports not (backdrop-filter:blur(1px)){html body .compact-nav-actions :is(#headerAccountSwitch,#headerClaudeSwitch,#headerGeminiSwitch){background:#edf3f4!important}:root[data-theme="dark"] body .compact-nav-actions :is(#headerAccountSwitch,#headerClaudeSwitch,#headerGeminiSwitch){background:#33404b!important}}
+@media(prefers-reduced-motion:reduce){html body :is(#headerAccountSwitch,#headerClaudeSwitch,#headerGeminiSwitch){transition:none}}
+
+html:root body .compact-nav-actions .header-account-orb[data-active="true"]{outline:1px solid color-mix(in srgb,var(--orb-color) 45%,transparent);outline-offset:2px}
+html:root body .compact-nav-actions .header-account-orb:disabled{opacity:.4;cursor:default}
+@media(max-width:350px){html:root body .compact-nav-actions .header-account-orb{width:40px!important;height:40px!important;min-width:40px;min-height:40px;flex-basis:40px}html:root body .compact-nav-actions{gap:5px!important}}

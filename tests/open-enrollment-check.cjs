@@ -52,7 +52,7 @@ test("open edition creates isolated, unrestricted non-admin sessions using exist
   const principal = auth.authenticateToken(a.token);
   assert.equal(principal.admin, false);
   assert.equal(principal.unrestrictedModels, true);
-  assert.deepEqual(principal.codexProfiles, ["default", "xuanyu", "account4", "account5"]);
+  assert.deepEqual(principal.codexProfiles, ["default", "xuanyu", "account4", "account5", "antigravity"]);
   assert.notEqual(principal.userId, admin.device.userId);
   assert.equal(a.inviteCode, undefined);
   assert.equal(a.principal.tokenHash, undefined);

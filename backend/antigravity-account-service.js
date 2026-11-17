@@ -3,6 +3,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const {StringDecoder}=require('node:string_decoder');
 const {ClaudeAccountService}=require('./claude-account-service');
 const TTL=15*60_000;
+const {readQuota}=require('./antigravity-quota');
 function cleanTerminal(text){return text.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g,'').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'').replace(/\r/g,'');}
 function authorizationUrl(text){
  for(const value of text.match(/https:\/\/[^\s\x1b<>"']+/g)||[]){try{
@@ -16,7 +17,7 @@ function authorizationUrl(text){
 }
 class AntigravityAccountService extends ClaudeAccountService{
  constructor(options={}){super({...options,bin:options.bin||'/home/ubuntu/.local/bin/agy',root:options.root||'/home/ubuntu/.antigravity-witt'});this.helper=options.helper||path.join(__dirname,'antigravity-pty.py');this.modelCache=new Map();this.modelChecks=new Map();}
- owner(principal){if(!principal?.admin||!/^(?:legacy|[a-f0-9-]{36})$/.test(principal.userId||''))throw Error('仅管理员可连接自己的 Gemini 账号');return principal.userId;}
+ owner(principal){if(!/^(?:legacy|[a-f0-9-]{36})$/.test(principal?.userId||''))throw Error('请先登录维特，再连接自己的 Gemini 账号');return principal.userId;}
  env(owner){
   if(!/^(?:legacy|[a-f0-9-]{36})$/.test(owner))throw Error('账号无效');
   const home=path.join(this.root,owner,'home');fs.mkdirSync(home,{recursive:true,mode:0o700});fs.chmodSync(path.dirname(home),0o700);fs.chmodSync(home,0o700);
@@ -55,6 +56,7 @@ class AntigravityAccountService extends ClaudeAccountService{
   login.checking=true;
   try{if((await this.availableModels(owner,true)).length)this.authenticated(owner,login);}finally{login.checking=false;}
  }
+ quota(owner){return readQuota(this,owner);}
  async card(principal){const c=await super.card(principal);return {...c,id:'antigravity',provider:'antigravity',label:'Antigravity CLI',loginUrl:c.loginUrl.replace('/claude/','/antigravity/')};}
  async start(owner){
   const previous=this.logins.get(owner);if(previous&&!previous.finished)return this.status(owner);if((await this.account(owner,true)).authenticated)return this.status(owner);

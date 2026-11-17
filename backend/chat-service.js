@@ -1,4 +1,5 @@
 "use strict";
+const stellarbit = require("./stellarbit-models");
 const { latestTurn } = require("./history-policy");
 
 const crypto = require("node:crypto");
@@ -58,7 +59,7 @@ class ChatService {
     this.serverAdministrator = options.serverAdministrator === true;
     this.userWorkspaceDir = path.join(path.dirname(this.chatDir), "workspace");
     if (!this.serverAdministrator) fs.mkdirSync(this.userWorkspaceDir, { recursive: true, mode: 0o700 });
-    this.deepseekEnabled = options.deepseekEnabled !== false;
+    this.deepseekEnabled = false; // Retired direct DeepSeek integration; keep historical conversations.
     this.sendJson = options.sendJson;
     this.readJsonBody = options.readJsonBody;
     this.allowedModels = Object.hasOwn(options, "allowedModels")
@@ -140,6 +141,7 @@ class ChatService {
 
   clientFor(profile, model = this.defaultModel) {
     const deepseek = DEEPSEEK_MODELS.has(model);
+    const stellar = stellarbit.models(this.providerRuntime?.owner).some(m=>m.id===model);
     const configOverrides = ["features.default_mode_request_user_input=true"];
     if (!this.serverAdministrator) configOverrides.push(
       'sandbox_mode="workspace-write"',
@@ -156,11 +158,19 @@ class ChatService {
       "model_providers.witt-deepseek.stream_max_retries=2",
       "model_providers.witt-deepseek.stream_idle_timeout_ms=300000",
     );
-    const client = profile.provider && this.providerRuntime ? this.providerRuntime.client(profile) : sharedAppServer({
+    if(stellar) configOverrides.push(
+      'model_provider="witt-stellarbit"',
+      'model_providers.witt-stellarbit.name="Stellarbit"',
+      'model_providers.witt-stellarbit.base_url="http://127.0.0.1:33112/v1"',
+      'model_providers.witt-stellarbit.wire_api="responses"',
+      'model_providers.witt-stellarbit.request_max_retries=0',
+      'model_providers.witt-stellarbit.stream_max_retries=0',
+    );
+    const client = profile.provider && this.providerRuntime && !stellar ? this.providerRuntime.client(profile) : sharedAppServer({
       codexBin: this.codexBin,
       cwd: profile.workDir,
       home: "/home/ubuntu",
-      codexHome: profile.codexHome,
+      codexHome: stellar ? this.codexProfiles.default.codexHome : profile.codexHome,
       configOverrides,
       clientScope: this.clientScope,
     });
@@ -200,12 +210,14 @@ class ChatService {
 
   reasoningFor(model, profileId, effort) {
     const profile=this.codexProfiles[profileId];
+    if (stellarbit.models(this.providerRuntime?.owner).some(m=>m.id===model)) return "medium";
     return profile?.provider && this.providerRuntime ? this.providerRuntime.reasoning(model,profile,effort)
       : ALLOWED_REASONING.has(effort) ? effort : "medium";
   }
 
   modelAllowed(model, profileId = this.defaultCodexProfile) {
     const profile=this.codexProfiles[profileId];
+    if (stellarbit.models(this.providerRuntime?.owner).some(m=>m.id===model) && (!profile?.provider || profile.provider === "antigravity")) return true;
     if(profile?.provider) return Boolean(this.providerRuntime && this.providerRuntime.allowed(model,profile));
     if (DEEPSEEK_MODELS.has(model)) return this.deepseekEnabled &&
       (this.allowedModels === null || this.allowedModels.has(model));
@@ -804,6 +816,7 @@ class ChatService {
   profileFor(conversation) {
     const requested = String(conversation?.codexProfile || "default");
     const profile=this.codexProfiles[requested] || this.codexProfiles.default;
+    if (String(conversation?.model || "").startsWith("stellarbit:") && profile.provider === "antigravity") return {...profile,codexHome:this.codexProfiles.default.codexHome};
     return profile.provider && this.providerRuntime ? {...profile,codexHome:this.providerRuntime.home(profile.provider)} : profile;
   }
 
@@ -822,7 +835,7 @@ class ChatService {
     const profile = this.codexProfiles[requestedProfile];
     const selectedModel=this.modelAllowed(model,profile.id)?model:this.defaultModelFor(profile.id);
     if (!selectedModel) throw new Error("请先登录对应账号并刷新模型列表");
-    const requestedWorkDir = workDir || (profile.id === "default" ? "" : profile.workDir);
+    const requestedWorkDir = workDir || (profile.id === "default" || profile.provider ? "" : profile.workDir);
     const now = new Date().toISOString();
     const conversation = {
       id: crypto.randomUUID(),
@@ -885,7 +898,9 @@ class ChatService {
     const profile = this.codexProfiles[profileId];
     if(profile.provider){
       if(!this.providerRuntime){respond(res,503,{error:"账号路由尚未就绪"});return;}
-      try{respond(res,200,await this.providerRuntime.capabilities(profile));}catch{respond(res,503,{error:"无法读取这个账号的模型列表，请检查登录状态"});}
+      try{const payload=await this.providerRuntime.capabilities(profile);
+        if(profile.provider === "antigravity") payload.models.push(...stellarbit.models(this.providerRuntime.owner));
+        respond(res,200,payload);}catch{respond(res,503,{error:"无法读取这个账号的模型列表，请检查登录状态"});}
       return;
     }
     const cached = this.capabilityCache.get(profile.id);
@@ -946,6 +961,7 @@ class ChatService {
         ].filter((model) => this.allowedModels === null || this.allowedModels.has(model.id));
         models.push(...deepseekModels);
       }
+      models.push(...stellarbit.models(this.providerRuntime?.owner));
       this.availableModels.set(profile.id, new Set(models.map((model) => model.id)));
       const skillGroups = value(1).data || [];
       const skills = skillGroups.flatMap((group) => group.skills || []).map((skill) => ({
@@ -1424,8 +1440,8 @@ class ChatService {
         this.sendJson(res, 409, { error: "当前对话正在处理，完成后再切换" });
         return;
       }
-      const providerChanged = DEEPSEEK_MODELS.has(requestedModel) !==
-        DEEPSEEK_MODELS.has(conversation.model);
+      const route = m => String(m).startsWith('stellarbit:') ? 'stellarbit' : DEEPSEEK_MODELS.has(m) ? 'deepseek' : 'default';
+      const providerChanged = route(requestedModel) !== route(conversation.model);
       if (conversation.codexThreadId && providerChanged) {
         conversation.codexThreadId = null;
         conversation.replayHistoryOnNextTurn = true;
@@ -1597,7 +1613,13 @@ class ChatService {
 
   async readAccountUsage(res, conversationId = null) {
     const providerConversation=conversationId && this.readConversation(conversationId);
-    if(providerConversation && this.profileFor(providerConversation).provider){this.sendJson(res,200,{provider:this.profileFor(providerConversation).provider,rateLimits:null,usage:null});return;}
+    if(providerConversation && this.profileFor(providerConversation).provider){
+      const profile=this.profileFor(providerConversation);
+      if(!this.profileAllowed(providerConversation)){this.sendJson(res,403,{error:"这个账号不可用"});return;}
+      try{this.sendJson(res,200,await this.providerRuntime.usage(profile));}
+      catch{this.sendJson(res,200,{provider:profile.provider,codexProfile:profile.id,quota:{available:false,groups:[],message:"暂时无法读取该账号额度，请稍后刷新"},rateLimits:null});}
+      return;
+    }
     if (this.readConversation(conversationId)) this.lastUsageConversationId = conversationId;
     if (this.quotaExhausted) {
       this.sendJson(res, 200, this.withConversationUsage({
@@ -1642,6 +1664,7 @@ class ChatService {
         resetsAt: Number(value.resetsAt || 0),
       } : null;
       const payload = {
+        codexProfile: profile.id,
         summary: {
           lifetimeTokens: Number(summary.lifetimeTokens || 0),
           peakDailyTokens: Number(summary.peakDailyTokens || 0),

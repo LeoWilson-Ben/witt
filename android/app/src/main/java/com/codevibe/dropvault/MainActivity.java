@@ -913,7 +913,7 @@ public class MainActivity extends Activity {
     private void workspaceRequest(String endpoint,String method,String json,String requestId) {
         if(requestId==null||!requestId.matches("[a-zA-Z0-9_-]{8,100}"))return;
         String clean=endpoint==null?"":endpoint.split("\\?",2)[0];
-        boolean allowed=clean.matches("chat/(projects|schedules)(/[a-f0-9-]{36}(/(conversations|run))?)?")||clean.matches("chat/conversations/[a-f0-9-]{36}/(cancel|retry|artifact-content)")||clean.equals("chat/notifications");
+        boolean allowed=clean.matches("chat/(projects|schedules)(/[a-f0-9-]{36}(/(conversations|run))?)?")||clean.matches("chat/conversations/[a-f0-9-]{36}/(cancel|retry|artifact-content)")||clean.equals("chat/notifications")||clean.matches("windows-nodes(/[a-f0-9-]{36}/tasks)?")||clean.equals("windows-nodes/pair");
         if(!allowed||endpoint.contains("..")||!("GET".equals(method)||"POST".equals(method)||"PATCH".equals(method))){callJs("window.WittFeatures?.onResponse("+JSONObject.quote(requestId)+",false,'{\"error\":\"请求不可用\"}')");return;}
         network.execute(()->{HttpURLConnection connection=null;try{
             connection=openApiConnection(endpoint,method);

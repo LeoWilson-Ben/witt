@@ -15,6 +15,7 @@ const { ClaudeAccountService } = require("./claude-account-service");
 const { AntigravityAccountService } = require("./antigravity-account-service");
 const { ProviderRuntime } = require("./provider-runtime");
 const { claimStandby } = require("./failover");
+const { WindowsNodeService } = require("./windows-node-service");
 
 const host = "127.0.0.1";
 const port = Number(process.env.DROP_VAULT_PORT || 3003);
@@ -216,6 +217,7 @@ const chatService = new ChatService({
   codexProfiles,
 });
 const authService = new AuthService({ dir: authDir, sendJson, readJsonBody });
+const windowsNodeService = new WindowsNodeService({ dir: authDir, sendJson, readJsonBody });
 const claudeAccountService = new ClaudeAccountService({
   sendJson, readJsonBody,
   isAuthorized: (ticket) => {
@@ -229,7 +231,7 @@ const antigravityAccountService = new AntigravityAccountService({
   isAuthorized: (ticket) => {
     if (ticket.owner === "legacy") return !authService.initialized();
     return authService.read().devices.some((device) => device.id === ticket.deviceId &&
-      device.userId === ticket.owner && device.admin && !device.disabled);
+      device.userId === ticket.owner && !device.disabled);
   },
 });
 const providerRuntimeFor = (owner) => new ProviderRuntime({owner,
@@ -326,7 +328,7 @@ function restoreScheduledUsers() {
       if (!fs.existsSync(stateFile)) continue;
       const state = JSON.parse(fs.readFileSync(stateFile,'utf8'));
       if (!state.schedules?.some(item=>item.enabled)) continue;
-      const policy = store.userPolicies?.[device.userId];
+      const policy = store.userPolicies?.[device.userId] || store.defaultUserPolicy;
       chatFor({userId:device.userId,deviceId:device.id,admin:Boolean(device.admin),
         codexProfiles:policy?.codexProfiles||null,unrestrictedModels:Boolean(policy?.unrestrictedModels)});
     } catch { /* A corrupt user's workspace must not stop the server. */ }
@@ -777,6 +779,7 @@ http.createServer((req, res) => {
     return;
   }
   if (authService.handle(req, res, url, principal, legacyAuthorized)) return;
+  if (windowsNodeService.handle(req, res, url, principal)) return;
   if (!principal) {
     sendJson(res, 401, { error: "未授权" });
     return;
@@ -801,9 +804,10 @@ http.createServer((req, res) => {
       sendJson(res, 405, { error: "请求方式不支持" });
       return;
     }
-    const extraAccounts = principal.admin ? Promise.allSettled([
-      claudeAccountService.card(principal),antigravityAccountService.card(principal),
-    ]).then(results=>results.filter(r=>r.status==="fulfilled").map(r=>r.value)) : Promise.resolve([]);
+    const extraAccounts = Promise.allSettled([
+      ...(principal.admin ? [claudeAccountService.card(principal)] : []),
+      ...((principal.admin || principal.codexProfiles?.includes("antigravity")) ? [antigravityAccountService.card(principal)] : []),
+    ]).then(results=>results.filter(r=>r.status==="fulfilled").map(r=>r.value));
     extraAccounts.then((accounts) => codexAccountService.list(res,
       principal.admin ? null : (principal.codexProfiles || ["default"]), accounts));
     return;

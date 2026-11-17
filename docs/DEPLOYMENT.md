@@ -106,3 +106,22 @@ node backend/backup.js verify /absolute/path/to/snapshot
 - Android：见 [README](../README.md#android-客户端)，自行配置域名、签名和更新清单。
 
 本指南不提供生产账号、密钥、证书、附件或用户数据库。
+
+
+### Optional Stellarbit and Windows nodes
+
+Stellarbit reads the key from `STELLARBIT_API_KEY_FILE` (default
+`/var/lib/witt/runtime/stellarbit/api-key`) on each request. Keep that file
+private and outside the repository. Run `backend/stellarbit-responses-adapter.js`
+separately; its default listener is `127.0.0.1:33112`.
+Set `STELLARBIT_ALLOWED_USER_ID` on the Witt service to the intended local user ID;
+model visibility remains disabled when unset. The model list uses successful
+entries from `/var/lib/witt/runtime/stellarbit/verification.json`; keys and
+verification results are deployment data and are not included here.
+
+Windows nodes require a separately configured WireGuard `wg0` interface,
+`/etc/wireguard/server.pub`, and permission for Witt to manage peers. Set
+`WITT_WIREGUARD_ENDPOINT` to the public WireGuard host and port before pairing.
+Pass your own API URL using `-ServerUrl` to `windows-node/witt-windows-node.ps1`.
+Pairing distributes the configured Stellarbit credential to the paired machine
+in encrypted form; enable it only for users allowed to use that credential.

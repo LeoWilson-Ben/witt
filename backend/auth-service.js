@@ -7,7 +7,7 @@ const { AuthStore } = require("./sqlite-store");
 
 const ID = /^[a-f0-9-]{36}$/;
 const TOKEN_BYTES = 32;
-const CODEX_PROFILE_IDS = new Set(["default", "xuanyu", "account4", "account5"]);
+const CODEX_PROFILE_IDS = new Set(["default", "xuanyu", "account4", "account5", "antigravity"]);
 
 function now() { return new Date().toISOString(); }
 function randomToken() { return crypto.randomBytes(TOKEN_BYTES).toString("base64url"); }
@@ -99,16 +99,19 @@ class AuthService {
       device.lastSeenAt = now();
       this.write(store);
     }
-    const policy = store.userPolicies?.[device.userId] || null;
+    const policy = store.userPolicies?.[device.userId] || store.defaultUserPolicy || null;
     return {
       userId: device.userId,
       deviceId: device.id,
       admin: Boolean(device.admin),
+      canInvite: Boolean(device.admin) && device.canInvite !== false && policy?.canInvite !== false,
       fullServerAccess: device.fullServerAccess === true,
       label: device.label,
-      codexProfiles: Array.isArray(policy?.codexProfiles)
-        ? policy.codexProfiles.filter((item) => CODEX_PROFILE_IDS.has(item)) : null,
-      unrestrictedModels: Boolean(policy?.unrestrictedModels),
+      codexProfiles: [...new Set([
+        ...(Array.isArray(policy?.codexProfiles) ? policy.codexProfiles.filter((item) => CODEX_PROFILE_IDS.has(item)) : ["default"]),
+        ...(policy?.unrestrictedModels !== false ? ["antigravity"] : []),
+      ])],
+      unrestrictedModels: policy?.unrestrictedModels !== false,
     };
   }
 
@@ -125,6 +128,7 @@ class AuthService {
     if (!profiles.length) throw new Error("至少需要允许一个 Codex 账号");
     store.userPolicies = store.userPolicies || {};
     store.userPolicies[userId] = {
+      ...store.userPolicies[userId],
       codexProfiles: profiles,
       unrestrictedModels: Boolean(input.unrestrictedModels),
       updatedAt: now(),
@@ -213,6 +217,7 @@ class AuthService {
     if (!device) {
       device = { id: deviceId, userId: source.userId, inviteId: source.inviteId,
         label: String(input.deviceName || "Witt 大阪").slice(0, 48), admin: Boolean(source.admin),
+        canInvite: Boolean(source.admin) && source.canInvite !== false,
         disabled: false, tokenHash: hash(token), createdAt: now(), lastSeenAt: now(), migrationId: grant.id };
       store.devices.push(device);
       grant.targetDeviceId = deviceId; grant.status = "claimed"; grant.claimedAt = now();
@@ -245,6 +250,18 @@ class AuthService {
 
   publicInvite(invite) { const { code, userId, ...safe } = invite; return safe; }
   publicDevice(device) { const { tokenHash, ...safe } = device; return safe; }
+
+  setDeviceNote(id, note) {
+    if (!ID.test(String(id || ""))) throw new Error("设备编号无效");
+    if (typeof note !== "string" || note.length > 200) throw new Error("备注最多 200 个字符");
+    const store = this.read();
+    const device = store.devices.find((item) => item.id === id);
+    if (!device) return null;
+    device.note = note.trim();
+    device.noteUpdatedAt = now();
+    this.write(store);
+    return this.publicDevice(device);
+  }
 
   bootstrapEligible(legacyAuthorized) {
     if (!legacyAuthorized) return false;
@@ -299,10 +316,29 @@ class AuthService {
       catch (err) { this.sendJson(res, 403, { error: err.message || "本机初始化不可用" }); }
       return true;
     }
+    const noteMatch = url.pathname.match(/^\/admin\/devices\/([a-f0-9-]{36})\/note$/);
+    // Existing Android clients allow workspaceRequest only for established chat
+    // paths. Keep this narrow alias until they support the canonical admin route.
+    const nativeNote = url.pathname === "/chat/projects" && url.searchParams?.get("view") === "device-note";
+    if (noteMatch || nativeNote) {
+      if (!principal?.admin) { this.sendJson(res, principal ? 403 : 401, { error: "只有管理员可以修改设备备注" }); return true; }
+      if (req.method !== "PATCH") { this.sendJson(res, 405, { error: "请求方式不支持" }); return true; }
+      const id = noteMatch?.[1] || url.searchParams.get("deviceId");
+      this.readJsonBody(req, 8 * 1024, (error, body) => {
+        try {
+          if (error) throw error;
+          const device = this.setDeviceNote(id, body?.note);
+          if (!device) { this.sendJson(res, 404, { error: "设备不存在" }); return; }
+          this.sendJson(res, 200, { device });
+        } catch (err) { this.sendJson(res, 400, { error: err.message || "备注保存失败" }); }
+      });
+      return true;
+    }
     if (!principal?.admin) return false;
     if (req.method === "GET" && url.pathname === "/admin/invites") { this.sendJson(res, 200, { invites: this.read().invites.map((item) => this.publicInvite(item)) }); return true; }
     if (req.method === "GET" && url.pathname === "/admin/devices") { this.sendJson(res, 200, { devices: this.read().devices.map((item) => this.publicDevice(item)) }); return true; }
     if (req.method === "POST" && url.pathname === "/admin/invites") {
+      if (principal.canInvite === false) { this.sendJson(res, 403, { error: "此账号没有邀请用户的权限" }); return true; }
       this.readJsonBody(req, 8 * 1024, (error, body) => { try { if (error) throw error; if (String(body?.label || "").startsWith("WITT-RECOVERY:")) {
           const parts = body.label.split(":");
           if (parts.length !== 3 || parts[2] !== "ownership-verified") throw new Error("恢复请求无效");

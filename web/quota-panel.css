@@ -1,0 +1,81 @@
+/* Quota changes stay scoped to this sheet; no shared bundles are rebuilt. */
+html:root body #profileSheet .profile-panel{box-sizing:border-box;width:min(440px,calc(100% - 24px))!important;max-width:440px!important;min-height:0!important;height:auto!important;max-height:min(65dvh,560px)!important;margin:0 auto max(12px,env(safe-area-inset-bottom))!important;padding:14px 20px 20px!important;border-radius:24px!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}
+#profileSheet .sheet-head{flex:none!important;margin-bottom:8px!important;padding:4px 0 8px!important;gap:8px}
+#profileSheet .sheet-head>div{flex:1;min-width:0}
+#profileSheet .sheet-head h2{font-size:20px!important}
+#profileSheet .profile-hero{display:none!important}
+#profileSheet .sheet-handle{flex:none;margin:0 auto 10px}
+#profileSheet #usageContent{min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-right:2px}
+#profileSheet .quota-panel-refresh{flex:none;min-height:36px;padding:6px 10px;border:1px solid var(--line);border-radius:10px;color:var(--ink);background:transparent;font:inherit;font-size:12px;cursor:pointer}
+#profileSheet #closeProfile{width:36px;height:36px;flex:none}
+#profileSheet .usage-loading{min-height:120px;height:auto!important;padding:20px}
+#profileSheet .quota-actions{margin:0!important;padding:14px!important;border-radius:15px!important}
+#profileSheet .weekly-quota-summary{padding:10px 0!important;margin:0!important}
+#profileSheet .weekly-quota-summary strong{font-size:21px!important}
+#profileSheet .quota-action-row{margin-top:12px!important}
+#profileSheet .quota-history{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+#profileSheet .quota-history>summary{font-size:12px;color:var(--muted);cursor:pointer}
+#profileSheet .quota-history .usage-stats{margin-top:12px}
+#profileSheet .quota-history .usage-board{overflow-x:auto;max-width:100%;display:block!important}
+#profileSheet .quota-history .usage-weekdays,#profileSheet .quota-history .usage-insight{display:none}
+#profileSheet .provider-quota-group{border:1px solid var(--line);border-radius:15px;padding:14px;margin-bottom:12px;background:var(--surface,transparent)}
+#profileSheet .provider-quota-group h3{margin:0 0 10px;font-size:13px;line-height:1.5;color:var(--ink)}
+#profileSheet .provider-quota-bucket{padding:9px 0;border-top:1px solid var(--line)}
+#profileSheet .provider-quota-bucket:first-of-type{border-top:0}
+#profileSheet .provider-quota-bucket>div{display:flex;align-items:center;justify-content:space-between;gap:9px;font-size:12px;color:var(--muted)}
+#profileSheet .provider-quota-bucket strong{font-size:17px;color:var(--ink);white-space:nowrap}
+#profileSheet .provider-quota-bucket small{display:block;margin-top:6px;font-size:10px;line-height:1.6;color:var(--muted)}
+#profileSheet .provider-quota-track{height:5px;display:block;overflow:hidden;border-radius:8px;background:color-mix(in srgb,var(--muted) 15%,transparent);margin-top:9px}
+#profileSheet .provider-quota-track b{height:100%;display:block;background:#879acb;border-radius:inherit}
+#profileSheet .quota-source-note{font-size:10px;line-height:1.8;color:var(--muted);margin:8px 3px 0}
+#profileSheet .quota-unavailable{padding:22px 8px;text-align:center}
+#profileSheet .quota-unavailable strong{font-size:14px;color:var(--ink)}
+#profileSheet .quota-unavailable p{font-size:12px;line-height:1.8;color:var(--muted)}
+@media(max-height:500px){html:root body #profileSheet .profile-panel{max-height:70dvh!important;margin-bottom:10px!important}}
+@media(max-width:350px){html:root body #profileSheet .profile-panel{padding:12px 15px 16px!important}}
+
+#profileSheet .provider-quota-group>summary{list-style:none;display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;font-weight:600;line-height:1.6;color:var(--ink);cursor:pointer}
+#profileSheet .provider-quota-group>summary::-webkit-details-marker{display:none}
+#profileSheet .provider-quota-group>summary:after{content:"⌄";color:var(--muted);font-size:15px}
+#profileSheet .provider-quota-group[open]>summary{margin-bottom:8px}
+#profileSheet .provider-quota-group[open]>summary:after{transform:rotate(180deg)}
+
+/* Keep the compact sheet independent of the former full-page quota grid. */
+#profileSheet .profile-panel,#profileSheet .profile-panel *{box-sizing:border-box}
+html:root body #profileSheet .sheet-head{position:static!important;top:auto!important;display:grid!important;grid-template-columns:minmax(0,1fr) auto auto!important;align-items:center!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 12px!important;padding:0 0 10px!important;background:transparent!important}
+#profileSheet .sheet-head>div{min-width:0!important;max-width:100%}
+#profileSheet .sheet-head h2{font-size:18px!important;line-height:1.4;white-space:normal!important;overflow-wrap:anywhere}
+#profileSheet #usageContent{display:block!important;flex:1 1 auto!important;width:100%!important;max-width:100%!important;min-width:0!important;min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important;scrollbar-width:thin;scrollbar-gutter:stable;padding:0 4px 8px 0!important}
+#profileSheet #usageContent>*,#profileSheet .quota-actions,#profileSheet .rate-limit-summaries,#profileSheet .weekly-quota-summary{min-width:0!important;width:100%!important;max-width:100%!important}
+#profileSheet .quota-actions{display:block!important;padding:12px!important}
+#profileSheet .rate-limit-summaries{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:10px!important}
+#profileSheet .weekly-quota-summary{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:8px!important;margin:0!important;padding:12px!important}
+#profileSheet .weekly-quota-summary>div{display:flex!important;flex-wrap:wrap!important;align-items:baseline!important;justify-content:space-between!important;gap:5px 10px!important;grid-column:1 / -1;min-width:0!important;max-width:100%}
+#profileSheet .weekly-quota-summary :is(small,strong,span){min-width:0!important;max-width:100%!important;white-space:normal!important;overflow-wrap:anywhere;line-height:1.6!important}
+#profileSheet .weekly-quota-summary strong{font-size:20px!important;flex:0 1 auto}
+#profileSheet .weekly-quota-summary small{flex:1 1 105px;font-size:11px!important}
+#profileSheet .weekly-quota-summary>span{grid-column:1 / -1!important;display:block;font-size:11px!important}
+#profileSheet .weekly-quota-summary>i{grid-column:1 / -1!important;width:100%!important;max-width:100%;height:6px!important}
+#profileSheet .quota-action-row{display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:10px!important;width:100%!important;max-width:100%;padding:12px 0 0!important;margin:12px 0 0!important}
+#profileSheet .quota-action-row>div{width:100%;max-width:100%;min-width:0!important}
+#profileSheet .quota-action-row :is(b,small){white-space:normal!important;overflow-wrap:anywhere;line-height:1.7!important}
+#profileSheet .quota-action-row b{font-size:12px!important}
+#profileSheet .quota-action-row small{font-size:11px!important}
+#profileSheet .quota-action-row .quota-reset{align-self:flex-start!important;min-width:0!important;max-width:100%!important;width:auto!important;white-space:normal!important;min-height:40px!important}
+#profileSheet .quota-action-row .quota-reset:disabled{display:none!important}
+#profileSheet .provider-quota-group{min-width:0!important;width:100%!important;max-width:100%;padding:12px!important}
+#profileSheet .provider-quota-group>summary{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+#profileSheet .provider-quota-group>summary:after{flex:none}
+#profileSheet .provider-quota-bucket{min-width:0;max-width:100%}
+#profileSheet .provider-quota-bucket>div{flex-wrap:wrap;gap:5px 10px;min-width:0;max-width:100%}
+#profileSheet .provider-quota-bucket>div>span{flex:1 1 100px;min-width:0;white-space:normal;overflow-wrap:anywhere}
+#profileSheet .provider-quota-bucket strong{flex:0 1 auto;min-width:0;max-width:100%;white-space:normal!important;overflow-wrap:anywhere;line-height:1.5}
+#profileSheet :is(.provider-quota-bucket small,.quota-source-note,.quota-unavailable p){max-width:100%;white-space:normal!important;overflow-wrap:anywhere}
+#profileSheet .quota-history{min-width:0;max-width:100%}
+#profileSheet .quota-history .usage-card{width:100%!important;max-width:100%;min-width:0!important;padding:10px!important}
+#profileSheet .quota-history .usage-stats{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:7px!important;min-width:0;max-width:100%}
+#profileSheet .quota-history .usage-stats article{min-width:0!important;padding:8px!important}
+#profileSheet .quota-history .usage-stats strong{font-size:18px!important;white-space:normal!important;overflow-wrap:anywhere}
+#profileSheet .quota-history .usage-card :is(header,footer){flex-wrap:wrap!important;gap:6px!important;white-space:normal!important}
+
+#profileSheet #usageContent>*{margin-left:0!important;margin-right:0!important}

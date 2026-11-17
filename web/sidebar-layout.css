@@ -30,7 +30,18 @@
 #drawer .conversation-row.active::before { display:none !important; }
 #drawer .conversation-open { display:flex !important; align-items:center; min-width:0; min-height:54px !important; padding:12px 4px !important; background:transparent !important; }
 #drawer .conversation-open > span:last-child { display:block; min-width:0; width:100%; }
+#drawer .conversation-title-row { display:flex !important; align-items:center; gap:6px; min-width:0; width:100%; }
+#drawer .conversation-title-row strong { flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 #drawer .conversation-open strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:16px !important; font-weight:400 !important; line-height:1.6; color:var(--rail-ink) !important; }
+#drawer .conversation-model-badge { display:inline-flex !important; align-items:center; justify-content:center; flex:none; font-size:10px !important; font-weight:600 !important; line-height:1 !important; padding:2px 5px !important; border-radius:4px !important; letter-spacing:.02em; user-select:none; font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif; }
+#drawer .conversation-model-badge.model-gpt { background:#e8f5ed !important; color:#0d7a57 !important; border:1px solid #c2e7d1 !important; }
+#drawer .conversation-model-badge.model-claude { background:#faece5 !important; color:#b0532e !important; border:1px solid #f2cfc0 !important; }
+#drawer .conversation-model-badge.model-gemini { background:#eaf1fb !important; color:#1a68d5 !important; border:1px solid #c6dafc !important; }
+#drawer .conversation-model-badge.model-deepseek { background:#f0f1f5 !important; color:#43526e !important; border:1px solid #d4dae5 !important; }
+:root[data-theme="dark"] #drawer .conversation-model-badge.model-gpt { background:#112d22 !important; color:#34d399 !important; border-color:#1a4f3b !important; }
+:root[data-theme="dark"] #drawer .conversation-model-badge.model-claude { background:#331f18 !important; color:#f89670 !important; border-color:#573327 !important; }
+:root[data-theme="dark"] #drawer .conversation-model-badge.model-gemini { background:#152642 !important; color:#6ba4ff !important; border-color:#244173 !important; }
+:root[data-theme="dark"] #drawer .conversation-model-badge.model-deepseek { background:#1e2430 !important; color:#9bb0d3 !important; border-color:#363e50 !important; }
 #drawer .conversation-mark, #drawer .history-project-label, #drawer .conversation-open small { display:none !important; }
 #drawer .conversation-row:has(.conversation-mark i) strong::after { content:" ·"; color:var(--rail-muted); }
 #drawer .conversation-more { align-self:center; min-height:44px; width:28px; padding:0; opacity:.35; color:var(--rail-muted) !important; }

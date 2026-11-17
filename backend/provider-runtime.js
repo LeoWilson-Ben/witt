@@ -32,8 +32,10 @@ class ProviderRuntime{
  defaultModel(provider){return this.models(provider).find(m=>m.isDefault)?.id||this.models(provider)[0]?.id||'';}
  allowed(model,profile){return this.models(profile.provider).some(m=>m.id===model);}
  reasoning(model,profile,requested){const item=this.models(profile.provider).find(m=>m.id===model);return item?.reasoningEfforts.some(e=>e.id===requested)?requested:item?.defaultReasoningEffort||'medium';}
- async capabilities(profile){if(profile.provider==='antigravity'&&(await this.service('antigravity').account(this.owner)).authenticated)await this.service('antigravity').availableModels(this.owner);
+ async capabilities(profile){try{if(profile.provider==='antigravity'&&(await this.service('antigravity').account(this.owner)).authenticated)await this.service('antigravity').availableModels(this.owner);
+  }catch{/* Retain the last discovered models when account refresh is unavailable. */}
   return {codexProfile:profile.id,provider:profile.provider,models:this.models(profile.provider),skills:[],mcpServers:[],features:[],collaborationModes:[],support:{fork:false,compact:false,review:false,plans:true},checkedAt:new Date().toISOString()};}
+ async usage(profile){return {provider:profile.provider,codexProfile:profile.id,rateLimits:null,quota:profile.provider==='antigravity'?await this.service('antigravity').quota(this.owner):{available:false,groups:[],message:'此账号暂未提供可读取的额度数据'}};}
  client(profile){let client=this.clients.get(profile.id);if(!client){client=new CliAgentClient(this,profile);this.clients.set(profile.id,client);}return client;}
 }
 class CliAgentClient extends EventEmitter{
