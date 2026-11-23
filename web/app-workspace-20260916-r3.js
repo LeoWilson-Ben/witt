@@ -569,6 +569,8 @@
       hold(formulaHtml(formula, false)));
     source = source.replace(/(^|[^\\$])\$([^$\n]+?)\$/g, (_, prefix, formula) =>
       `${prefix}${hold(formulaHtml(formula, false))}`);
+    source = source.replace(/\[([^\]\n]+)\]\((?:file|conversation):\/\/[^\s)]+\)/gi, (_, label) =>
+      hold(`<code class="inline-code chat-file-ref">${escapeHtml(label)}</code>`));
     source = source.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi, (_, label, url) =>
       hold(chatLinkHtml(label, url)));
     source = source.replace(/(^|[\s（(])((?:https?:\/\/)[^\s<>"'）)]+)/gi,
@@ -687,13 +689,127 @@
     </div>`;
   }
 
+  function markdownBlocksHtml(rawText) {
+    const mathBlocks = [];
+    const holdMath = (html) => {
+      const token = `WITTMATHBLOCK${mathBlocks.length}END`;
+      mathBlocks.push({ token, html });
+      return token;
+    };
+    let prepared = String(rawText || "")
+      .replace(/\$\$([\s\S]+?)\$\$/g, (_, f) => holdMath(formulaHtml(f, true)))
+      .replace(/\\\[([\s\S]+?)\\\]/g, (_, f) => holdMath(formulaHtml(f, true)));
+
+    const lines = prepared.split("\n");
+    const blocks = [];
+    let para = [];
+    let quote = [];
+    let list = null;
+
+    const flushPara = () => {
+      if (!para.length) return;
+      blocks.push(`<p class="md-p">${inlineRichHtml(para.join("\n"))}</p>`);
+      para = [];
+    };
+    const flushQuote = () => {
+      if (!quote.length) return;
+      blocks.push(`<blockquote class="md-quote">${inlineRichHtml(quote.join("\n"))}</blockquote>`);
+      quote = [];
+    };
+    const flushList = () => {
+      if (!list || !list.items.length) {
+        list = null;
+        return;
+      }
+      const tag = list.ordered ? "ol" : "ul";
+      const itemsHtml = list.items
+        .map((item) => {
+          const sub = item.subs.length
+            ? `<ul class="md-list md-ul md-sublist">${item.subs.map((s) => `<li class="md-li">${inlineRichHtml(s)}</li>`).join("")}</ul>`
+            : "";
+          return `<li class="md-li">${inlineRichHtml(item.text)}${sub}</li>`;
+        })
+        .join("");
+      blocks.push(`<${tag} class="md-list md-${tag}">${itemsHtml}</${tag}>`);
+      list = null;
+    };
+    const flushAll = () => {
+      flushPara();
+      flushQuote();
+      flushList();
+    };
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        flushPara();
+        flushQuote();
+        continue;
+      }
+      if (/^(?:---+|\*\*\*+|___+)$/.test(trimmed)) {
+        flushAll();
+        blocks.push('<hr class="md-hr">');
+        continue;
+      }
+      const headingMatch = line.match(/^\s*(#{1,4})\s+(.+)$/);
+      if (headingMatch) {
+        flushAll();
+        const level = headingMatch[1].length;
+        blocks.push(`<h3 class="md-heading md-h${level}">${inlineRichHtml(headingMatch[2].trim())}</h3>`);
+        continue;
+      }
+      const quoteMatch = line.match(/^\s*>\s?(.*)$/);
+      if (quoteMatch) {
+        flushPara();
+        flushList();
+        quote.push(quoteMatch[1]);
+        continue;
+      }
+      const listMatch = line.match(/^(\s*)(?:([-*•])|(\d+)[.)])\s+(.+)$/);
+      if (listMatch) {
+        flushPara();
+        flushQuote();
+        const indent = listMatch[1].replace(/\t/g, "  ").length;
+        const isOrdered = Boolean(listMatch[3]);
+        const content = listMatch[4].trim();
+        if (indent >= 2 && list && list.items.length) {
+          list.items[list.items.length - 1].subs.push(content);
+        } else {
+          if (!list || list.ordered !== isOrdered) {
+            flushList();
+            list = { ordered: isOrdered, items: [] };
+          }
+          list.items.push({ text: content, subs: [] });
+        }
+        continue;
+      }
+      if (list && /^\s{2,}\S/.test(line) && list.items.length) {
+        const lastItem = list.items[list.items.length - 1];
+        if (lastItem.subs.length) {
+          lastItem.subs[lastItem.subs.length - 1] += "\n" + trimmed;
+        } else {
+          lastItem.text += "\n" + trimmed;
+        }
+        continue;
+      }
+      flushQuote();
+      flushList();
+      para.push(line);
+    }
+    flushAll();
+
+    let out = blocks.join("");
+    for (const m of mathBlocks) out = out.split(m.token).join(m.html);
+    return out;
+  }
+
   function richBlockHtml(value) {
     const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n");
     const rendered = [];
     let plain = [];
     const flushPlain = () => {
       if (!plain.length) return;
-      rendered.push(inlineRichHtml(plain.join("\n")));
+      rendered.push(markdownBlocksHtml(plain.join("\n")));
       plain = [];
     };
     for (let index = 0; index < lines.length; index += 1) {

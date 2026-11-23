@@ -149,7 +149,6 @@ async function relayStellarbit(body, res, apiKey) {
       "content-type": "application/json",
     },
     body: JSON.stringify(upstreamBody),
-    signal: AbortSignal.timeout(30 * 60 * 1000),
   });
   if (!upstream.ok) {
     await upstream.arrayBuffer();

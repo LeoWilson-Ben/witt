@@ -85,6 +85,7 @@
   <link rel="stylesheet" href="/vault/settings-glass.css?v=20261104-device-layout-1">
   <link rel="stylesheet" href="/vault/quota-panel.css?v=20261114-layout-2">
   <link rel="stylesheet" href="/vault/header-capsule.css?v=20261114-three-orbs-1">
+  <link rel="stylesheet" href="/vault/xuanyu-build-panel.css?v=20261118-6">
 </head>
 <body>
   <div class="app-atmosphere" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -152,7 +153,7 @@
         </button>
       </div>
       <section class="chat-more-menu" id="chatMoreMenu" aria-hidden="true">
-        <p id="chatMoreTitle">当前对话</p>
+        <p id="chatMoreTitle" hidden style="display:none!important">当前对话</p>
         <button id="moreGroupButton" class="chat-more-item"><span>分组</span><small>整理聊天记录</small></button>
         <button id="quotaButton" class="chat-more-item quota-button" aria-label="查看 Codex 额度" hidden>
           <svg viewBox="0 0 24 24"><path d="M5 18V9m7 9V5m7 13v-6"/></svg><span>额度与用量</span>
@@ -321,52 +322,71 @@
     <button type="button" class="upgrade-backdrop" id="userSettingsBackdrop" aria-label="关闭设置"></button>
       <div class="drawer-tools user-settings-panel" role="dialog" aria-modal="true" aria-labelledby="userSettingsTitle">
         <div class="drawer-account-head"><strong id="userSettingsTitle">设置</strong><button id="closeDrawerAccount" type="button" aria-label="关闭头像菜单">×</button></div>
-        <div class="settings-user-identity"><span>W</span><div><strong>Witt</strong><small>你的私人助手</small></div></div>
-        <section class="settings-block"><div class="settings-section-label">工作区</div>
-        <button class="feature-entry" id="featureProjects">项目工作区</button><button class="feature-entry" id="featureSchedules">定时任务</button><button class="feature-entry" id="windowsNodesEntry">Windows 工作节点</button>
-</section>
-        <section class="settings-block">
-        <div class="settings-section-label">账号与连接</div>
-        <button class="workspace-entry" id="workspaceOverviewButton" type="button">连接状态 <span>›</span></button>
-        <div class="drawer-utilities">
-          <button class="drawer-profile" id="profileButton">
-            <span class="profile-monogram">W</span>
-            <span><strong>我的</strong><small>用量记录</small></span>
-            <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
-          </button>
-          <button class="drawer-profile" id="localSshButton">
-            <span class="profile-monogram terminal-monogram"><svg viewBox="0 0 24 24"><path d="m6 8 4 4-4 4M12 17h6"/></svg></span>
-            <span><strong>服务器</strong><small id="localSshDrawerStatus">本地终端</small></span>
-            <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
-          </button>
-          <button class="drawer-profile drawer-admin-entry" id="adminSettingsButton" hidden>
-            <span class="profile-monogram"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="3"/><path d="M10 17h4"/></svg></span>
-            <span><strong>设备</strong><small>访问控制</small></span>
-            <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
-          </button>
-          <button class="drawer-profile drawer-admin-entry" id="codexAccountsButton" hidden>
-            <span class="profile-monogram"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg></span>
-            <span><strong>账号</strong><small>GPT / Claude / Gemini</small></span>
-            <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
-          </button>
-        </div>
-        </section>
-        <section class="settings-block"><div class="settings-section-label">任务提醒</div>
-        <button id="moreNotifyButton" class="feature-entry" aria-pressed="false"><span>前台完成提醒</span><small id="completionNotifyLabel">已关闭</small></button>
-        <button class="feature-entry" id="featureNotifications" data-enabled="false">后台任务通知：开启</button>
-        </section>
-        <section class="settings-block"><div class="settings-section-label">偏好设置</div>
-        <section class="drawer-theme" aria-labelledby="themeTitle">
-          <span>
-            <i aria-hidden="true">◐</i>
-            <b id="themeTitle">外观</b>
+        <div class="settings-user-identity">
+          <span class="settings-brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5"/><path d="M12 12v9"/></svg>
           </span>
-          <div class="theme-options" role="group" aria-label="选择界面主题">
-            <button type="button" data-theme-choice="light">白天</button>
-            <button type="button" data-theme-choice="dark">夜晚</button>
+          <div class="settings-identity-copy">
+            <strong>Witt 工作台</strong>
+            <small>私人服务器 AI 助手 · 在线</small>
+          </div>
+          <em class="settings-online-pill">ONLINE</em>
+        </div>
+
+        <section class="settings-block settings-bento-block">
+          <div class="settings-section-label">核心管理</div>
+          <div class="drawer-utilities settings-bento-grid">
+            <button class="drawer-profile drawer-admin-entry" id="codexAccountsButton" hidden>
+              <span class="profile-monogram accent-violet"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.2"/><path d="M5 20v-1.8a7 7 0 0 1 14 0V20"/></svg></span>
+              <span><strong>AI 账号</strong><small>GPT / Claude / Gemini</small></span>
+              <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+            </button>
+            <button class="drawer-profile" id="profileButton">
+              <span class="profile-monogram accent-blue"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18V10m7 8V5m7 13v-6"/></svg></span>
+              <span><strong>额度与用量</strong><small>模型配额与统计</small></span>
+              <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+            </button>
+            <button class="drawer-profile" id="localSshButton">
+              <span class="profile-monogram terminal-monogram accent-emerald"><svg viewBox="0 0 24 24"><path d="m6 8 4 4-4 4M12 17h6"/></svg></span>
+              <span><strong>SSH 终端</strong><small id="localSshDrawerStatus">本地终端与 SFTP</small></span>
+              <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+            </button>
+            <button class="drawer-profile drawer-admin-entry" id="adminSettingsButton" hidden>
+              <span class="profile-monogram accent-amber"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="3"/><path d="M10 17h4"/></svg></span>
+              <span><strong>设备权限</strong><small>授权设备与邀请码</small></span>
+              <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+            </button>
           </div>
         </section>
+
+        <section class="settings-block settings-list-block">
+          <div class="settings-section-label">工作区与自动化</div>
+          <div class="settings-group-card">
+            <button class="feature-entry" id="featureProjects"><span>项目工作区</span><small>目录与常用指令</small></button>
+            <button class="feature-entry" id="featureSchedules"><span>定时任务</span><small>自动巡检与计划</small></button>
+            <button class="feature-entry" id="windowsNodesEntry"><span>Windows 节点</span><small>远程算力协同</small></button>
+            <button class="workspace-entry" id="workspaceOverviewButton" type="button"><span>系统服务状态</span><small>运行监控</small><span>›</span></button>
+          </div>
         </section>
+
+        <section class="settings-block settings-list-block">
+          <div class="settings-section-label">外观与通知</div>
+          <div class="settings-group-card">
+            <section class="drawer-theme" aria-labelledby="themeTitle">
+              <span>
+                <i aria-hidden="true">◐</i>
+                <b id="themeTitle">界面主题</b>
+              </span>
+              <div class="theme-options" role="group" aria-label="选择界面主题">
+                <button type="button" data-theme-choice="light">浅色</button>
+                <button type="button" data-theme-choice="dark">深色</button>
+              </div>
+            </section>
+            <button id="moreNotifyButton" class="feature-entry" aria-pressed="false"><span>前台完成提醒</span><small id="completionNotifyLabel">已关闭</small></button>
+            <button class="feature-entry" id="featureNotifications" data-enabled="false">后台任务通知：开启</button>
+          </div>
+        </section>
+
         <div class="drawer-footer">
           <span>Witt <b id="appVersion">v—</b></span>
           <button id="updateButton">检查更新</button>
@@ -661,10 +681,11 @@
     </section>
   </aside>
   <script src="/vault/browser-bridge.js?v=20261028-history"></script>
-  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102&groupDialog=20261102-1&codeCopy=20261102-1&imageKeyboard=20261102-1&composerIme=20261103-1&accountRecovery=20261103-1&serviceStatus=20261103-1&headerCapsule=20261106-1&deviceNotes=20261114-1&headerSpacing=20261114-1&antigravityLogin=20261114-1&invitePermission=20261114-1&geminiCreate=20261114-1&accountOrb=20261114-three-orbs-1&accountQuota=20261114-1&quotaLayout=20261114-2&historyModelBadge=20261116-3&modelSource=20261116-2"></script>
+  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102&groupDialog=20261102-1&codeCopy=20261102-1&imageKeyboard=20261102-1&composerIme=20261103-1&accountRecovery=20261103-1&serviceStatus=20261103-1&headerCapsule=20261106-1&deviceNotes=20261114-1&headerSpacing=20261114-1&antigravityLogin=20261114-1&invitePermission=20261114-1&geminiCreate=20261114-1&accountOrb=20261114-three-orbs-1&accountQuota=20261114-1&quotaLayout=20261114-2&historyModelBadge=20261116-3&modelSource=20261116-2&mdFormat=20261118-4"></script>
   <script src="/vault/sidebar-layout.js?v=20261008-2"></script>
   <script src="/vault/ui-upgrades.js?v=20261008-2&simplify=20261102-1&actions=20261102-2&groupDialog=20261102-1&keyboard=20261102-1&focusReturn=20261102-1&renameValidation=20261102-1&imeEscape=20261102-1&longPressCancel=20261102-1&taskFocus=20261102-1&taskPending=20261102-1"></script>
   <script src="/vault/witt-features.js?v=20261008-1&simplify=20261102-1"></script>
   <script src="/vault/windows-nodes-panel.js?v=20261117-2"></script>
+  <script src="/vault/xuanyu-build-panel.js?v=20261118-7"></script>
 </body>
 </html>

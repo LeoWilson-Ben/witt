@@ -3,7 +3,7 @@
 param(
   [switch]$Pair,
   [string]$WorkDir = $PSScriptRoot,
-  [string]$ServerUrl = 'https://your-witt-server.example/vault-api',
+  [string]$ServerUrl = 'https://16-208-77-185.sslip.io/vault-api',
   [string]$Label = $env:COMPUTERNAME,
   [string]$ConfigPath = "$env:LOCALAPPDATA\Witt\node.json",
   [int]$PollSeconds = 3

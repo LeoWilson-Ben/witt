@@ -77,3 +77,18 @@ test('idle expiration interrupts and finishes only the affected task',async t=>{
  t.mock.timers.tick(1000);assert.equal(calls.filter(c=>c.method==='turn/interrupt').at(-1).args.threadId,aa.threadId);
  t.mock.timers.tick(30000);assert.equal(service.activeFor(a.id),null);assert.equal(service.activeFor(b.id),bb);assert.equal(b.messages.at(-1).status,'running');
 });
+
+test('default task execution has no automatic idle time limit', t => {
+ const {service}=fixture(t);
+ assert.equal(service.turnIdleTimeoutMs,0);
+ t.mock.timers.enable({apis:['setTimeout']});
+ let interrupted=false;
+ service.requestActiveInterrupt=()=>{interrupted=true};
+ const active={conversationId:'unlimited',finished:false};
+ service.activeTurns.set(active.conversationId,active);
+ service.armActiveIdleTimeout(active);
+ assert.equal(active.timeout,undefined);
+ t.mock.timers.tick(24*60*60*1000);
+ assert.equal(interrupted,false);
+ assert.equal(active.finished,false);
+});

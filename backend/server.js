@@ -29,33 +29,9 @@ const tokenFile = process.env.DROP_VAULT_TOKEN_FILE || "/home/ubuntu/.config/dro
 const codexBin = process.env.DROP_VAULT_CODEX_BIN || "/home/ubuntu/.local/bin/codex";
 const codexWorkDir = process.env.DROP_VAULT_CODEX_WORKDIR || "/home/ubuntu/Documents/Codex/2026-07-26-xlsb";
 const codexProfiles = {
-  default: {
-    id: "default",
-    label: "Witt 默认账号",
-    codexHome: "/home/ubuntu/.codex",
-    workDir: codexWorkDir,
-  },
-  xuanyu: {
-    id: "xuanyu",
-    label: "子账号",
-    codexHome: "/home/ubuntu/.codex-xuanyu",
-    workDir: "/data/xuanyu-build-console",
-  },
-  account4: {
-    id: "account4",
-    label: "账号 4",
-    codexHome: "/home/ubuntu/.codex-account-4",
-    workDir: "/home/ubuntu",
-  },
-  account5: {
-    id: "account5",
-    label: "账号 5",
-    codexHome: "/home/ubuntu/.codex-account-5",
-    workDir: "/home/ubuntu",
-  },
+  default: { id: "default", label: "Witt 默认账号", codexHome: "/var/lib/witt/.codex", workDir: codexWorkDir },
+  antigravity: { id: "antigravity", label: "Antigravity CLI", provider: "antigravity", workDir: codexWorkDir },
 };
-codexProfiles.claude = {id:"claude",label:"Claude",provider:"claude",workDir:"/home/ubuntu"};
-codexProfiles.antigravity = {id:"antigravity",label:"Gemini · Antigravity",provider:"antigravity",workDir:"/home/ubuntu"};
 const licreBuildDir = "/data/builds";
 const licreConsoleDir = "/data/xuanyu-build-console";
 const xuanyuPreviewDir = "/data/xuanyu-build-console/repo/build/web";
@@ -396,10 +372,8 @@ function runNextTask() {
   const append = (current, chunk) => (current + chunk.toString("utf8")).slice(-maxTaskOutputBytes);
   child.stdout.on("data", (chunk) => { stdout = append(stdout, chunk); });
   child.stderr.on("data", (chunk) => { stderr = append(stderr, chunk); });
-  const timeout = setTimeout(() => child.kill("SIGTERM"), 20 * 60 * 1000);
 
   child.on("error", (error) => {
-    clearTimeout(timeout);
     const latest = readTask(task.id) || task;
     latest.status = "failed";
     latest.completedAt = new Date().toISOString();
@@ -409,7 +383,6 @@ function runNextTask() {
     setImmediate(runNextTask);
   });
   child.on("close", (code, signal) => {
-    clearTimeout(timeout);
     const latest = readTask(task.id) || task;
     const answer = extractCodexResult(stdout);
     latest.completedAt = new Date().toISOString();
@@ -420,7 +393,7 @@ function runNextTask() {
     } else {
       latest.status = "failed";
       latest.error = signal
-        ? "任务运行超时或被服务终止"
+        ? "任务被服务终止"
         : (stderr.trim().slice(-1200) || "Codex 未返回有效结果");
     }
     writeTask(latest);

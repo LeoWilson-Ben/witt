@@ -28,7 +28,7 @@ const MAX_INLINE_PREVIEW_BYTES = 5 * 1024 * 1024;
 const TEXT_ARTIFACT_PATTERN = /\.(txt|md|markdown|csv|tsv|json|jsonl|js|mjs|cjs|ts|tsx|jsx|py|java|kt|dart|css|scss|html?|xml|svg|yaml|yml|log|sh|bash|sql|c|h|cpp|hpp|rs|go|rb|php|swift|toml|ini|conf|vue|svelte)$/i;
 const ARTIFACT_PREVIEW_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_RECOVERY_MAX_AGE_MS = 30 * 60 * 1000;
-const DEFAULT_TURN_IDLE_TIMEOUT_MS = 20 * 60 * 1000;
+const DEFAULT_TURN_IDLE_TIMEOUT_MS = 0; // No automatic task interruption by default.
 const IMAGE_ID_PATTERN = /^[a-f0-9-]{36}$/;
 const artifactPreviewTokens = new Map();
 
@@ -70,14 +70,14 @@ class ChatService {
       ? Math.max(0, options.recoveryMaxAgeMs)
       : DEFAULT_RECOVERY_MAX_AGE_MS;
     this.turnIdleTimeoutMs = Number.isFinite(options.turnIdleTimeoutMs)
-      ? Math.max(1_000, options.turnIdleTimeoutMs)
+      ? Math.max(0, options.turnIdleTimeoutMs)
       : DEFAULT_TURN_IDLE_TIMEOUT_MS;
     this.providerRuntime = options.providerRuntime || null;
     this.codexProfiles = options.codexProfiles || {
       default: {
         id: "default",
         label: "Witt 默认账号",
-        codexHome: "/home/ubuntu/.codex",
+        codexHome: "/var/lib/witt/.codex",
         workDir: this.codexWorkDir,
       },
     };
@@ -94,7 +94,7 @@ class ChatService {
     this.deliveryRoots = (options.deliveryRoots || [
       this.dataDir,
       this.codexWorkDir,
-      "/home/ubuntu/Documents",
+      "/var/lib/witt/Documents",
       "/data/builds",
       "/data/xuanyu-build-console",
     ]).flatMap((root) => {
@@ -169,7 +169,7 @@ class ChatService {
     const client = profile.provider && this.providerRuntime && !stellar ? this.providerRuntime.client(profile) : sharedAppServer({
       codexBin: this.codexBin,
       cwd: profile.workDir,
-      home: "/home/ubuntu",
+      home: "/var/lib/witt",
       codexHome: stellar ? this.codexProfiles.default.codexHome : profile.codexHome,
       configOverrides,
       clientScope: this.clientScope,
@@ -722,7 +722,7 @@ class ChatService {
     return this.attachImage(message, stored);
   }
 
-  generatedImageFiles(threadId, codexHome = "/home/ubuntu/.codex") {
+  generatedImageFiles(threadId, codexHome = "/var/lib/witt/.codex") {
     if (!ID_PATTERN.test(String(threadId || ""))) return new Set();
     const directory = path.join(codexHome, "generated_images", threadId);
     try {
@@ -735,7 +735,7 @@ class ChatService {
   }
 
   captureNewGeneratedImages(message, threadId, before = new Set(),
-      codexHome = "/home/ubuntu/.codex") {
+      codexHome = "/var/lib/witt/.codex") {
     const images = [];
     for (const sourcePath of this.generatedImageFiles(threadId, codexHome)) {
       if (before.has(sourcePath)) continue;
@@ -793,7 +793,7 @@ class ChatService {
     if (!requested) return null;
     if (!path.isAbsolute(requested)) throw new Error("项目路径必须是绝对路径");
     const resolved = path.resolve(requested);
-    const allowedRoots = ["/home/ubuntu", "/data/drop-vault", "/data/xuanyu-build-console"];
+    const allowedRoots = ["/var/lib/witt", "/data/drop-vault", "/data/xuanyu-build-console"];
     if (!allowedRoots.some((root) => resolved === root || resolved.startsWith(`${root}${path.sep}`))) {
       throw new Error("该项目路径不在 Witt 允许的工作目录范围内");
     }
@@ -810,7 +810,7 @@ class ChatService {
   effectiveWorkDir(conversation) {
     if (!this.serverAdministrator) return this.userWorkspaceDir;
     if (!Object.hasOwn(conversation, "workDir")) return this.codexWorkDir;
-    return conversation.workDir || "/home/ubuntu";
+    return conversation.workDir || "/var/lib/witt";
   }
 
   profileFor(conversation) {
@@ -1649,7 +1649,7 @@ class ChatService {
     const client = new AppServerClient({
       codexBin: this.codexBin,
       cwd: profile.workDir,
-      home: "/home/ubuntu",
+      home: "/var/lib/witt",
       codexHome: profile.codexHome,
     });
     try {
@@ -1722,7 +1722,7 @@ class ChatService {
     const client = new AppServerClient({
       codexBin: this.codexBin,
       cwd: profile.workDir,
-      home: "/home/ubuntu",
+      home: "/var/lib/witt",
       codexHome: profile.codexHome,
     });
     try {
@@ -2779,6 +2779,7 @@ class ChatService {
   armActiveIdleTimeout(current = this.active) {
     if (!current || current.finished) return;
     clearTimeout(current.timeout);
+    if (this.turnIdleTimeoutMs === 0) return;
     current.timeout = setTimeout(() => {
       if (this.activeFor(current.conversationId) !== current || current.finished) return;
       if (current.pendingApprovals?.size) {
