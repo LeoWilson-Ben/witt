@@ -972,84 +972,61 @@
     const selectedModel = state.draftModel || state.model;
     const selectedReasoning = state.draftReasoning || state.reasoning;
     
-    // 兼容旧占位符
-    const legacyCurrent = $("#quickModelCurrent");
-    if (legacyCurrent) legacyCurrent.textContent = modelDisplayName(selectedModel);
-    
-    // 渲染模型徽标数量
-    const countBadge = $("#quickModelCountBadge");
-    if (countBadge) countBadge.textContent = `${models.length} 个可用`;
-
-    // 渲染平铺模型列表
-    const modelOptionsEl = $("#quickModelOptions");
-    if (modelOptionsEl) {
-      modelOptionsEl.innerHTML = models.map((model) => {
-        const selected = model.id === selectedModel;
-        const name = modelDisplayName(model.id);
-        const glyph = name.slice(0, 1).toUpperCase() || "✦";
-        const desc = model.description || modelDescriptions[model.id] || `${modelSource(model).label} 实时提供`;
-        return `<button type="button" data-quick-model="${escapeHtml(model.id)}" role="radio" aria-checked="${selected}" class="quick-model-btn ${selected ? "selected" : ""}" data-model-source="${modelSource(model).id}">
-          <span class="quick-model-glyph">${escapeHtml(glyph)}</span>
-          <span class="quick-model-meta">
-            <strong>${escapeHtml(name)}</strong>
-            <small>${escapeHtml(desc)}</small>
-          </span>
-          <i class="quick-model-check">✓</i>
-        </button>`;
-      }).join("");
-    }
-
-    // 计算智能程度档位
+    // 1. 顶栏中间部分：大字档位 + 模型名（100% 对齐图一：大字【中】 + 【GPT-6.2 Sol >】）
     const efforts = availableReasoningEfforts();
     const currentReasoning = efforts.includes(selectedReasoning)
       ? selectedReasoning
       : (efforts.includes("medium") ? "medium" : efforts[0]);
     state.draftReasoning = currentReasoning;
+    
+    const levelLabel = $("#codexLevelLabel");
+    if (levelLabel) {
+      levelLabel.textContent = quickReasoningNames[currentReasoning] || "中";
+    }
+    const modelNameEl = $("#codexModelName");
+    if (modelNameEl) {
+      modelNameEl.textContent = modelDisplayName(selectedModel);
+    }
+
+    // 2. 核心分段滑块计算 (图一纯白实心圆球 + 纯蓝填充 + 刻度点)
     const index = Math.max(0, efforts.indexOf(currentReasoning));
-    const meta = reasoningMeta[currentReasoning] || reasoningMeta.medium;
-    const progress = ((index + 0.5) / efforts.length) * 100;
+    const total = Math.max(1, efforts.length - 1);
+    const ratio = index / total; // 0.0 ~ 1.0
 
-    // 设置浮层容器的 CSS 变量与级别
-    menu.dataset.level = currentReasoning;
-    menu.dataset.intensity = String(meta.intensity);
-    menu.style.setProperty("--reasoning-progress", `${progress}%`);
-    menu.style.setProperty("--reasoning-count", String(efforts.length));
-    menu.style.setProperty("--reasoning-intensity", String(meta.intensity));
+    // 计算白色圆球与蓝色填充位置 (两端内边距各留出 13px，即圆球半径)
+    const thumbEl = $("#codexSliderThumb");
+    const fillEl = $("#codexSliderFill");
+    const thumbLeftExpr = `calc(13px + (100% - 26px) * ${ratio})`;
+    const fillWidthExpr = ratio === 0 ? "26px" : `calc(26px + (100% - 26px) * ${ratio})`;
+    if (thumbEl) thumbEl.style.setProperty("left", thumbLeftExpr, "important");
+    if (fillEl) fillEl.style.setProperty("width", fillWidthExpr, "important");
 
-    // 标签与代码胶囊
-    const curLabel = $("#quickReasoningCurrentLabel");
-    if (curLabel) curLabel.textContent = meta.label;
-    const curCode = $("#quickReasoningCurrentCode");
-    if (curCode) curCode.textContent = meta.code;
-    const curDesc = $("#quickReasoningDesc");
-    if (curDesc) curDesc.textContent = meta.description;
+    // 渲染刻度点 Tick Dots (图一中 4~6 个小圆点，蓝色覆盖部分变淡白透明)
+    const ticksEl = $("#codexSliderTicks");
+    if (ticksEl) {
+      ticksEl.innerHTML = efforts.map((effort, i) => {
+        const isActive = i <= index;
+        return `<span class="codex-tick ${isActive ? "active" : ""}"></span>`;
+      }).join("");
+    }
 
-    // 流体 Hitbox
-    const hitboxEl = $("#quickReasoningHitbox");
+    // 渲染点击热区 Hitbox (均匀平分全轨道)
+    const hitboxEl = $("#codexSliderHitbox");
     if (hitboxEl) {
       hitboxEl.innerHTML = efforts.map((effort) => {
-        const opt = reasoningMeta[effort];
-        const isSel = effort === currentReasoning;
-        return `<button type="button" data-quick-reasoning="${escapeHtml(effort)}" role="radio" aria-checked="${isSel}" aria-label="${escapeHtml(opt?.label || effort)}"></button>`;
+        return `<button type="button" data-quick-reasoning="${escapeHtml(effort)}" aria-label="${escapeHtml(quickReasoningNames[effort] || effort)}"></button>`;
       }).join("");
     }
 
-    // 档位 Stops
-    const stopsEl = $("#quickReasoningStops");
-    if (stopsEl) {
-      stopsEl.innerHTML = efforts.map((effort) => {
-        const opt = reasoningMeta[effort];
-        const isSel = effort === currentReasoning;
-        return `<button type="button" class="${isSel ? "selected" : ""}" data-quick-reasoning="${escapeHtml(effort)}"><strong>${escapeHtml(quickReasoningNames[effort] || opt?.label || effort)}</strong></button>`;
-      }).join("");
-    }
-
-    // 兼容旧 options
-    const legacyOptions = $("#quickReasoningOptions");
-    if (legacyOptions) {
-      legacyOptions.innerHTML = efforts.map((effort) => {
-        const isSel = effort === currentReasoning;
-        return `<button type="button" data-quick-reasoning="${escapeHtml(effort)}" role="radio" aria-checked="${isSel}" class="${isSel ? "selected" : ""}"><span>${escapeHtml(quickReasoningNames[effort] || effort)}</span><i>✓</i></button>`;
+    // 3. 渲染二级模型选择抽屉
+    const modelOptionsEl = $("#quickModelOptions");
+    if (modelOptionsEl) {
+      modelOptionsEl.innerHTML = models.map((model) => {
+        const isSelected = model.id === selectedModel;
+        return `<button type="button" class="codex-model-item ${isSelected ? "selected" : ""}" data-quick-model="${escapeHtml(model.id)}">
+          <span>${escapeHtml(modelDisplayName(model.id))}</span>
+          <i class="codex-check">✓</i>
+        </button>`;
       }).join("");
     }
   }
@@ -2232,6 +2209,10 @@
     menu.classList.toggle("open", expanded);
     menu.classList.toggle("models-open", true);
     if (expanded) {
+      const sliderView = $("#codexSliderView");
+      const listView = $("#codexModelListView");
+      if (sliderView) sliderView.hidden = false;
+      if (listView) listView.hidden = true;
       refreshProviderCapabilities();
       renderQuickModelPicker();
     }
@@ -5279,6 +5260,27 @@
     menu.classList.toggle("models-open", open);
     $("#quickModelExpand")?.setAttribute("aria-expanded", String(open));
   });
+  // 1:1 Codex: 点击模型名展开二级模型列表
+  $("#codexModelTrigger")?.addEventListener("click", () => {
+    const sliderView = $("#codexSliderView");
+    const listView = $("#codexModelListView");
+    if (sliderView) sliderView.hidden = true;
+    if (listView) listView.hidden = false;
+  });
+  // 1:1 Codex: 点击返回切回滑块面板
+  $("#codexBackToSlider")?.addEventListener("click", () => {
+    const sliderView = $("#codexSliderView");
+    const listView = $("#codexModelListView");
+    if (sliderView) sliderView.hidden = false;
+    if (listView) listView.hidden = true;
+  });
+  // 1:1 Codex: 点击右上角重置图标恢复默认中档
+  $("#codexResetBtn")?.addEventListener("click", () => {
+    const offered = availableReasoningEfforts();
+    state.draftReasoning = offered.includes("medium") ? "medium" : offered[0];
+    applySettings({ closeSheet: false, announce: false });
+    renderQuickModelPicker();
+  });
   $("#quickModelOptions")?.addEventListener("click", (event) => {
     const model = event.target.closest("[data-quick-model]")?.dataset.quickModel;
     if (!model) return;
@@ -5287,6 +5289,10 @@
     if (!offered.includes(state.draftReasoning)) state.draftReasoning = offered.includes("medium") ? "medium" : offered[0];
     applySettings({ closeSheet: false, announce: false });
     renderQuickModelPicker();
+    const sliderView = $("#codexSliderView");
+    const listView = $("#codexModelListView");
+    if (sliderView) sliderView.hidden = false;
+    if (listView) listView.hidden = true;
   });
   const handleQuickReasoningSelect = (event) => {
     const reasoning = event.target.closest("[data-quick-reasoning]")?.dataset.quickReasoning;
@@ -5295,6 +5301,7 @@
     applySettings({ closeSheet: false, announce: false });
     renderQuickModelPicker();
   };
+  $("#codexSliderHitbox")?.addEventListener("click", handleQuickReasoningSelect);
   $("#quickReasoningSection")?.addEventListener("click", handleQuickReasoningSelect);
   $("#quickReasoningOptions")?.addEventListener("click", handleQuickReasoningSelect);
   document.addEventListener("pointerdown", (event) => {

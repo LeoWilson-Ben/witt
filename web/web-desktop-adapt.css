@@ -165,373 +165,306 @@
 }
 
 /* ==========================================================================
-   Codex Model & Reasoning Popover (复刻 Codex 紧凑浮层与流体能量轨)
+   Codex Model & Reasoning Popover (100% 像素级对齐图一 Codex 官方真机)
    ========================================================================== */
 
-/* 1. 浮层容器外观与定位 */
-.quick-model-menu.codex-model-popover,
-:root body.web-browser .quick-model-menu.codex-model-popover,
-:root:not([data-theme="dark"]) body.web-browser .quick-model-menu.codex-model-popover {
-  width: min(340px, calc(100vw - 32px)) !important;
-  max-height: none !important;
-  overflow: visible !important;
-  border-radius: 20px !important;
-  padding: 16px 14px 14px !important;
-  background: rgba(255, 255, 255, 0.95) !important;
-  backdrop-filter: blur(24px) saturate(190%) !important;
-  border: 1px solid rgba(210, 218, 230, 0.8) !important;
-  box-shadow: 0 20px 48px -6px rgba(18, 26, 45, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset !important;
-  transition: opacity 0.24s cubic-bezier(0.16, 1, 0.3, 1), transform 0.24s cubic-bezier(0.16, 1, 0.3, 1) !important;
-  color: #172033 !important;
-  bottom: calc(100% + 14px) !important;
+/* 1. 浮层容器外观与定位 (图一纯白高圆角精致卡片) */
+.quick-model-menu.codex-popover-minimal,
+:root body.web-browser .quick-model-menu.codex-popover-minimal,
+:root:not([data-theme="dark"]) body.web-browser .quick-model-menu.codex-popover-minimal {
+  width: 270px !important;
+  max-width: calc(100vw - 32px) !important;
+  border-radius: 18px !important;
+  padding: 12px 14px 14px !important;
+  background: #ffffff !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 10px 32px -4px rgba(0, 0, 0, 0.12), 0 2px 8px -1px rgba(0, 0, 0, 0.04) !important;
+  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  color: #1c1c1e !important;
+  bottom: calc(100% + 10px) !important;
   left: 0 !important;
   z-index: 120 !important;
   display: block !important;
+  box-sizing: border-box !important;
 }
 
 /* 动效：展开与收起 */
-.quick-model-menu.codex-model-popover:not(.open) {
+.quick-model-menu.codex-popover-minimal:not(.open) {
   opacity: 0 !important;
   pointer-events: none !important;
-  transform: translateY(8px) scale(0.97) !important;
+  transform: translateY(6px) scale(0.97) !important;
 }
-.quick-model-menu.codex-model-popover.open {
+.quick-model-menu.codex-popover-minimal.open {
   opacity: 1 !important;
   pointer-events: auto !important;
   transform: translateY(0) scale(1) !important;
 }
 
-/* 深色模式 */
-:root[data-theme="dark"] .quick-model-menu.codex-model-popover,
-:root[data-theme="dark"] body.web-browser .quick-model-menu.codex-model-popover {
-  background: rgba(20, 25, 36, 0.92) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  box-shadow: 0 24px 56px -8px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.06) inset !important;
-  color: #f1f4fa !important;
+/* 暗色模式适配 */
+:root[data-theme="dark"] .quick-model-menu.codex-popover-minimal,
+:root[data-theme="dark"] body.web-browser .quick-model-menu.codex-popover-minimal {
+  background: #1e1e1e !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.6) !important;
+  color: #f2f2f7 !important;
 }
 
-/* 2. 区块标题头与徽标 */
-.popover-section-head {
+/* 2. 顶栏：左侧闪电，中间状态与模型名，右侧重置 (与图一完全一致) */
+.codex-popover-header {
   display: flex !important;
-  align-items: center !important;
+  align-items: flex-start !important;
   justify-content: space-between !important;
-  margin-bottom: 8px !important;
-  padding: 0 4px !important;
-}
-.popover-section-head > span {
-  font-size: 11px !important;
-  font-weight: 700 !important;
-  letter-spacing: 0.06em !important;
-  text-transform: uppercase !important;
-  color: #79879f !important;
-}
-:root[data-theme="dark"] .popover-section-head > span {
-  color: #8c9bb4 !important;
-}
-.popover-section-head > small {
-  font-size: 10px !important;
-  font-weight: 600 !important;
-  color: #8f9cae !important;
+  height: 48px !important;
+  margin-bottom: 6px !important;
 }
 
-/* 3. 模型卡片列表（平铺展示，限制最大高度，内部优雅滚动） */
-.quick-model-options {
-  display: flex !important;
-  flex-direction: column !important;
-  gap: 5px !important;
-  margin: 0 0 10px !important;
-  padding: 0 2px 0 0 !important;
-  max-height: 175px !important;
-  overflow-y: auto !important;
-  overscroll-behavior: contain !important;
-  scrollbar-width: thin !important;
-}
-.quick-model-btn {
-  display: flex !important;
-  align-items: center !important;
-  gap: 10px !important;
-  width: 100% !important;
-  min-height: 48px !important;
-  padding: 8px 10px !important;
-  border: 1px solid rgba(120, 135, 160, 0.14) !important;
-  border-radius: 12px !important;
-  background: rgba(255, 255, 255, 0.65) !important;
+.codex-icon-btn {
+  width: 28px !important;
+  height: 28px !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
   cursor: pointer !important;
-  text-align: left !important;
-  transition: all 0.18s ease !important;
-  color: inherit !important;
-  position: relative !important;
-  box-sizing: border-box !important;
-}
-.quick-model-btn:hover {
-  background: rgba(240, 244, 252, 0.8) !important;
-  border-color: rgba(90, 125, 200, 0.25) !important;
-  transform: translateY(-1px) !important;
-}
-.quick-model-btn.selected {
-  background: rgba(67, 97, 238, 0.08) !important;
-  border-color: rgba(67, 97, 238, 0.45) !important;
-  box-shadow: 0 3px 10px rgba(67, 97, 238, 0.1) !important;
-}
-:root[data-theme="dark"] .quick-model-btn {
-  background: rgba(255, 255, 255, 0.035) !important;
-  border-color: rgba(255, 255, 255, 0.08) !important;
-}
-:root[data-theme="dark"] .quick-model-btn:hover {
-  background: rgba(255, 255, 255, 0.07) !important;
-  border-color: rgba(255, 255, 255, 0.16) !important;
-}
-:root[data-theme="dark"] .quick-model-btn.selected {
-  background: rgba(79, 110, 247, 0.18) !important;
-  border-color: rgba(99, 132, 255, 0.5) !important;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3) !important;
-}
-
-.quick-model-glyph {
-  flex: none !important;
-  width: 30px !important;
-  height: 30px !important;
-  border-radius: 9px !important;
+  color: #8e8e93 !important;
   display: grid !important;
   place-items: center !important;
-  font-size: 13px !important;
-  font-weight: 700 !important;
-  color: #fff !important;
-  background: linear-gradient(135deg, #4f46e5, #06b6d4) !important;
-  box-shadow: 0 2px 6px rgba(6, 182, 212, 0.25) !important;
+  border-radius: 50% !important;
+  transition: all 0.15s ease !important;
 }
-.quick-model-meta {
-  flex: 1 1 0 !important;
-  min-width: 0 !important;
+.codex-icon-btn:hover {
+  background: rgba(0, 0, 0, 0.05) !important;
+  color: #1c1c1e !important;
+}
+:root[data-theme="dark"] .codex-icon-btn {
+  color: #8e8e93 !important;
+}
+:root[data-theme="dark"] .codex-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #ffffff !important;
+}
+
+.codex-header-center {
   display: flex !important;
   flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
   gap: 2px !important;
 }
-.quick-model-meta strong {
-  font-size: 12px !important;
+
+/* 档位大字：图一蔚蓝色【中】 */
+.codex-level-label {
+  font-size: 17px !important;
   font-weight: 600 !important;
+  color: #1a73e8 !important;
   line-height: 1.2 !important;
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
-  white-space: nowrap !important;
-}
-.quick-model-meta small {
-  font-size: 10px !important;
-  color: #79869d !important;
-  line-height: 1.2 !important;
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
-  white-space: nowrap !important;
-}
-:root[data-theme="dark"] .quick-model-meta small {
-  color: #8e9bb3 !important;
+  letter-spacing: -0.01em !important;
 }
 
-.quick-model-check {
-  flex: none !important;
-  width: 16px !important;
-  height: 16px !important;
-  display: grid !important;
-  place-items: center !important;
-  font-style: normal !important;
-  font-size: 11px !important;
-  font-weight: 700 !important;
-  color: #3b82f6 !important;
-  opacity: 0 !important;
-  transform: scale(0.6) !important;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
-}
-.quick-model-btn.selected .quick-model-check {
-  opacity: 1 !important;
-  transform: scale(1) !important;
-}
-
-/* 4. 微妙渐变分割线 */
-.quick-picker-divider {
-  height: 1px !important;
-  margin: 10px 0 12px !important;
-  background: linear-gradient(90deg, transparent, rgba(120, 135, 160, 0.2), transparent) !important;
-}
-
-/* 5. 智能程度控制台（微缩版 Liquid Reasoning Console） */
-.quick-reasoning-badge {
+/* 模型名小字按钮：图一【GPT-6.2 Sol >】 */
+.codex-model-trigger {
   display: inline-flex !important;
   align-items: center !important;
-  gap: 6px !important;
-}
-.quick-reasoning-badge strong {
-  font-size: 11px !important;
-  font-weight: 700 !important;
-  color: #172033 !important;
-}
-:root[data-theme="dark"] .quick-reasoning-badge strong {
-  color: #f1f4fa !important;
-}
-.quick-reasoning-badge code {
-  font-family: inherit !important;
-  font-size: 9px !important;
-  font-weight: 700 !important;
-  letter-spacing: 0.08em !important;
-  padding: 2px 6px !important;
+  gap: 3px !important;
+  border: none !important;
+  background: transparent !important;
+  cursor: pointer !important;
+  padding: 1px 4px !important;
   border-radius: 6px !important;
-  color: #4361ee !important;
-  background: rgba(67, 97, 238, 0.1) !important;
-  border: 1px solid rgba(67, 97, 238, 0.2) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  color: #4b5563 !important;
+  line-height: 1.2 !important;
+  transition: all 0.15s ease !important;
 }
-:root[data-theme="dark"] .quick-reasoning-badge code {
-  color: #8da4ff !important;
-  background: rgba(99, 132, 255, 0.15) !important;
-  border-color: rgba(99, 132, 255, 0.3) !important;
+.codex-model-trigger:hover {
+  background: rgba(0, 0, 0, 0.04) !important;
+  color: #111827 !important;
+}
+.codex-model-trigger svg {
+  color: #9ca3af !important;
+}
+:root[data-theme="dark"] .codex-model-trigger {
+  color: #9ca3af !important;
+}
+:root[data-theme="dark"] .codex-model-trigger:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #ffffff !important;
 }
 
-/* 流体轨道容器 */
-.quick-reasoning-liquid {
+/* 3. 核心滑块轨道 (图一浅灰长圆轨 + 纯蓝填充 + 纯白大圆球 + 刻度点) */
+.codex-slider-track-wrap {
   position: relative !important;
-  height: 34px !important;
-  overflow: hidden !important;
-  border: 1px solid rgba(119, 133, 158, 0.32) !important;
-  border-radius: 999px !important;
-  background:
-    radial-gradient(circle at 50% 0, rgba(255, 255, 255, 0.09), transparent 52%),
-    linear-gradient(180deg, #0b0e15, #181d28 52%, #0d1119) !important;
-  box-shadow:
-    inset 0 3px 8px rgba(0, 0, 0, 0.7),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.08),
-    0 4px 12px rgba(17, 26, 43, 0.12) !important;
-  isolation: isolate !important;
-  touch-action: manipulation !important;
-  margin-top: 6px !important;
+  padding: 2px 0 4px !important;
 }
 
-/* 流体流动层 */
-.quick-reasoning-liquid .reasoning-liquid-fill {
-  position: absolute !important;
-  left: 4px !important;
-  top: 4px !important;
-  width: max(16px, calc(var(--reasoning-progress, 50%) - 4px)) !important;
-  height: 24px !important;
+.codex-slider-track {
+  position: relative !important;
+  height: 26px !important;
   border-radius: 999px !important;
+  background: #e5e7eb !important;
+  overflow: visible !important;
+}
+:root[data-theme="dark"] .codex-slider-track {
+  background: #333336 !important;
+}
+
+/* 蓝色激活填充条 */
+.codex-slider-fill {
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  width: 26px;
+  border-radius: 999px !important;
+  background: #2b73ec !important;
+  transition: width 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+  pointer-events: none !important;
   z-index: 1 !important;
-  overflow: hidden !important;
-  background: linear-gradient(105deg, var(--rail-a, #788496), var(--rail-b, #a8b0bc) 50%, var(--rail-c, #d8dde4), var(--rail-a, #788496)) !important;
-  background-size: 240% 100% !important;
-  box-shadow:
-    inset 0 1px 2px rgba(255, 255, 255, 0.5),
-    inset 0 -3px 5px rgba(10, 22, 55, 0.3),
-    0 0 calc(6px + var(--reasoning-intensity, 1) * 2px) color-mix(in srgb, var(--rail-b, #3b82f6) 72%, transparent) !important;
-  transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
-  pointer-events: none !important;
 }
 
-/* 光谱动画 */
-.quick-model-menu[data-intensity="2"] .reasoning-liquid-fill,
-.quick-model-menu[data-intensity="3"] .reasoning-liquid-fill,
-.quick-model-menu[data-intensity="4"] .reasoning-liquid-fill,
-.quick-model-menu[data-intensity="5"] .reasoning-liquid-fill {
-  animation: reasoning-spectrum 3.4s linear infinite !important;
-}
-.quick-model-menu[data-intensity="3"] .reasoning-liquid-fill { animation-duration: 2.5s !important; }
-.quick-model-menu[data-intensity="4"] .reasoning-liquid-fill { animation-duration: 1.8s !important; }
-.quick-model-menu[data-intensity="5"] .reasoning-liquid-fill { animation-duration: 1.2s !important; }
-
-/* 发光游标晶球 (Orb) */
-.quick-reasoning-liquid .reasoning-liquid-orb {
+/* 刻度点小圆点 Tick Dots */
+.codex-slider-ticks {
   position: absolute !important;
-  z-index: 3 !important;
-  top: 50% !important;
-  left: var(--reasoning-progress, 50%) !important;
-  width: 18px !important;
-  height: 18px !important;
-  border: 2px solid rgba(255, 255, 255, 0.95) !important;
-  border-radius: 50% !important;
-  background: color-mix(in srgb, var(--rail-b, #3b82f6) 82%, white) !important;
-  box-shadow:
-    inset 0 1px 3px rgba(255, 255, 255, 0.6),
-    0 0 0 2px rgba(255, 255, 255, 0.2),
-    0 0 calc(8px + var(--reasoning-intensity, 1) * 3px) var(--rail-b, #3b82f6) !important;
-  transform: translate(-50%, -50%) !important;
-  transition: left 0.4s cubic-bezier(0.16, 1, 0.3, 1), background 0.3s ease, box-shadow 0.3s ease !important;
-  pointer-events: none !important;
-}
-
-/* 流体轨道热区 */
-.quick-reasoning-liquid .reasoning-liquid-hitbox {
-  position: absolute !important;
-  z-index: 5 !important;
   inset: 0 !important;
-  display: grid !important;
-  grid-template-columns: repeat(var(--reasoning-count, 4), minmax(0, 1fr)) !important;
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  padding: 0 13px !important;
+  z-index: 2 !important;
+  pointer-events: none !important;
 }
-.quick-reasoning-liquid .reasoning-liquid-hitbox button {
-  min-width: 0 !important;
-  min-height: 34px !important;
-  padding: 0 !important;
-  border: 0 !important;
+.codex-tick {
+  width: 4px !important;
+  height: 4px !important;
+  border-radius: 50% !important;
+  background: #b0b3b8 !important;
+  transition: background 0.2s ease !important;
+}
+.codex-tick.active {
+  background: rgba(255, 255, 255, 0.7) !important;
+}
+:root[data-theme="dark"] .codex-tick {
+  background: #636366 !important;
+}
+:root[data-theme="dark"] .codex-tick.active {
+  background: rgba(255, 255, 255, 0.75) !important;
+}
+
+/* 纯白实心大圆球旋钮 Thumb */
+.codex-slider-thumb {
+  position: absolute !important;
+  top: 50% !important;
+  left: 13px;
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 50% !important;
+  background: #ffffff !important;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.16), 0 0 1px rgba(0, 0, 0, 0.08) !important;
+  transform: translate(-50%, -50%) !important;
+  transition: left 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+  z-index: 3 !important;
+  pointer-events: none !important;
+}
+:root[data-theme="dark"] .codex-slider-thumb {
+  background: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* 点击热区 Hitbox */
+.codex-slider-hitbox {
+  position: absolute !important;
+  inset: -6px 0 !important;
+  display: flex !important;
+  z-index: 4 !important;
+}
+.codex-slider-hitbox button {
+  flex: 1 1 0 !important;
+  border: none !important;
   background: transparent !important;
   cursor: pointer !important;
   -webkit-tap-highlight-color: transparent !important;
 }
-.quick-reasoning-liquid .reasoning-liquid-hitbox button:active {
-  background: rgba(255, 255, 255, 0.08) !important;
+
+/* 4. 二级视图：点击【GPT-6.2 Sol >】展开的模型选择列表 */
+.codex-model-list-view {
+  animation: codex-fade-in 0.18s ease !important;
+}
+@keyframes codex-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-/* 档位文字 Stops */
-.quick-reasoning-stops {
-  display: grid !important;
-  grid-template-columns: repeat(var(--reasoning-count, 4), minmax(0, 1fr)) !important;
-  margin-top: 8px !important;
-  gap: 4px !important;
+.codex-list-header {
+  margin-bottom: 8px !important;
 }
-.quick-reasoning-stops button {
-  min-width: 0 !important;
-  padding: 5px 2px !important;
-  border: 0 !important;
-  border-radius: 8px !important;
+.codex-back-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  border: none !important;
   background: transparent !important;
   cursor: pointer !important;
-  text-align: center !important;
-  color: #7d8b9f !important;
-  font-size: 11px !important;
-  font-weight: 500 !important;
+  padding: 4px 6px !important;
+  border-radius: 6px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  color: #1a73e8 !important;
+  transition: background 0.15s ease !important;
+}
+.codex-back-btn:hover {
+  background: rgba(26, 115, 232, 0.08) !important;
+}
+
+.codex-model-options {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+  max-height: 220px !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+  scrollbar-width: thin !important;
+}
+.codex-model-item {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  padding: 8px 10px !important;
+  border: 1px solid rgba(0, 0, 0, 0.06) !important;
+  border-radius: 10px !important;
+  background: rgba(0, 0, 0, 0.02) !important;
+  cursor: pointer !important;
+  text-align: left !important;
+  font-size: 13px !important;
+  color: inherit !important;
   transition: all 0.15s ease !important;
 }
-.quick-reasoning-stops button:hover {
-  color: #172033 !important;
-  background: rgba(0, 0, 0, 0.05) !important;
+.codex-model-item:hover {
+  background: rgba(26, 115, 232, 0.06) !important;
+  border-color: rgba(26, 115, 232, 0.2) !important;
 }
-.quick-reasoning-stops button.selected {
-  color: #2563eb !important;
-  font-weight: 700 !important;
-  background: rgba(37, 99, 235, 0.1) !important;
+.codex-model-item.selected {
+  background: rgba(26, 115, 232, 0.1) !important;
+  border-color: rgba(26, 115, 232, 0.4) !important;
+  font-weight: 600 !important;
 }
-:root[data-theme="dark"] .quick-reasoning-stops button {
-  color: #8c9cb3 !important;
+.codex-model-item .codex-check {
+  font-style: normal !important;
+  font-size: 12px !important;
+  color: #1a73e8 !important;
+  opacity: 0 !important;
 }
-:root[data-theme="dark"] .quick-reasoning-stops button:hover {
-  color: #f1f4fa !important;
-  background: rgba(255, 255, 255, 0.07) !important;
+.codex-model-item.selected .codex-check {
+  opacity: 1 !important;
 }
-:root[data-theme="dark"] .quick-reasoning-stops button.selected {
-  color: #60a5fa !important;
-  background: rgba(96, 165, 250, 0.2) !important;
+:root[data-theme="dark"] .codex-model-item {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
 }
-
-/* 底部说明 */
-.quick-reasoning-desc {
-  margin: 9px 2px 0 !important;
-  font-size: 11px !important;
-  line-height: 1.5 !important;
-  color: #828fa3 !important;
-  min-height: 24px !important;
+:root[data-theme="dark"] .codex-model-item:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
 }
-:root[data-theme="dark"] .quick-reasoning-desc {
-  color: #7e8d9f !important;
+:root[data-theme="dark"] .codex-model-item.selected {
+  background: rgba(59, 130, 246, 0.2) !important;
+  border-color: rgba(59, 130, 246, 0.5) !important;
 }
-
-/* 档位色相定义 */
-.quick-model-menu[data-level="low"] { --rail-a: #788496; --rail-b: #a8b0bc; --rail-c: #d8dde4; }
-.quick-model-menu[data-level="medium"] { --rail-a: #377cf3; --rail-b: #2baeea; --rail-c: #62d7dd; }
-.quick-model-menu[data-level="high"] { --rail-a: #257df5; --rail-b: #6d5df6; --rail-c: #b75df0; }
-.quick-model-menu[data-level="xhigh"] { --rail-a: #1fa8f6; --rail-b: #7454f6; --rail-c: #f04fa7; }
-.quick-model-menu[data-level="max"] { --rail-a: #27d5d0; --rail-b: #7862ff; --rail-c: #ff5b91; }
-.quick-model-menu[data-level="ultra"] { --rail-a: #22d3ee; --rail-b: #9b5cff; --rail-c: #ffc64a; }

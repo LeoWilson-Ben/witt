@@ -237,39 +237,64 @@
         <button id="attachFileButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M8 12.5 13.7 6a3.1 3.1 0 1 1 4.6 4.2l-7.4 8.2A4.5 4.5 0 0 1 4.2 12l7.1-7.8"/></svg></span><span><b>文件</b><small>文档、表格、压缩包等</small></span></button>
         <button id="projectButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17v-11Z"/></svg></span><span><b id="projectLabel">空白项目</b><small>选择本次任务的工作目录</small></span></button>
       </div>
-      <section class="quick-model-menu codex-model-popover" id="quickModelMenu" aria-hidden="true" aria-label="模型与智能程度">
-        <!-- 兼容占位元素 (供老脚本兼容读取，不影响 Codex 布局) -->
-        <button class="quick-model-row" id="quickModelExpand" aria-expanded="true" style="display:none!important;">
-          <span>模型</span><strong id="quickModelCurrent">GPT-6-Astra</strong>
-        </button>
-        <div class="quick-reasoning-options" id="quickReasoningOptions" style="display:none!important;"></div>
+      <section class="quick-model-menu codex-popover-minimal" id="quickModelMenu" aria-hidden="true" aria-label="模型与推理强度">
+        <!-- 视图 1: 主滑块面板 (100% 对标图一 Codex 官方界面) -->
+        <div class="codex-slider-view" id="codexSliderView">
+          <header class="codex-popover-header">
+            <button type="button" class="codex-icon-btn codex-flash-btn" id="codexFlashBtn" aria-label="思考模式" title="思考模式">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M13 2 4 14h7v8l9-12h-7V2z"/>
+              </svg>
+            </button>
+            <div class="codex-header-center">
+              <span class="codex-level-label" id="codexLevelLabel">中</span>
+              <button type="button" class="codex-model-trigger" id="codexModelTrigger" aria-label="切换模型" title="点击切换模型">
+                <span id="codexModelName">GPT-6.1 Sol</span>
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m9 18 6-6-6-6"/>
+                </svg>
+              </button>
+            </div>
+            <button type="button" class="codex-icon-btn codex-reset-btn" id="codexResetBtn" aria-label="恢复默认档位" title="恢复默认档位">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7.9 6.4 2.4L21 3v6h-6l2.6-2.6A7 7 0 1 0 19 12h2z"/>
+              </svg>
+            </button>
+          </header>
 
-        <!-- Codex 规范 Popover 核心主体 -->
-        <div class="popover-section-head">
-          <span>选择模型</span>
-          <small id="quickModelCountBadge">实时提供</small>
-        </div>
-        <div class="quick-model-options" id="quickModelOptions" role="radiogroup" aria-label="选择模型"></div>
-        
-        <div class="quick-picker-divider"></div>
-
-        <div class="quick-reasoning-section" id="quickReasoningSection">
-          <div class="popover-section-head">
-            <span>智能程度</span>
-            <div class="quick-reasoning-badge">
-              <strong id="quickReasoningCurrentLabel">均衡</strong>
-              <code id="quickReasoningCurrentCode">MEDIUM</code>
+          <div class="codex-slider-track-wrap">
+            <div class="codex-slider-track" id="codexSliderTrack">
+              <div class="codex-slider-fill" id="codexSliderFill"></div>
+              <div class="codex-slider-thumb" id="codexSliderThumb"></div>
+              <div class="codex-slider-ticks" id="codexSliderTicks"></div>
+              <div class="codex-slider-hitbox" id="codexSliderHitbox"></div>
             </div>
           </div>
-          <div class="reasoning-liquid quick-reasoning-liquid" id="quickReasoningLiquid">
-            <span class="reasoning-liquid-fill" id="quickReasoningFill" aria-hidden="true"></span>
-            <span class="reasoning-liquid-sheen" aria-hidden="true"></span>
-            <i class="reasoning-liquid-orb" id="quickReasoningOrb" aria-hidden="true"></i>
-            <div class="reasoning-liquid-hitbox" id="quickReasoningHitbox" role="radiogroup" aria-label="在轨道上选择智能程度"></div>
-          </div>
-          <div class="reasoning-stops quick-reasoning-stops" id="quickReasoningStops" role="radiogroup" aria-label="选择智能程度"></div>
-          <p class="quick-reasoning-desc" id="quickReasoningDesc">适合大多数任务，在速度与分析深度之间取得平衡。</p>
         </div>
+
+        <!-- 视图 2: 点击模型名称时展开的模型选择列表 -->
+        <div class="codex-model-list-view" id="codexModelListView" hidden>
+          <header class="codex-list-header">
+            <button type="button" class="codex-back-btn" id="codexBackToSlider" aria-label="返回滑块">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m15 18-6-6 6-6"/>
+              </svg>
+              <span>选择模型</span>
+            </button>
+          </header>
+          <div class="codex-model-options" id="quickModelOptions" role="radiogroup" aria-label="选择模型"></div>
+        </div>
+
+        <!-- 隐藏兼容节点 (确保老脚本平稳兼容，不影响图一 Codex 布局) -->
+        <button class="quick-model-row" id="quickModelExpand" style="display:none!important;"></button>
+        <span id="quickModelCurrent" style="display:none!important;"></span>
+        <div id="quickReasoningOptions" style="display:none!important;"></div>
+        <div id="quickReasoningSection" style="display:none!important;"></div>
+        <div id="quickReasoningStops" style="display:none!important;"></div>
+        <span id="quickReasoningCurrentLabel" style="display:none!important;"></span>
+        <code id="quickReasoningCurrentCode" style="display:none!important;"></code>
+        <p id="quickReasoningDesc" style="display:none!important;"></p>
+        <div id="quickReasoningLiquid" style="display:none!important;"></div>
       </section>
       <p id="composerHint" class="composer-hint">重要操作会先确认</p>
     </section>
