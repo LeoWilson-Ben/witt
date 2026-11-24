@@ -209,13 +209,20 @@
   color: #f2f2f7 !important;
 }
 
-/* 2. 顶栏：左侧闪电，中间状态与模型名，右侧重置 (与图一完全一致) */
+/* 2. 顶栏：中间居中状态与模型名，右侧重置图标 */
 .codex-popover-header {
+  position: relative !important;
   display: flex !important;
-  align-items: flex-start !important;
-  justify-content: space-between !important;
+  align-items: center !important;
+  justify-content: center !important;
   height: 48px !important;
   margin-bottom: 6px !important;
+}
+
+.codex-reset-btn {
+  position: absolute !important;
+  right: 0 !important;
+  top: 2px !important;
 }
 
 .codex-icon-btn {
