@@ -1157,7 +1157,7 @@
     const kind = account => account.provider === "claude" ? "claude" : account.provider === "antigravity" ? "gemini" : "gpt";
     const usable = accounts.filter(account => kind(account) === provider && account.authenticated &&
       (state.admin || state.allowedCodexProfiles.includes(account.id)));
-    if (usable.length === 1) { closeCodexAccounts(); beginNewConversation(usable[0].id); return; }
+    if (usable.length === 1) { closeCodexAccounts(); switchHarnessProfile(usable[0].id); return; }
     state.accountCategory = provider;
     renderCodexAccounts(accounts);
     openCodexAccounts();
@@ -4463,8 +4463,97 @@
   };
 
   let pendingProviderConversation = null, pendingProviderConversationTimer = null;
+
+  function switchHarnessProfile(profileId) {
+    if (state.transmitting) { toast("消息正在送达，请稍候再切换"); return; }
+    saveDraft();
+    saveAccountPreference();
+    const selectedProfile = profileId || state.codexProfile || state.allowedCodexProfiles[0] || "default";
+    const previousProfile = state.codexProfile;
+    state.codexProfile = state.allowedCodexProfiles.includes(selectedProfile) ? selectedProfile : state.allowedCodexProfiles[0];
+    selectAccountCapabilities();
+    const models = state.capabilities?.models || Object.keys(modelNames).filter(id => !id.includes(":")).map(id => ({ id, defaultReasoningEffort: "medium" }));
+    const preference = accountPreference(state.codexProfile);
+    const chosen = models.find(m => m.id === preference?.model) || models.find(m => m.id === state.model) || models.find(m => m.isDefault) || models[0];
+    if (!chosen) {
+      state.codexProfile = previousProfile;
+      selectAccountCapabilities();
+      toast("该账号的模型列表暂时不可用，请稍后重试");
+      return;
+    }
+    refreshProviderCapabilities();
+    state.model = chosen.id;
+    const offered = (chosen.reasoningEfforts || []).map(e => e.id);
+    state.reasoning = offered.includes(preference?.reasoning) ? preference.reasoning : chosen.defaultReasoningEffort || offered[0] || "medium";
+    state.accessMode = preference?.accessMode || state.accessMode;
+    state.draftModel = state.model;
+    state.draftReasoning = state.reasoning;
+    state.usage = null;
+    state.usageLoading = false;
+    persistModelPreference();
+    localStorage.setItem("wit_codex_profile", state.codexProfile);
+
+    // 判断当前会话是否已有消息记录
+    const hasMessages = state.active && Array.isArray(state.active.messages) && state.active.messages.length > 0;
+    if (!hasMessages) {
+      // 当前为空白会话（包括未创建会话的首页 Welcome 或 0 条消息的空会话）
+      if (state.activeId) {
+        pendingModelSettings.set(state.activeId, {
+          model: state.model,
+          reasoning: state.reasoning,
+          accessMode: state.accessMode,
+          codexProfile: state.codexProfile,
+          startedAt: Date.now()
+        });
+        const activeSummary = state.conversations.find((item) => item.id === state.activeId);
+        if (activeSummary) {
+          activeSummary.model = state.model;
+          activeSummary.reasoning = state.reasoning;
+          activeSummary.codexProfile = state.codexProfile;
+        }
+        bridge()?.updateConversationSettings?.(state.activeId, state.model, state.reasoning, state.accessMode);
+      }
+      updateHeaderCapsule();
+      updateModelControls();
+      renderConversations();
+      renderMessages();
+      toast(`已切换至 ${profileProvider(state.codexProfile).toUpperCase()} (${modelDisplayName(state.model)})`);
+      return;
+    }
+
+    // 若当前会话已有消息，优先复用已存在的空会话，或切换至待输入草稿态，绝不向后端产生空白对话
+    const emptySummary = state.conversations.find((item) => {
+      const activeObj = item.id === state.activeId ? state.active : null;
+      return activeObj ? activeObj.messages?.length === 0 : (!item.lastMessageSnippet && !item.messageCount);
+    });
+    if (emptySummary && emptySummary.id !== state.activeId) {
+      selectConversation(emptySummary.id);
+      emptySummary.model = state.model;
+      emptySummary.codexProfile = state.codexProfile;
+      renderConversations();
+    } else {
+      state.activeId = null;
+      state.active = null;
+      localStorage.removeItem("wit_active_conversation");
+      resetComposer();
+      restoreDraft();
+      renderMessages();
+      renderConversations();
+    }
+    updateHeaderCapsule();
+    updateModelControls();
+    toast(`已切换至 ${profileProvider(state.codexProfile).toUpperCase()} (${modelDisplayName(state.model)})`);
+  }
+
   function beginNewConversation(codexProfile = null) {
     if (state.transmitting) { toast("消息正在送达，完成后即可新建对话"); return; }
+    // 如果当前已经是空会话，直接聚焦输入框，不再在左侧无限制堆叠重复的空白对话
+    const hasMessages = state.active && Array.isArray(state.active.messages) && state.active.messages.length > 0;
+    if (state.activeId && !hasMessages) {
+      resetComposer();
+      $("#messageInput")?.focus();
+      return;
+    }
     saveDraft();
     saveAccountPreference();
     const selectedProfile = codexProfile || state.codexProfile || state.allowedCodexProfiles[0] || "default";
@@ -4812,7 +4901,7 @@
     const profile = event.target.closest("[data-new-codex-chat]")?.dataset.newCodexChat;
     if (!profile) return;
     closeCodexAccounts();
-    beginNewConversation(profile);
+    switchHarnessProfile(profile);
   });
   $("#copyCodexDeviceCode").addEventListener("click", async () => {
     const code = $("#codexDeviceCode").textContent.trim();
