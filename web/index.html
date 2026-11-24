@@ -86,7 +86,7 @@
   <link rel="stylesheet" href="/vault/quota-panel.css?v=20261114-layout-2">
   <link rel="stylesheet" href="/vault/header-capsule.css?v=20261114-three-orbs-1">
   <link rel="stylesheet" href="/vault/xuanyu-build-panel.css?v=20261118-6">
-  <link rel="stylesheet" href="/vault/web-desktop-adapt.css?v=20261124-1">
+  <link rel="stylesheet" href="/vault/web-desktop-adapt.css?v=20261124-codex1">
 </head>
 <body>
   <div class="app-atmosphere" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -237,14 +237,39 @@
         <button id="attachFileButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M8 12.5 13.7 6a3.1 3.1 0 1 1 4.6 4.2l-7.4 8.2A4.5 4.5 0 0 1 4.2 12l7.1-7.8"/></svg></span><span><b>文件</b><small>文档、表格、压缩包等</small></span></button>
         <button id="projectButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17v-11Z"/></svg></span><span><b id="projectLabel">空白项目</b><small>选择本次任务的工作目录</small></span></button>
       </div>
-      <section class="quick-model-menu" id="quickModelMenu" aria-hidden="true" aria-label="模型与智能程度">
-        <button class="quick-model-row" id="quickModelExpand" aria-expanded="false">
-          <span>模型</span><strong id="quickModelCurrent">GPT-6-Astra</strong><svg viewBox="0 0 24 24"><path d="m9 5 6 7-6 7"/></svg>
+      <section class="quick-model-menu codex-model-popover" id="quickModelMenu" aria-hidden="true" aria-label="模型与智能程度">
+        <!-- 兼容占位元素 (供老脚本兼容读取，不影响 Codex 布局) -->
+        <button class="quick-model-row" id="quickModelExpand" aria-expanded="true" style="display:none!important;">
+          <span>模型</span><strong id="quickModelCurrent">GPT-6-Astra</strong>
         </button>
+        <div class="quick-reasoning-options" id="quickReasoningOptions" style="display:none!important;"></div>
+
+        <!-- Codex 规范 Popover 核心主体 -->
+        <div class="popover-section-head">
+          <span>选择模型</span>
+          <small id="quickModelCountBadge">实时提供</small>
+        </div>
         <div class="quick-model-options" id="quickModelOptions" role="radiogroup" aria-label="选择模型"></div>
+        
         <div class="quick-picker-divider"></div>
-        <span class="quick-reasoning-heading">智能程度</span>
-        <div class="quick-reasoning-options" id="quickReasoningOptions" role="radiogroup" aria-label="选择智能程度"></div>
+
+        <div class="quick-reasoning-section" id="quickReasoningSection">
+          <div class="popover-section-head">
+            <span>智能程度</span>
+            <div class="quick-reasoning-badge">
+              <strong id="quickReasoningCurrentLabel">均衡</strong>
+              <code id="quickReasoningCurrentCode">MEDIUM</code>
+            </div>
+          </div>
+          <div class="reasoning-liquid quick-reasoning-liquid" id="quickReasoningLiquid">
+            <span class="reasoning-liquid-fill" id="quickReasoningFill" aria-hidden="true"></span>
+            <span class="reasoning-liquid-sheen" aria-hidden="true"></span>
+            <i class="reasoning-liquid-orb" id="quickReasoningOrb" aria-hidden="true"></i>
+            <div class="reasoning-liquid-hitbox" id="quickReasoningHitbox" role="radiogroup" aria-label="在轨道上选择智能程度"></div>
+          </div>
+          <div class="reasoning-stops quick-reasoning-stops" id="quickReasoningStops" role="radiogroup" aria-label="选择智能程度"></div>
+          <p class="quick-reasoning-desc" id="quickReasoningDesc">适合大多数任务，在速度与分析深度之间取得平衡。</p>
+        </div>
       </section>
       <p id="composerHint" class="composer-hint">重要操作会先确认</p>
     </section>
@@ -682,7 +707,7 @@
     </section>
   </aside>
   <script src="/vault/browser-bridge.js?v=20261028-history"></script>
-  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102&groupDialog=20261102-1&codeCopy=20261102-1&imageKeyboard=20261102-1&composerIme=20261103-1&accountRecovery=20261103-1&serviceStatus=20261103-1&headerCapsule=20261106-1&deviceNotes=20261114-1&headerSpacing=20261114-1&antigravityLogin=20261114-1&invitePermission=20261114-1&geminiCreate=20261114-1&accountOrb=20261114-three-orbs-1&accountQuota=20261114-1&quotaLayout=20261114-2&historyModelBadge=20261116-3&modelSource=20261116-2&mdFormat=20261118-4"></script>
+  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102&groupDialog=20261102-1&codeCopy=20261102-1&imageKeyboard=20261102-1&composerIme=20261103-1&accountRecovery=20261103-1&serviceStatus=20261103-1&headerCapsule=20261106-1&deviceNotes=20261114-1&headerSpacing=20261114-1&antigravityLogin=20261114-1&invitePermission=20261114-1&geminiCreate=20261114-1&accountOrb=20261114-three-orbs-1&accountQuota=20261114-1&quotaLayout=20261114-2&historyModelBadge=20261116-3&modelSource=20261116-2&mdFormat=20261118-4&codexPicker=20261124-1"></script>
   <script src="/vault/sidebar-layout.js?v=20261008-2"></script>
   <script src="/vault/ui-upgrades.js?v=20261008-2&simplify=20261102-1&actions=20261102-2&groupDialog=20261102-1&keyboard=20261102-1&focusReturn=20261102-1&renameValidation=20261102-1&imeEscape=20261102-1&longPressCancel=20261102-1&taskFocus=20261102-1&taskPending=20261102-1"></script>
   <script src="/vault/witt-features.js?v=20261008-1&simplify=20261102-1"></script>

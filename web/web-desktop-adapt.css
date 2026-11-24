@@ -163,3 +163,375 @@
 :root[data-theme="dark"] body.web-browser .composer-wrap {
   background: linear-gradient(to bottom, transparent, var(--web-canvas, #212121) 30%) !important;
 }
+
+/* ==========================================================================
+   Codex Model & Reasoning Popover (复刻 Codex 紧凑浮层与流体能量轨)
+   ========================================================================== */
+
+/* 1. 浮层容器外观与定位 */
+.quick-model-menu.codex-model-popover,
+:root body.web-browser .quick-model-menu.codex-model-popover,
+:root:not([data-theme="dark"]) body.web-browser .quick-model-menu.codex-model-popover {
+  width: min(340px, calc(100vw - 32px)) !important;
+  max-height: none !important;
+  overflow: visible !important;
+  border-radius: 20px !important;
+  padding: 16px 14px 14px !important;
+  background: rgba(255, 255, 255, 0.95) !important;
+  backdrop-filter: blur(24px) saturate(190%) !important;
+  border: 1px solid rgba(210, 218, 230, 0.8) !important;
+  box-shadow: 0 20px 48px -6px rgba(18, 26, 45, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset !important;
+  transition: opacity 0.24s cubic-bezier(0.16, 1, 0.3, 1), transform 0.24s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  color: #172033 !important;
+  bottom: calc(100% + 14px) !important;
+  left: 0 !important;
+  z-index: 120 !important;
+  display: block !important;
+}
+
+/* 动效：展开与收起 */
+.quick-model-menu.codex-model-popover:not(.open) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(8px) scale(0.97) !important;
+}
+.quick-model-menu.codex-model-popover.open {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: translateY(0) scale(1) !important;
+}
+
+/* 深色模式 */
+:root[data-theme="dark"] .quick-model-menu.codex-model-popover,
+:root[data-theme="dark"] body.web-browser .quick-model-menu.codex-model-popover {
+  background: rgba(20, 25, 36, 0.92) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 0 24px 56px -8px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.06) inset !important;
+  color: #f1f4fa !important;
+}
+
+/* 2. 区块标题头与徽标 */
+.popover-section-head {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  margin-bottom: 8px !important;
+  padding: 0 4px !important;
+}
+.popover-section-head > span {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  color: #79879f !important;
+}
+:root[data-theme="dark"] .popover-section-head > span {
+  color: #8c9bb4 !important;
+}
+.popover-section-head > small {
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  color: #8f9cae !important;
+}
+
+/* 3. 模型卡片列表（平铺展示，限制最大高度，内部优雅滚动） */
+.quick-model-options {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 5px !important;
+  margin: 0 0 10px !important;
+  padding: 0 2px 0 0 !important;
+  max-height: 175px !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+  scrollbar-width: thin !important;
+}
+.quick-model-btn {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  width: 100% !important;
+  min-height: 48px !important;
+  padding: 8px 10px !important;
+  border: 1px solid rgba(120, 135, 160, 0.14) !important;
+  border-radius: 12px !important;
+  background: rgba(255, 255, 255, 0.65) !important;
+  cursor: pointer !important;
+  text-align: left !important;
+  transition: all 0.18s ease !important;
+  color: inherit !important;
+  position: relative !important;
+  box-sizing: border-box !important;
+}
+.quick-model-btn:hover {
+  background: rgba(240, 244, 252, 0.8) !important;
+  border-color: rgba(90, 125, 200, 0.25) !important;
+  transform: translateY(-1px) !important;
+}
+.quick-model-btn.selected {
+  background: rgba(67, 97, 238, 0.08) !important;
+  border-color: rgba(67, 97, 238, 0.45) !important;
+  box-shadow: 0 3px 10px rgba(67, 97, 238, 0.1) !important;
+}
+:root[data-theme="dark"] .quick-model-btn {
+  background: rgba(255, 255, 255, 0.035) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+:root[data-theme="dark"] .quick-model-btn:hover {
+  background: rgba(255, 255, 255, 0.07) !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+}
+:root[data-theme="dark"] .quick-model-btn.selected {
+  background: rgba(79, 110, 247, 0.18) !important;
+  border-color: rgba(99, 132, 255, 0.5) !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3) !important;
+}
+
+.quick-model-glyph {
+  flex: none !important;
+  width: 30px !important;
+  height: 30px !important;
+  border-radius: 9px !important;
+  display: grid !important;
+  place-items: center !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: #fff !important;
+  background: linear-gradient(135deg, #4f46e5, #06b6d4) !important;
+  box-shadow: 0 2px 6px rgba(6, 182, 212, 0.25) !important;
+}
+.quick-model-meta {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+}
+.quick-model-meta strong {
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  line-height: 1.2 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+.quick-model-meta small {
+  font-size: 10px !important;
+  color: #79869d !important;
+  line-height: 1.2 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+:root[data-theme="dark"] .quick-model-meta small {
+  color: #8e9bb3 !important;
+}
+
+.quick-model-check {
+  flex: none !important;
+  width: 16px !important;
+  height: 16px !important;
+  display: grid !important;
+  place-items: center !important;
+  font-style: normal !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  color: #3b82f6 !important;
+  opacity: 0 !important;
+  transform: scale(0.6) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+.quick-model-btn.selected .quick-model-check {
+  opacity: 1 !important;
+  transform: scale(1) !important;
+}
+
+/* 4. 微妙渐变分割线 */
+.quick-picker-divider {
+  height: 1px !important;
+  margin: 10px 0 12px !important;
+  background: linear-gradient(90deg, transparent, rgba(120, 135, 160, 0.2), transparent) !important;
+}
+
+/* 5. 智能程度控制台（微缩版 Liquid Reasoning Console） */
+.quick-reasoning-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+.quick-reasoning-badge strong {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  color: #172033 !important;
+}
+:root[data-theme="dark"] .quick-reasoning-badge strong {
+  color: #f1f4fa !important;
+}
+.quick-reasoning-badge code {
+  font-family: inherit !important;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  padding: 2px 6px !important;
+  border-radius: 6px !important;
+  color: #4361ee !important;
+  background: rgba(67, 97, 238, 0.1) !important;
+  border: 1px solid rgba(67, 97, 238, 0.2) !important;
+}
+:root[data-theme="dark"] .quick-reasoning-badge code {
+  color: #8da4ff !important;
+  background: rgba(99, 132, 255, 0.15) !important;
+  border-color: rgba(99, 132, 255, 0.3) !important;
+}
+
+/* 流体轨道容器 */
+.quick-reasoning-liquid {
+  position: relative !important;
+  height: 34px !important;
+  overflow: hidden !important;
+  border: 1px solid rgba(119, 133, 158, 0.32) !important;
+  border-radius: 999px !important;
+  background:
+    radial-gradient(circle at 50% 0, rgba(255, 255, 255, 0.09), transparent 52%),
+    linear-gradient(180deg, #0b0e15, #181d28 52%, #0d1119) !important;
+  box-shadow:
+    inset 0 3px 8px rgba(0, 0, 0, 0.7),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.08),
+    0 4px 12px rgba(17, 26, 43, 0.12) !important;
+  isolation: isolate !important;
+  touch-action: manipulation !important;
+  margin-top: 6px !important;
+}
+
+/* 流体流动层 */
+.quick-reasoning-liquid .reasoning-liquid-fill {
+  position: absolute !important;
+  left: 4px !important;
+  top: 4px !important;
+  width: max(16px, calc(var(--reasoning-progress, 50%) - 4px)) !important;
+  height: 24px !important;
+  border-radius: 999px !important;
+  z-index: 1 !important;
+  overflow: hidden !important;
+  background: linear-gradient(105deg, var(--rail-a, #788496), var(--rail-b, #a8b0bc) 50%, var(--rail-c, #d8dde4), var(--rail-a, #788496)) !important;
+  background-size: 240% 100% !important;
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.5),
+    inset 0 -3px 5px rgba(10, 22, 55, 0.3),
+    0 0 calc(6px + var(--reasoning-intensity, 1) * 2px) color-mix(in srgb, var(--rail-b, #3b82f6) 72%, transparent) !important;
+  transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  pointer-events: none !important;
+}
+
+/* 光谱动画 */
+.quick-model-menu[data-intensity="2"] .reasoning-liquid-fill,
+.quick-model-menu[data-intensity="3"] .reasoning-liquid-fill,
+.quick-model-menu[data-intensity="4"] .reasoning-liquid-fill,
+.quick-model-menu[data-intensity="5"] .reasoning-liquid-fill {
+  animation: reasoning-spectrum 3.4s linear infinite !important;
+}
+.quick-model-menu[data-intensity="3"] .reasoning-liquid-fill { animation-duration: 2.5s !important; }
+.quick-model-menu[data-intensity="4"] .reasoning-liquid-fill { animation-duration: 1.8s !important; }
+.quick-model-menu[data-intensity="5"] .reasoning-liquid-fill { animation-duration: 1.2s !important; }
+
+/* 发光游标晶球 (Orb) */
+.quick-reasoning-liquid .reasoning-liquid-orb {
+  position: absolute !important;
+  z-index: 3 !important;
+  top: 50% !important;
+  left: var(--reasoning-progress, 50%) !important;
+  width: 18px !important;
+  height: 18px !important;
+  border: 2px solid rgba(255, 255, 255, 0.95) !important;
+  border-radius: 50% !important;
+  background: color-mix(in srgb, var(--rail-b, #3b82f6) 82%, white) !important;
+  box-shadow:
+    inset 0 1px 3px rgba(255, 255, 255, 0.6),
+    0 0 0 2px rgba(255, 255, 255, 0.2),
+    0 0 calc(8px + var(--reasoning-intensity, 1) * 3px) var(--rail-b, #3b82f6) !important;
+  transform: translate(-50%, -50%) !important;
+  transition: left 0.4s cubic-bezier(0.16, 1, 0.3, 1), background 0.3s ease, box-shadow 0.3s ease !important;
+  pointer-events: none !important;
+}
+
+/* 流体轨道热区 */
+.quick-reasoning-liquid .reasoning-liquid-hitbox {
+  position: absolute !important;
+  z-index: 5 !important;
+  inset: 0 !important;
+  display: grid !important;
+  grid-template-columns: repeat(var(--reasoning-count, 4), minmax(0, 1fr)) !important;
+}
+.quick-reasoning-liquid .reasoning-liquid-hitbox button {
+  min-width: 0 !important;
+  min-height: 34px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  cursor: pointer !important;
+  -webkit-tap-highlight-color: transparent !important;
+}
+.quick-reasoning-liquid .reasoning-liquid-hitbox button:active {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* 档位文字 Stops */
+.quick-reasoning-stops {
+  display: grid !important;
+  grid-template-columns: repeat(var(--reasoning-count, 4), minmax(0, 1fr)) !important;
+  margin-top: 8px !important;
+  gap: 4px !important;
+}
+.quick-reasoning-stops button {
+  min-width: 0 !important;
+  padding: 5px 2px !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  cursor: pointer !important;
+  text-align: center !important;
+  color: #7d8b9f !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  transition: all 0.15s ease !important;
+}
+.quick-reasoning-stops button:hover {
+  color: #172033 !important;
+  background: rgba(0, 0, 0, 0.05) !important;
+}
+.quick-reasoning-stops button.selected {
+  color: #2563eb !important;
+  font-weight: 700 !important;
+  background: rgba(37, 99, 235, 0.1) !important;
+}
+:root[data-theme="dark"] .quick-reasoning-stops button {
+  color: #8c9cb3 !important;
+}
+:root[data-theme="dark"] .quick-reasoning-stops button:hover {
+  color: #f1f4fa !important;
+  background: rgba(255, 255, 255, 0.07) !important;
+}
+:root[data-theme="dark"] .quick-reasoning-stops button.selected {
+  color: #60a5fa !important;
+  background: rgba(96, 165, 250, 0.2) !important;
+}
+
+/* 底部说明 */
+.quick-reasoning-desc {
+  margin: 9px 2px 0 !important;
+  font-size: 11px !important;
+  line-height: 1.5 !important;
+  color: #828fa3 !important;
+  min-height: 24px !important;
+}
+:root[data-theme="dark"] .quick-reasoning-desc {
+  color: #7e8d9f !important;
+}
+
+/* 档位色相定义 */
+.quick-model-menu[data-level="low"] { --rail-a: #788496; --rail-b: #a8b0bc; --rail-c: #d8dde4; }
+.quick-model-menu[data-level="medium"] { --rail-a: #377cf3; --rail-b: #2baeea; --rail-c: #62d7dd; }
+.quick-model-menu[data-level="high"] { --rail-a: #257df5; --rail-b: #6d5df6; --rail-c: #b75df0; }
+.quick-model-menu[data-level="xhigh"] { --rail-a: #1fa8f6; --rail-b: #7454f6; --rail-c: #f04fa7; }
+.quick-model-menu[data-level="max"] { --rail-a: #27d5d0; --rail-b: #7862ff; --rail-c: #ff5b91; }
+.quick-model-menu[data-level="ultra"] { --rail-a: #22d3ee; --rail-b: #9b5cff; --rail-c: #ffc64a; }

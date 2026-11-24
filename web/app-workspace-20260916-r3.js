@@ -971,16 +971,87 @@
       : Object.keys(modelNames).map((id) => ({ id, displayName: modelNames[id] }));
     const selectedModel = state.draftModel || state.model;
     const selectedReasoning = state.draftReasoning || state.reasoning;
-    $("#quickModelCurrent").textContent = modelDisplayName(selectedModel);
-    $("#quickModelOptions").innerHTML = models.map((model) => {
-      const selected = model.id === selectedModel;
-      return `<button type="button" data-quick-model="${escapeHtml(model.id)}" role="radio" aria-checked="${selected}" class="${selected ? "selected" : ""}" data-model-source="${modelSource(model).id}"><span>${escapeHtml(modelDisplayName(model.id))}</span><small class="model-source-tag">${modelSource(model).label}</small><i>✓</i></button>`;
-    }).join("");
-    const efforts = availableReasoningEfforts().slice().reverse();
-    $("#quickReasoningOptions").innerHTML = efforts.map((effort) => {
-      const selected = effort === selectedReasoning;
-      return `<button type="button" data-quick-reasoning="${escapeHtml(effort)}" role="radio" aria-checked="${selected}" class="${selected ? "selected" : ""}"><span>${escapeHtml(quickReasoningNames[effort] || reasoningMeta[effort]?.label || effort)}</span><i>✓</i></button>`;
-    }).join("");
+    
+    // 兼容旧占位符
+    const legacyCurrent = $("#quickModelCurrent");
+    if (legacyCurrent) legacyCurrent.textContent = modelDisplayName(selectedModel);
+    
+    // 渲染模型徽标数量
+    const countBadge = $("#quickModelCountBadge");
+    if (countBadge) countBadge.textContent = `${models.length} 个可用`;
+
+    // 渲染平铺模型列表
+    const modelOptionsEl = $("#quickModelOptions");
+    if (modelOptionsEl) {
+      modelOptionsEl.innerHTML = models.map((model) => {
+        const selected = model.id === selectedModel;
+        const name = modelDisplayName(model.id);
+        const glyph = name.slice(0, 1).toUpperCase() || "✦";
+        const desc = model.description || modelDescriptions[model.id] || `${modelSource(model).label} 实时提供`;
+        return `<button type="button" data-quick-model="${escapeHtml(model.id)}" role="radio" aria-checked="${selected}" class="quick-model-btn ${selected ? "selected" : ""}" data-model-source="${modelSource(model).id}">
+          <span class="quick-model-glyph">${escapeHtml(glyph)}</span>
+          <span class="quick-model-meta">
+            <strong>${escapeHtml(name)}</strong>
+            <small>${escapeHtml(desc)}</small>
+          </span>
+          <i class="quick-model-check">✓</i>
+        </button>`;
+      }).join("");
+    }
+
+    // 计算智能程度档位
+    const efforts = availableReasoningEfforts();
+    const currentReasoning = efforts.includes(selectedReasoning)
+      ? selectedReasoning
+      : (efforts.includes("medium") ? "medium" : efforts[0]);
+    state.draftReasoning = currentReasoning;
+    const index = Math.max(0, efforts.indexOf(currentReasoning));
+    const meta = reasoningMeta[currentReasoning] || reasoningMeta.medium;
+    const progress = ((index + 0.5) / efforts.length) * 100;
+
+    // 设置浮层容器的 CSS 变量与级别
+    menu.dataset.level = currentReasoning;
+    menu.dataset.intensity = String(meta.intensity);
+    menu.style.setProperty("--reasoning-progress", `${progress}%`);
+    menu.style.setProperty("--reasoning-count", String(efforts.length));
+    menu.style.setProperty("--reasoning-intensity", String(meta.intensity));
+
+    // 标签与代码胶囊
+    const curLabel = $("#quickReasoningCurrentLabel");
+    if (curLabel) curLabel.textContent = meta.label;
+    const curCode = $("#quickReasoningCurrentCode");
+    if (curCode) curCode.textContent = meta.code;
+    const curDesc = $("#quickReasoningDesc");
+    if (curDesc) curDesc.textContent = meta.description;
+
+    // 流体 Hitbox
+    const hitboxEl = $("#quickReasoningHitbox");
+    if (hitboxEl) {
+      hitboxEl.innerHTML = efforts.map((effort) => {
+        const opt = reasoningMeta[effort];
+        const isSel = effort === currentReasoning;
+        return `<button type="button" data-quick-reasoning="${escapeHtml(effort)}" role="radio" aria-checked="${isSel}" aria-label="${escapeHtml(opt?.label || effort)}"></button>`;
+      }).join("");
+    }
+
+    // 档位 Stops
+    const stopsEl = $("#quickReasoningStops");
+    if (stopsEl) {
+      stopsEl.innerHTML = efforts.map((effort) => {
+        const opt = reasoningMeta[effort];
+        const isSel = effort === currentReasoning;
+        return `<button type="button" class="${isSel ? "selected" : ""}" data-quick-reasoning="${escapeHtml(effort)}"><strong>${escapeHtml(quickReasoningNames[effort] || opt?.label || effort)}</strong></button>`;
+      }).join("");
+    }
+
+    // 兼容旧 options
+    const legacyOptions = $("#quickReasoningOptions");
+    if (legacyOptions) {
+      legacyOptions.innerHTML = efforts.map((effort) => {
+        const isSel = effort === currentReasoning;
+        return `<button type="button" data-quick-reasoning="${escapeHtml(effort)}" role="radio" aria-checked="${isSel}" class="${isSel ? "selected" : ""}"><span>${escapeHtml(quickReasoningNames[effort] || effort)}</span><i>✓</i></button>`;
+      }).join("");
+    }
   }
 
   function renderCapabilities() {
@@ -2156,14 +2227,17 @@
 
   function setQuickModelMenu(open) {
     const menu = $("#quickModelMenu");
+    if (!menu) return;
     const expanded = Boolean(open);
     menu.classList.toggle("open", expanded);
-    const showModels = expanded && ["claude", "antigravity"].includes(state.codexProfile);
-    menu.classList.toggle("models-open", showModels);
-    if (expanded) refreshProviderCapabilities();
+    menu.classList.toggle("models-open", true);
+    if (expanded) {
+      refreshProviderCapabilities();
+      renderQuickModelPicker();
+    }
     menu.setAttribute("aria-hidden", String(!expanded));
-    $("#modelButton").setAttribute("aria-expanded", String(expanded));
-    $("#quickModelExpand").setAttribute("aria-expanded", String(showModels));
+    $("#modelButton")?.setAttribute("aria-expanded", String(expanded));
+    $("#quickModelExpand")?.setAttribute("aria-expanded", "true");
   }
 
   function applySettings({ closeSheet = true, announce = true } = {}) {
@@ -5198,28 +5272,31 @@
     updateModelControls();
     setQuickModelMenu(!$("#quickModelMenu").classList.contains("open"));
   });
-  $("#quickModelExpand").addEventListener("click", () => {
+  $("#quickModelExpand")?.addEventListener("click", () => {
     const menu = $("#quickModelMenu");
+    if (!menu) return;
     const open = !menu.classList.contains("models-open");
     menu.classList.toggle("models-open", open);
-    $("#quickModelExpand").setAttribute("aria-expanded", String(open));
+    $("#quickModelExpand")?.setAttribute("aria-expanded", String(open));
   });
-  $("#quickModelOptions").addEventListener("click", (event) => {
+  $("#quickModelOptions")?.addEventListener("click", (event) => {
     const model = event.target.closest("[data-quick-model]")?.dataset.quickModel;
     if (!model) return;
     state.draftModel = model;
     const offered = availableReasoningEfforts();
     if (!offered.includes(state.draftReasoning)) state.draftReasoning = offered.includes("medium") ? "medium" : offered[0];
-    applySettings({ closeSheet: false });
-    setQuickModelMenu(false);
+    applySettings({ closeSheet: false, announce: false });
+    renderQuickModelPicker();
   });
-  $("#quickReasoningOptions").addEventListener("click", (event) => {
+  const handleQuickReasoningSelect = (event) => {
     const reasoning = event.target.closest("[data-quick-reasoning]")?.dataset.quickReasoning;
     if (!reasoning) return;
     state.draftReasoning = reasoning;
-    applySettings({ closeSheet: false });
-    setQuickModelMenu(false);
-  });
+    applySettings({ closeSheet: false, announce: false });
+    renderQuickModelPicker();
+  };
+  $("#quickReasoningSection")?.addEventListener("click", handleQuickReasoningSelect);
+  $("#quickReasoningOptions")?.addEventListener("click", handleQuickReasoningSelect);
   document.addEventListener("pointerdown", (event) => {
     if (!event.target.closest(".composer-wrap")) {
       setAttachmentMenu(false);
