@@ -5,7 +5,7 @@ const {test} = require('node:test'); const {ChatService} = require('./chat-servi
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function fixture(t, maxConcurrentTurns = 2) {
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'witt-multitask-'));
- const service=new ChatService({chatDir:path.join(root,'chat'),dataDir:path.join(root,'files'),imageDir:path.join(root,'images'),codexBin:'/bin/false',codexWorkDir:root,maxConcurrentTurns,allowedModels:null,sendJson(res,status,payload){res.status=status;res.payload=payload},readJsonBody(req,_limit,cb){cb(null,req.body||{})}});
+ const service=new ChatService({serverAdministrator:true,chatDir:path.join(root,'chat'),dataDir:path.join(root,'files'),imageDir:path.join(root,'images'),codexBin:'/bin/false',codexWorkDir:root,maxConcurrentTurns,allowedModels:null,sendJson(res,status,payload){res.status=status;res.payload=payload},readJsonBody(req,_limit,cb){cb(null,req.body||{})}});
  const client=service.clientFor(service.codexProfiles.default);const calls=[];let number=0;
  client.start=async()=>{};
  client.request=async(method,args)=>{ calls.push({method,args}); if(method==='thread/start')return {thread:{id:`thread-${++number}`}};if(method==='thread/resume')return {thread:{id:args.threadId}};if(method==='turn/start')return {turn:{id:`turn-${args.threadId}`}};return {}; };
@@ -91,4 +91,22 @@ test('default task execution has no automatic idle time limit', t => {
  t.mock.timers.tick(24*60*60*1000);
  assert.equal(interrupted,false);
  assert.equal(active.finished,false);
+});
+
+// Project locks must not turn the shared landing directory into a user-wide lock.
+test('default GPT and Gemini chats can overlap while explicit projects remain protected',t=>{
+ const {service}=fixture(t);
+ const a=service.createConversation(),b=service.createConversation();
+ b.codexProfile='antigravity';
+ service.activeTurns.set(a.id,{conversationId:a.id});
+ assert.equal(service.workspace.conflict(b),null);
+ a.workspaceProjectId=b.workspaceProjectId='project-one';
+ assert.equal(service.workspace.conflict(b).conversationId,a.id);
+ delete a.workspaceProjectId;delete b.workspaceProjectId;
+ const project=path.join(service.codexWorkDir,'project');fs.mkdirSync(project);
+ a.workDir=project;b.workDir=path.join(project,'child');
+ assert.equal(service.workspace.conflict(b).conversationId,a.id);
+ b.accessMode='read-only';assert.equal(service.workspace.conflict(b),null);
+ b.accessMode='danger-full-access';b.workDir=path.join(service.codexWorkDir,'unrelated');
+ assert.equal(service.workspace.conflict(b),null);
 });

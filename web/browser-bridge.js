@@ -126,7 +126,10 @@
     },
     searchConversations(query, project, attachments, requestId) {
       const params = new URLSearchParams({ q: query || "" });
-      if (project) params.set("project", project);
+      if (project) {
+        if (project === "__none__" || validId(project)) params.set("projectId", project);
+        else params.set("project", project);
+      }
       if (String(attachments) === "true") params.set("attachments", "1");
       request(`chat/conversations?${params}`).then((text) => {
         const data = parse(text);
@@ -202,8 +205,10 @@
       run(`chat/conversations/${id}`, { method: "PATCH", json: payload },
         "onSettingsUpdated", "onChatError", "设置保存失败");
     },
-    updateConversationProject(id, workDir) {
-      run(`chat/conversations/${id}`, { method: "PATCH", json: { workDir: workDir || "" } },
+    updateConversationProject(id, projectOrWorkDir) {
+      const raw = String(projectOrWorkDir || "").trim();
+      const workspaceProjectId = raw.startsWith("project:") ? raw.slice("project:".length) : (raw || null);
+      run(`chat/conversations/${id}`, { method: "PATCH", json: { workspaceProjectId } },
         "onConversationProjectUpdated", "onConversationProjectError", "项目切换失败");
     },
     updateConversationMetadata(id, json) {
@@ -277,18 +282,23 @@
         "onCodexLoginCancelled", "onAdminError", "无法取消登录");
     },
 
+    addPickedFiles(fileList) {
+      const selected = [...(fileList || [])]
+        .filter((file) => file && file.size > 0 && file.size <= 500 * 1024 * 1024)
+        .map((file) => {
+          const id = crypto.randomUUID();
+          files.set(id, file);
+          return { id, name: file.name || `file-${Date.now()}`, size: file.size, type: file.type || "application/octet-stream" };
+        });
+      if (selected.length) callback("onFilesPicked", payload(selected));
+      return selected.length;
+    },
     pickFiles() {
       const input = document.createElement("input");
       input.type = "file";
       input.multiple = true;
       input.onchange = () => {
-        const selected = [...input.files].filter((file) => file.size <= 500 * 1024 * 1024)
-          .map((file) => {
-            const id = crypto.randomUUID();
-            files.set(id, file);
-            return { id, name: file.name, size: file.size, type: file.type || "application/octet-stream" };
-          });
-        callback("onFilesPicked", payload(selected));
+        this.addPickedFiles(input.files);
       };
       input.click();
     },
@@ -327,6 +337,7 @@
   const ready = () => {
     if (!window.DropVault?.nativeReady) { setTimeout(ready, 10); return; }
     document.getElementById("localSshButton")?.setAttribute("hidden", "");
+    document.getElementById("updateButton")?.setAttribute("hidden", "");
     const drawerTitle = document.querySelector(".drawer-head h2");
     if (drawerTitle) drawerTitle.textContent = "Witt";
     const input = document.getElementById("messageInput");

@@ -58,6 +58,8 @@ class ChatService {
     this.codexWorkDir = options.codexWorkDir;
     this.serverAdministrator = options.serverAdministrator === true;
     this.userWorkspaceDir = path.join(path.dirname(this.chatDir), "workspace");
+    this.projectsDir = path.join(path.dirname(this.chatDir), "projects");
+    fs.mkdirSync(this.projectsDir, { recursive: true, mode: 0o700 });
     if (!this.serverAdministrator) fs.mkdirSync(this.userWorkspaceDir, { recursive: true, mode: 0o700 });
     this.deepseekEnabled = false; // Retired direct DeepSeek integration; keep historical conversations.
     this.sendJson = options.sendJson;
@@ -94,6 +96,8 @@ class ChatService {
     this.previewDir = path.join(this.dataDir, ".witt-previews");
     this.deliveryRoots = (options.deliveryRoots || [
       this.dataDir,
+      this.projectsDir,
+      this.userWorkspaceDir,
       this.codexWorkDir,
       "/var/lib/witt/Documents",
       "/data/builds",
@@ -156,7 +160,7 @@ class ChatService {
       'sandbox_mode="workspace-write"',
       'approval_policy="never"',
       'sandbox_workspace_write.network_access=false',
-      `sandbox_workspace_write.writable_roots=${JSON.stringify([this.userWorkspaceDir, this.dataDir])}`,
+      `sandbox_workspace_write.writable_roots=${JSON.stringify([this.userWorkspaceDir, this.projectsDir, this.dataDir])}`,
     );
     if (remote?.runtime?.codexConfigOverrides?.length) {
       configOverrides.push(...remote.runtime.codexConfigOverrides);
@@ -526,6 +530,7 @@ class ChatService {
     const taskState = waiting ? "awaiting_confirmation" : busy ? (active ? "running" : "queued") :
       lastStatus === "failed" ? "failed" : lastStatus === "interrupted" ? "interrupted" :
       messages.length || conversation.totalMessages ? "completed" : "idle";
+    const linkedProject = this.workspace?.projectFor(conversation) || null;
     const result = {
       id: conversation.id,
       title: conversation.title,
@@ -533,8 +538,8 @@ class ChatService {
       updatedAt: conversation.updatedAt,
       archived: Boolean(conversation.archived),
       pinned: Boolean(conversation.pinned),
-      project: String(conversation.project || ""),
-      workspaceProjectId: conversation.workspaceProjectId || null,
+      project: linkedProject ? linkedProject.name : String(conversation.project || ""),
+      workspaceProjectId: linkedProject ? linkedProject.id : null,
       queuePosition: busy && !active ? this.workspace.queuePosition(conversation.id) : null,
       waitingForProject: busy && !active ? this.workspace.conflict(conversation)?.title || null : null,
       hasAttachments: conversation.hasAttachments ?? messages.some((message) =>
@@ -815,7 +820,7 @@ class ChatService {
     if (!requested) return null;
     if (!path.isAbsolute(requested)) throw new Error("项目路径必须是绝对路径");
     const resolved = path.resolve(requested);
-    const allowedRoots = ["/var/lib/witt", "/data/drop-vault", "/data/xuanyu-build-console"];
+    const allowedRoots = ["/var/lib/witt", "/data/drop-vault", "/data/xuanyu-build-console", path.resolve(this.projectsDir)];
     if (!allowedRoots.some((root) => resolved === root || resolved.startsWith(`${root}${path.sep}`))) {
       throw new Error("该项目路径不在 Witt 允许的工作目录范围内");
     }
@@ -832,6 +837,8 @@ class ChatService {
   effectiveWorkDir(conversation) {
     const remote = this.activeRemoteRuntimeFor(conversation);
     if (remote?.runtime?.cwd) return remote.runtime.cwd;
+    const linkedProject = this.workspace?.projectFor(conversation);
+    if (linkedProject) return this.workspace.ensureProjectDir(linkedProject);
     if (!this.serverAdministrator) return this.userWorkspaceDir;
     if (!Object.hasOwn(conversation, "workDir")) return this.codexWorkDir;
     return conversation.workDir || "/var/lib/witt";
@@ -850,7 +857,7 @@ class ChatService {
   }
 
   createConversation(title = "新对话", model = this.defaultModel, reasoning = "medium",
-      accessMode = "danger-full-access", workDir = "", codexProfile = null) {
+      accessMode = "danger-full-access", workDir = "", codexProfile = null, workspaceProjectId = null) {
     const requestedProfile = codexProfile == null || codexProfile === ""
       ? this.defaultCodexProfile : String(codexProfile);
     if (!this.allowedCodexProfiles.has(requestedProfile)) {
@@ -859,7 +866,14 @@ class ChatService {
     const profile = this.codexProfiles[requestedProfile];
     const selectedModel=this.modelAllowed(model,profile.id)?model:this.defaultModelFor(profile.id);
     if (!selectedModel) throw new Error("请先登录对应账号并刷新模型列表");
-    const requestedWorkDir = workDir || (profile.id === "default" || profile.provider ? "" : profile.workDir);
+    let resolvedProject = null;
+    if (workspaceProjectId != null && workspaceProjectId !== "") {
+      resolvedProject = this.workspace?.projectById(String(workspaceProjectId)) || null;
+      if (!resolvedProject) throw new Error("项目不存在");
+    }
+    const requestedWorkDir = resolvedProject
+      ? this.workspace.ensureProjectDir(resolvedProject)
+      : (workDir || (profile.id === "default" || profile.provider ? "" : profile.workDir));
     const now = new Date().toISOString();
     const conversation = {
       id: crypto.randomUUID(),
@@ -872,7 +886,8 @@ class ChatService {
       model: selectedModel,
       reasoning: this.reasoningFor(selectedModel,profile.id,reasoning),
       accessMode: ALLOWED_ACCESS.has(accessMode) ? accessMode : "danger-full-access",
-      workDir: this.normalizeWorkDir(requestedWorkDir),
+      workDir: resolvedProject ? requestedWorkDir : this.normalizeWorkDir(requestedWorkDir),
+      ...(resolvedProject ? { workspaceProjectId: resolvedProject.id, project: resolvedProject.name } : {}),
       messages: [],
     };
     this.writeConversation(conversation);
@@ -1078,10 +1093,22 @@ class ChatService {
     if (req.method === "GET" && url.pathname === "/chat/conversations") {
       const query = String(url.searchParams.get("q") || "").trim().slice(0, 200);
       const project = url.searchParams.get("project");
+      const projectId = url.searchParams.get("projectId");
       const entries = query ? this.store.search(query, { limit: 100 }) : this.store.listMetadata();
       const conversations = entries
         .filter((conversation) => !conversation.archived)
-        .filter((conversation) => project === null || String(conversation.project || "") === project)
+        .filter((conversation) => {
+          if (projectId !== null && projectId !== "") {
+            if (projectId === "__none__") return !this.workspace?.projectFor(conversation);
+            return conversation.workspaceProjectId === projectId;
+          }
+          if (project === null) return true;
+          const linked = this.workspace?.projectFor(conversation);
+          if (project === "__none__") return !linked && !conversation.project;
+          if (ID_PATTERN.test(project)) return conversation.workspaceProjectId === project;
+          const resolvedName = linked ? linked.name : String(conversation.project || "");
+          return resolvedName === project;
+        })
         .filter((conversation) => url.searchParams.get("attachments") !== "1" || conversation.hasAttachments)
         .map((conversation) => ({ ...this.publicConversation(conversation, false),
           ...(query ? { matchingMessageId: conversation.matchingMessageId,
@@ -1124,9 +1151,13 @@ class ChatService {
           return;
         }
         try {
+          const rawWorkDir = typeof body?.workDir === "string" ? body.workDir.trim() : "";
+          const projectIdFromWorkDir = rawWorkDir.startsWith("project:") ? rawWorkDir.slice("project:".length) : null;
           const conversation = this.createConversation(
-            body?.title, body?.model, body?.reasoning, body?.accessMode, body?.workDir,
-            body?.codexProfile);
+            body?.title, body?.model, body?.reasoning, body?.accessMode,
+            projectIdFromWorkDir ? "" : rawWorkDir,
+            body?.codexProfile,
+            body?.workspaceProjectId ?? projectIdFromWorkDir);
           this.sendJson(res, 201, { conversation: this.publicConversation(conversation) });
         } catch (createError) {
           this.sendJson(res, 400, { error: createError.message || "无法创建对话" });
@@ -1447,17 +1478,67 @@ class ChatService {
       }
       const hasPinned = Object.hasOwn(body || {}, "pinned");
       const hasProject = Object.hasOwn(body || {}, "project");
+      const hasWorkspaceProjectId = Object.hasOwn(body || {}, "workspaceProjectId");
+      const rawWorkDirValue = Object.hasOwn(body || {}, "workDir") ? body.workDir : undefined;
+      const isProjectEncodedWorkDir = rawWorkDirValue === "" || rawWorkDirValue === null ||
+        (typeof rawWorkDirValue === "string" && rawWorkDirValue.trim().startsWith("project:"));
       if ((hasPinned && typeof body.pinned !== "boolean") ||
           (hasProject && (typeof body.project !== "string" || body.project.length > 80 || /[\x00-\x1f]/.test(body.project)))) {
         this.sendJson(res, 400, { error: "置顶或项目分组格式无效" });
         return;
       }
-      const metadataOnly = (hasPinned || hasProject || hasTitle) && Object.keys(body).every((key) =>
+      const metadataOnly = (hasPinned || hasProject || hasTitle) && !hasWorkspaceProjectId && Object.keys(body).every((key) =>
         key === "pinned" || key === "project" || key === "title");
       if (metadataOnly) {
         if (hasTitle) conversation.title = body.title.trim();
         if (hasPinned) conversation.pinned = body.pinned;
         if (hasProject) conversation.project = body.project.trim();
+        conversation.updatedAt = new Date().toISOString();
+        this.writeConversation(conversation);
+        this.sendJson(res, 200, { conversation: this.publicConversation(conversation) });
+        return;
+      }
+      const projectBindingOnly = (hasWorkspaceProjectId || (Object.hasOwn(body || {}, "workDir") && isProjectEncodedWorkDir)) &&
+        Object.keys(body).every((key) => key === "workspaceProjectId" || key === "workDir" || key === "pinned" || key === "title");
+      if (projectBindingOnly) {
+        if (this.activeRemoteRuntimeFor(conversation)) {
+          this.sendJson(res, 409, { error: "远程协助会话暂不支持切换项目" });
+          return;
+        }
+        if (conversation.messages.some((message) =>
+          message.status === "queued" || message.status === "running")) {
+          this.sendJson(res, 409, { error: "当前对话正在处理，完成后再切换项目" });
+          return;
+        }
+        const requestedProjectId = hasWorkspaceProjectId
+          ? String(body.workspaceProjectId || "").trim()
+          : (typeof rawWorkDirValue === "string" && rawWorkDirValue.trim().startsWith("project:")
+            ? rawWorkDirValue.trim().slice("project:".length) : "");
+        const prevProject = this.workspace?.projectFor(conversation) || null;
+        const prevName = prevProject?.name || conversation.project || "";
+        let nextProject = null;
+        if (requestedProjectId) {
+          nextProject = this.workspace?.projectById(requestedProjectId) || null;
+          if (!nextProject) {
+            this.sendJson(res, 404, { error: "项目不存在" });
+            return;
+          }
+        }
+        if (hasTitle) conversation.title = body.title.trim();
+        if (hasPinned) conversation.pinned = body.pinned;
+        const prevId = prevProject?.id || null;
+        const nextId = nextProject?.id || null;
+        conversation.workspaceProjectId = nextId;
+        conversation.project = nextProject ? nextProject.name : "";
+        conversation.workDir = nextProject ? this.workspace.ensureProjectDir(nextProject) : null;
+        if (conversation.codexThreadId && prevId !== nextId) {
+          conversation.projectSwitchNotice = {
+            fromName: prevName,
+            toName: nextProject ? nextProject.name : "",
+            instructions: nextProject ? String(nextProject.instructions || "") : "",
+            workDir: this.effectiveWorkDir(conversation),
+          };
+        }
         conversation.updatedAt = new Date().toISOString();
         this.writeConversation(conversation);
         this.sendJson(res, 200, { conversation: this.publicConversation(conversation) });
@@ -2425,13 +2506,23 @@ class ChatService {
           ].join("\n")
         : "当前远程协助独立临时空间已结束，服务器侧临时空间文件已清理，请勿再尝试调用客户电脑远程工具。")
       : "";
+    const activeProject = this.workspace.projectFor(conversation);
+    const projectReferences = activeProject ? this.workspace.projectReferencesFor(activeProject) : [];
+    const referenceGuidance = projectReferences.length
+      ? [
+          "项目常驻参考文件（用户已明确授权本项目内所有对话直接读取）：",
+          ...projectReferences.map((file) => `- ${file.name}：${file.path}（${file.mimeType}，${file.size} 字节）`),
+        ].join("\n")
+      : "";
     return [
       "你是运行在用户私人服务器上的 AI 助手维特（Witt）。",
+      activeProject ? `当前项目：${activeProject.name}` : "",
       `固定工作目录：${workDir}`,
       `Witt 附件目录：${this.dataDir}`,
       remoteGuidance,
       "记住用户在本线程中的上下文，回答使用简洁自然的中文。",
-      this.workspace.projectFor(conversation)?.instructions ? `用户为本项目提供的说明：\n${this.workspace.projectFor(conversation).instructions}` : "",
+      activeProject?.instructions ? `用户为本项目提供的说明：\n${activeProject.instructions}` : "",
+      referenceGuidance,
       "只处理用户明确要求的任务，保留现有数据和未提交修改。",
       "禁止展示、记录或回传凭据原文。用户明确授权时，允许认证程序使用指定的本地凭据文件完成认证，不将凭据或生成的 Token 输出到聊天及日志",
       "访问范围由本对话的权限设置决定。删除数据、对外发送消息等不可逆或对外动作仍需先向用户说明。",
@@ -2474,7 +2565,19 @@ class ChatService {
         `用户：${userText}${attachmentText}`,
       ].join("\n");
     }
-    if (conversation.codexThreadId) return `${userText}${attachmentText}`;
+    if (conversation.codexThreadId) {
+      const notice = conversation.projectSwitchNotice;
+      if (notice) {
+        const noticeLines = notice.toName
+          ? [
+              `[系统同步：当前对话已切换至项目「${notice.toName}」，工作目录已更新为 ${notice.workDir}，后续操作请以该项目与目录为准。]`,
+              notice.instructions ? `[项目说明：\n${notice.instructions}\n]` : "",
+            ].filter(Boolean).join("\n")
+          : `[系统同步：当前对话已移出原项目${notice.fromName ? `「${notice.fromName}」` : ""}，恢复为独立对话，工作目录已更新为 ${notice.workDir}。]`;
+        return `${noticeLines}\n\n${userText}${attachmentText}`;
+      }
+      return `${userText}${attachmentText}`;
+    }
     return [
       this.buildDeveloperInstructions(conversation),
       "",
@@ -2593,8 +2696,9 @@ class ChatService {
         approvalPolicy: policy.approvalPolicy,
       });
       if (this.activeFor(conversation.id) !== active || active.finished) return;
-      if (latestConversation.replayHistoryOnNextTurn) {
+      if (latestConversation.replayHistoryOnNextTurn || latestConversation.projectSwitchNotice) {
         delete latestConversation.replayHistoryOnNextTurn;
+        delete latestConversation.projectSwitchNotice;
         this.writeConversation(latestConversation);
       }
       active.turnId = turnResult.turn.id;

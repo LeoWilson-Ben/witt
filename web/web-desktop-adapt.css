@@ -475,3 +475,104 @@
   background: rgba(59, 130, 246, 0.2) !important;
   border-color: rgba(59, 130, 246, 0.5) !important;
 }
+
+/* ==========================================================================
+   Witt Web Desktop Collapsible Sidebar (网页端桌面边栏可收起/展开)
+   ========================================================================== */
+
+.menu-icon-desktop,
+.close-icon-desktop {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  :root body.web-browser .app-shell,
+  :root:not([data-theme="dark"]) body.web-browser .app-shell {
+    transition: width 0.26s cubic-bezier(0.22, 1, 0.36, 1), margin-left 0.26s cubic-bezier(0.22, 1, 0.36, 1) !important;
+  }
+
+  body.web-browser .drawer {
+    transform: translateX(0) !important;
+    opacity: 1 !important;
+    transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease !important;
+  }
+
+  body.web-browser #drawer #closeDrawer {
+    display: grid !important;
+    place-items: center !important;
+    position: static !important;
+    top: auto !important;
+    right: auto !important;
+    flex: none !important;
+    width: 38px !important;
+    height: 38px !important;
+    padding: 0 !important;
+    opacity: 1 !important;
+    border: 0 !important;
+    border-radius: 50% !important;
+    cursor: pointer !important;
+    color: var(--rail-ink, var(--web-text, #111)) !important;
+    background: var(--rail-hover, rgba(0, 0, 0, 0.05)) !important;
+    transition: background 0.16s ease, color 0.16s ease, transform 0.14s ease !important;
+  }
+  body.web-browser #drawer #closeDrawer:hover {
+    background: var(--web-hover, rgba(0, 0, 0, 0.1)) !important;
+    color: var(--web-text, #111) !important;
+  }
+  body.web-browser #drawer #closeDrawer:active {
+    transform: scale(0.94);
+  }
+
+  body.web-browser #drawer #closeDrawer .close-icon-mobile,
+  body.web-browser #menuButton .menu-icon-mobile {
+    display: none !important;
+  }
+  body.web-browser #drawer #closeDrawer .close-icon-desktop,
+  body.web-browser #menuButton .menu-icon-desktop {
+    display: block !important;
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* 收起态：边栏滑出左侧，主聊天区占满 100% 宽度，左上角显示展开按钮 */
+  body.web-browser.web-sidebar-collapsed .drawer {
+    transform: translateX(-100%) !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+
+  :root body.web-browser.web-sidebar-collapsed .app-shell,
+  :root:not([data-theme="dark"]) body.web-browser.web-sidebar-collapsed .app-shell {
+    width: 100% !important;
+    margin-left: 0 !important;
+  }
+
+  :root body.web-browser.web-sidebar-collapsed.artifact-open .app-shell,
+  :root:not([data-theme="dark"]) body.web-browser.web-sidebar-collapsed.artifact-open .app-shell {
+    width: min(42vw, 640px) !important;
+    margin-left: 0 !important;
+  }
+
+  body.web-browser:not(.web-sidebar-collapsed) .compact-menu-button {
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
+  body.web-browser.web-sidebar-collapsed .compact-menu-button {
+    visibility: visible !important;
+    pointer-events: auto !important;
+    opacity: 1 !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root body.web-browser .app-shell,
+  body.web-browser .drawer {
+    transition: none !important;
+  }
+}

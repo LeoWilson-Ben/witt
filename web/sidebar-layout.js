@@ -58,4 +58,73 @@
     if (!controls.hidden) { searchToggle.click(); searchToggle.focus(); return; }
     if (drawer.classList.contains('open')) document.querySelector('#closeDrawer').click();
   });
+
+  // Desktop web collapsible sidebar (persisted in localStorage, Ctrl/Cmd+B shortcut).
+  const SIDEBAR_STORAGE_KEY = 'wit_web_sidebar_collapsed';
+  const menuButton = document.querySelector('#menuButton');
+  const closeDrawerButton = document.querySelector('#closeDrawer');
+  const desktopMedia = window.matchMedia('(min-width: 900px)');
+  const isDesktopWeb = () => document.body.classList.contains('web-browser') && desktopMedia.matches;
+
+  const syncDesktopButtons = (collapsed) => {
+    if (!isDesktopWeb()) {
+      if (menuButton) menuButton.removeAttribute('title');
+      if (closeDrawerButton) {
+        closeDrawerButton.setAttribute('aria-label', '关闭边栏');
+        closeDrawerButton.removeAttribute('title');
+      }
+      return;
+    }
+    if (menuButton) {
+      menuButton.setAttribute('aria-label', collapsed ? '展开边栏' : '收起边栏');
+      menuButton.setAttribute('aria-expanded', String(!collapsed));
+      menuButton.setAttribute('title', '展开边栏 (Ctrl+B)');
+    }
+    if (closeDrawerButton) {
+      closeDrawerButton.setAttribute('aria-label', '收起边栏');
+      closeDrawerButton.setAttribute('aria-expanded', String(!collapsed));
+      closeDrawerButton.setAttribute('title', '收起边栏 (Ctrl+B)');
+    }
+  };
+
+  const setDesktopCollapsed = (collapsed, persist = true) => {
+    document.body.classList.toggle('web-sidebar-collapsed', collapsed);
+    if (collapsed && !menu.hidden) setMenu(false);
+    if (persist) {
+      try { localStorage.setItem(SIDEBAR_STORAGE_KEY, collapsed ? '1' : '0'); } catch {}
+    }
+    syncDesktopButtons(collapsed);
+  };
+
+  if (document.body.classList.contains('web-browser')) {
+    let saved = false;
+    try { saved = localStorage.getItem(SIDEBAR_STORAGE_KEY) === '1'; } catch {}
+    setDesktopCollapsed(saved, false);
+  }
+
+  closeDrawerButton?.addEventListener('click', (event) => {
+    if (!isDesktopWeb()) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    setDesktopCollapsed(true);
+  }, true);
+
+  menuButton?.addEventListener('click', (event) => {
+    if (!isDesktopWeb()) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    setDesktopCollapsed(!document.body.classList.contains('web-sidebar-collapsed'));
+  }, true);
+
+  document.addEventListener('keydown', (event) => {
+    if (!isDesktopWeb()) return;
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'b') {
+      event.preventDefault();
+      setDesktopCollapsed(!document.body.classList.contains('web-sidebar-collapsed'));
+    }
+  });
+
+  desktopMedia.addEventListener?.('change', () => {
+    syncDesktopButtons(document.body.classList.contains('web-sidebar-collapsed'));
+  });
 })();

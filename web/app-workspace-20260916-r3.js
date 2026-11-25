@@ -49,6 +49,11 @@
     codexProfile: localStorage.getItem("wit_codex_profile") || "default",
     allowedCodexProfiles: ["default"],
     workDir: "",
+    workspaceProjectId: null,
+    projects: [],
+    projectsLoaded: false,
+    projectsLoading: false,
+    projectSheetTargetId: null,
     optimisticMessage: null,
     draftModel: null,
     draftReasoning: null,
@@ -160,7 +165,8 @@
   }
 
   function historyProjectName(item) {
-    return item.project || "未分组";
+    const linked = item?.workspaceProjectId ? state.projects.find((p) => p.id === item.workspaceProjectId) : null;
+    return linked?.name || item?.project || "未归属项目";
   }
 
   function refreshHistorySearch() {
@@ -174,7 +180,7 @@
       $("#historySearchHint").textContent = "正在搜索完整历史…";
       bridge()?.searchConversations?.(q, project, attachments, String(state.historyRequest));
     } else {
-      $("#historySearchHint").textContent = state.workspaceFeatures ? "按项目整理，置顶跨设备同步" : "搜索标题与摘要 · 置顶仅保存在此设备";
+      $("#historySearchHint").textContent = state.workspaceFeatures ? "按项目筛选，仅显示你自己的项目与对话" : "搜索标题与摘要 · 置顶仅保存在此设备";
     }
     renderConversations();
   }
@@ -269,10 +275,12 @@
     const height = Math.ceil(composer.getBoundingClientRect().height);
     if (height > 0) shell.style.setProperty("--composer-inset", `${height}px`);
     const stage = $("#chatStage");
-    const actions = $(".compact-nav-actions");
-    if (stage && actions) {
+    const navigation = $(".compact-nav");
+    if (stage && navigation) {
       const rect = stage.getBoundingClientRect();
-      shell.style.setProperty("--history-top", `${Math.max(0, actions.getBoundingClientRect().bottom - rect.top)}px`);
+      // Reserve the whole header, including its padding, plus bubble clearance.
+      const top = Math.max(0, Math.ceil(navigation.getBoundingClientRect().bottom - rect.top)) + 12;
+      shell.style.setProperty("--history-top", `${top}px`);
     }
   }
 
@@ -891,6 +899,22 @@
     return models.find((model) => model.id === (state.draftModel || state.model)) || null;
   }
 
+  function loadCachedModelNames() {
+    try {
+      const saved = JSON.parse(localStorage.getItem("witt_model_names_v1") || "{}");
+      if (saved && typeof saved === "object") {
+        for (const [id, label] of Object.entries(saved)) {
+          if (typeof label === "string" && label.trim() && !modelNames[id]) modelNames[id] = label.trim();
+        }
+      }
+    } catch {}
+  }
+  loadCachedModelNames();
+
+  function saveCachedModelNames() {
+    try { localStorage.setItem("witt_model_names_v1", JSON.stringify(modelNames)); } catch {}
+  }
+
   function modelDisplayName(modelId) {
     const capability = (state.capabilities?.models || []).find((model) => model.id === modelId);
     return String(capability?.displayName || modelNames[modelId] || modelId)
@@ -898,6 +922,16 @@
       .replace(/\s*·\s*Stellarbit$/i, "")
       .replace(/\s*\(Thinking\)\s*$/i, "")
       .replace(/-(?:20\d{6})$/, "");
+  }
+
+  function composerModelDisplayName(modelId) {
+    const label = modelDisplayName(modelId).replace(/^claude:/i, "").trim();
+    if (!label || /[A-Z\u4e00-\u9fff]/.test(label)) return label;
+    return label
+      .replace(/^gpt-(\d+(?:\.\d+)?)(?:-(.+))?$/i, (_, ver, rest) =>
+        `GPT-${ver}${rest ? " " + rest.split("-").map((w) => w ? w[0].toUpperCase() + w.slice(1) : "").join(" ") : ""}`)
+      .replace(/^(gemini|claude|deepseek)-(.+)$/i, (_, brand, rest) =>
+        `${brand[0].toUpperCase()}${brand.slice(1).toLowerCase()} ${rest.split("-").map((w) => w ? w[0].toUpperCase() + w.slice(1) : "").join(" ")}`);
   }
 
   function modelSource(model) {
@@ -963,6 +997,18 @@
     return offered.length ? offered : ["low", "medium", "high", "xhigh"];
   }
 
+  function modelBrandKey(modelId) {
+    const id = String(modelId || "").toLowerCase();
+    if (id.includes("claude")) return "claude";
+    if (id.startsWith("gemini:") && !id.includes("gpt")) return "gemini";
+    if (id.includes("gemini")) return "gemini";
+    return "openai";
+  }
+
+  function modelBrandIcon(modelId) {
+    return providerIcons[modelBrandKey(modelId)] || providerIcons.openai;
+  }
+
   function renderQuickModelPicker() {
     const menu = $("#quickModelMenu");
     if (!menu) return;
@@ -1023,7 +1069,10 @@
     if (modelOptionsEl) {
       modelOptionsEl.innerHTML = models.map((model) => {
         const isSelected = model.id === selectedModel;
+        const brand = modelBrandKey(model.id);
+        const brandClass = brand === "openai" ? "gpt" : brand;
         return `<button type="button" class="codex-model-item ${isSelected ? "selected" : ""}" data-quick-model="${escapeHtml(model.id)}">
+          <span class="quick-model-brand-icon ${brandClass}" aria-hidden="true">${modelBrandIcon(model.id)}</span>
           <span>${escapeHtml(modelDisplayName(model.id))}</span>
           <i class="codex-check">✓</i>
         </button>`;
@@ -1049,18 +1098,25 @@
     }
     const models = Array.isArray(capabilities.models) ? capabilities.models : [];
     if (Array.isArray(capabilities.models)) {
+      let namesChanged = false;
       models.forEach((model) => {
-        modelNames[model.id] = modelNames[model.id] || model.displayName || model.id;
+        if (model.displayName && modelNames[model.id] !== model.displayName) {
+          modelNames[model.id] = model.displayName;
+          namesChanged = true;
+        } else if (!modelNames[model.id]) {
+          modelNames[model.id] = model.displayName || model.id;
+        }
       });
+      if (namesChanged) saveCachedModelNames();
       $(".model-options").innerHTML = models.map((model) => {
-        const name = model.displayName || model.id;
         const shortName = modelDisplayName(model.id);
-        const glyph = shortName.slice(0, 1).toUpperCase() || "✦";
+        const brand = modelBrandKey(model.id);
+        const brandClass = brand === "openai" ? "gpt" : brand;
         const efforts = (model.reasoningEfforts || []).length;
         const description = model.description || modelDescriptions[model.id] || "由当前账号提供";
         const selectedClass = model.id === (state.draftModel || state.model) ? "selected" : "";
         const selected = Boolean(selectedClass);
-        return `<button type="button" class="${selectedClass}" data-model-source="${modelSource(model).id}" data-model="${escapeHtml(model.id)}" role="radio" aria-checked="${selected}"><span class="model-glyph ${escapeHtml(shortName.toLowerCase())}">${escapeHtml(glyph)}</span><span><strong>${escapeHtml(shortName)}</strong><small>${modelSource(model).label} · ${escapeHtml(description)}</small><em>${efforts || 4} 档智能程度</em></span><i></i></button>`;
+        return `<button type="button" class="${selectedClass}" data-model-source="${modelSource(model).id}" data-model="${escapeHtml(model.id)}" role="radio" aria-checked="${selected}"><span class="model-glyph brand-${brandClass}" aria-hidden="true">${modelBrandIcon(model.id)}</span><span><strong>${escapeHtml(shortName)}</strong><small>${modelSource(model).label} · ${escapeHtml(description)}</small><em>${efforts || 4} 档智能程度</em></span><i></i></button>`;
       }).join("");
     }
     renderReasoningControl();
@@ -1093,15 +1149,149 @@
     "workspace-write": "项目读写",
     "read-only": "只读",
   };
-  const projects = {
-    "": "空白",
-    "/home/ubuntu/Documents/Codex/2026-07-20-skill/upload-app": "维特",
-    "/home/ubuntu/Documents/Codex/2026-07-26-xlsb": "年报",
-    "/data/xuanyu-build-console/repo": "玄遇",
-  };
+  function projectById(id) {
+    if (!id) return null;
+    return state.projects.find((item) => item.id === id) || null;
+  }
 
-  function projectName(workDir) {
-    return projects[String(workDir || "")] || "自定义项目";
+  function activeProjectObject() {
+    const projectId = state.active?.workspaceProjectId || state.workspaceProjectId || null;
+    return projectById(projectId);
+  }
+
+  function projectNameForConversation(conversation = state.active) {
+    if (!conversation) {
+      const fallback = projectById(state.workspaceProjectId);
+      return fallback ? fallback.name : "";
+    }
+    const linked = projectById(conversation.workspaceProjectId);
+    if (linked) return linked.name;
+    return String(conversation.project || "").trim();
+  }
+
+  function projectCode(name) {
+    const clean = String(name || "").trim();
+    if (!clean) return "—";
+    return /^[a-zA-Z0-9]/.test(clean) ? clean.slice(0, 2).toUpperCase() : clean.slice(0, 1);
+  }
+
+  function summarizeProjectHint(project) {
+    const count = `${Number(project.conversationCount || 0)} 个对话`;
+    const intro = String(project.instructions || "").trim().replace(/\s+/g, " ");
+    if (!intro) return `${count} · 仅自己可见`;
+    return `${count} · ${intro.length > 28 ? `${intro.slice(0, 28)}…` : intro}`;
+  }
+
+  async function loadProjects(force = false) {
+    if (state.projectsLoading) return state.projects;
+    if (state.projectsLoaded && !force) return state.projects;
+    if (typeof window.WittFeatures?.request !== "function") return state.projects;
+    if (window.WittNative && !state.workspaceOperations) return state.projects;
+    state.projectsLoading = true;
+    try {
+      const data = await window.WittFeatures.request("chat/projects");
+      state.projects = Array.isArray(data?.projects) ? data.projects : [];
+      state.projectsLoaded = true;
+      hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
+      renderConversations();
+      if ($("#projectSheet")?.classList.contains("open")) renderProjectSheet();
+    } catch {
+      // Keep cached project list on transient errors.
+    } finally {
+      state.projectsLoading = false;
+    }
+    return state.projects;
+  }
+
+  function renderComposerProjectStrip() {
+    const strip = $("#composerProjectStrip");
+    const shortcutsStrip = $("#projectShortcutsStrip");
+    if (!strip || !shortcutsStrip) return;
+    const remoteActive = state.active?.remoteWorkspace?.state === "active";
+    const linked = activeProjectObject();
+    const displayName = linked?.name || projectNameForConversation(state.active);
+    if (remoteActive) {
+      strip.hidden = false;
+      strip.innerHTML = `<span class="composer-project-pill locked" title="远程协助会话已绑定独立临时空间"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17v-11Z"/></svg><span>远程协作空间（已锁定）</span></span>`;
+      shortcutsStrip.hidden = true;
+      shortcutsStrip.replaceChildren();
+      return;
+    }
+    if (displayName) {
+      strip.hidden = false;
+      strip.innerHTML = `
+        <button type="button" class="composer-project-pill" data-open-project-picker title="切换所属项目">
+          <svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17v-11Z"/></svg>
+          <span>${escapeHtml(displayName)}</span>
+        </button>
+        <button type="button" class="composer-project-clear" data-clear-project aria-label="移出项目" title="移出项目">×</button>`;
+    } else {
+      strip.hidden = true;
+      strip.replaceChildren();
+    }
+    const shortcuts = Array.isArray(linked?.shortcuts) ? linked.shortcuts : [];
+    const hasMessages = (state.active?.messages?.length || 0) > 0 || (state.active?.totalMessages || 0) > 0;
+    if (shortcuts.length && !hasMessages) {
+      shortcutsStrip.hidden = false;
+      shortcutsStrip.innerHTML = shortcuts.map((item, index) =>
+        `<button type="button" class="project-shortcut-chip" data-project-shortcut="${index}" title="${escapeHtml(item.prompt)}">${escapeHtml(item.name)}</button>`
+      ).join("");
+    } else {
+      shortcutsStrip.hidden = true;
+      shortcutsStrip.replaceChildren();
+    }
+  }
+
+  function renderProjectSheet() {
+    const list = $("#projectOptionsList");
+    if (!list) return;
+    const targetId = state.projectSheetTargetId || state.activeId;
+    const targetConv = targetId === state.activeId
+      ? state.active
+      : state.conversations.find((item) => item.id === targetId) || null;
+    const currentProjectId = targetConv?.workspaceProjectId || (targetId === state.activeId ? state.workspaceProjectId : null) || "";
+    const query = ($("#projectSearchInput")?.value || "").trim().toLocaleLowerCase();
+    const filtered = state.projects.filter((item) => {
+      if (!query) return true;
+      return `${item.name} ${item.instructions || ""}`.toLocaleLowerCase().includes(query);
+    });
+    const rows = [];
+    if (!query) {
+      rows.push(`<button type="button" data-project-id="" class="${currentProjectId === "" ? "selected" : ""}">
+        <span class="project-code">—</span>
+        <span><strong>不归属项目</strong><small>独立对话，不加入任何项目</small></span>
+        <i></i>
+      </button>`);
+    }
+    for (const item of filtered) {
+      const selected = currentProjectId === item.id;
+      rows.push(`<div class="project-option-row">
+        <button type="button" class="project-option-main ${selected ? "selected" : ""}" data-project-id="${escapeHtml(item.id)}">
+          <span class="project-code">${escapeHtml(projectCode(item.name))}</span>
+          <span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(summarizeProjectHint(item))}</small></span>
+          <i></i>
+        </button>
+        <button type="button" class="project-option-manage" data-project-manage="${escapeHtml(item.id)}" aria-label="管理项目 ${escapeHtml(item.name)}" title="查看或编辑项目">
+          <svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        </button>
+      </div>`);
+    }
+    if (!filtered.length) {
+      rows.push(`<p class="project-empty-note">${query ? "没有找到匹配的项目，可以点上方“+ 新建项目”。" : "还没有项目，点上方“+ 新建项目”快速创建一个。"}</p>`);
+    }
+    list.innerHTML = rows.join("");
+  }
+
+  function bindConversationProject(conversationId, projectId) {
+    if (!conversationId) return;
+    if (typeof bridge()?.updateConversationProject !== "function") {
+      toast("项目切换需要更新到最新版 App");
+      bridge()?.checkForUpdates?.();
+      return;
+    }
+    const encoded = projectId ? (window.WittNative ? `project:${projectId}` : projectId) : "";
+    bridge().updateConversationProject(conversationId, encoded);
   }
 
   function formatTokens(value) {
@@ -1194,28 +1384,128 @@
     });
   }
 
-  function updateHeaderCapsule() {
-    renderHeaderAccountSwitch();
-    const quota = $("#headerQuotaButton"), context = $("#headerContextButton");
-    if (!quota || !context) return;
+  let dismissedQuotaAlertKey = "";
+
+  function currentQuotaSummary() {
+    const provider = profileProvider(state.codexProfile || "default");
+    const providerLabel = provider === "gemini" ? "Gemini" : provider === "claude" ? "Claude" : "GPT";
     const windows = [];
+    let pro = false;
     if (state.codexProfile === "antigravity") {
-      const groups = state.usage?.quota?.groups || [], thirdParty = /^gemini:(claude|gpt)-/.test(state.model || "");
+      const groups = state.usage?.quota?.groups || [];
+      const thirdParty = /^gemini:(claude|gpt)-/.test(state.model || "");
       const group = (state.model || "").includes("argon")
         ? groups.find(g => /argon/i.test(g.name) || g.buckets?.some(b => /argon/i.test(b.id)))
-        : groups.find(g => g.family === (thirdParty ? "third-party" : "gemini"));
+        : groups.find(g => g.family === (thirdParty ? "third-party" : "gemini")) || groups[0];
       for (const bucket of group?.buckets || []) {
         const remaining = validCapacityPercent(bucket.remainingPercent);
-        if (remaining !== null) windows.push({ remaining, label: bucket.window === "5h" ? "5小时" : bucket.window === "weekly" ? "本周" : String(group.name || "当前模型") });
+        if (remaining !== null) {
+          windows.push({
+            remaining,
+            window: bucket.window || "",
+            label: bucket.window === "5h" ? "5小时" : bucket.window === "weekly" ? "本周" : String(group?.name || "当前模型"),
+          });
+        }
       }
     } else if (state.codexProfile !== "claude" && state.usage?.provider !== "claude") {
-      const { fiveHour, weekly } = rateLimitWindows(state.usage?.rateLimits || {});
-      for (const [label, item] of [["5小时", fiveHour], ["本周", weekly]]) {
+      const rate = rateLimitWindows(state.usage?.rateLimits || {});
+      pro = Boolean(rate.pro);
+      for (const [windowId, label, item] of [["5h", "5小时", rate.fiveHour], ["weekly", pro ? "Pro · 本周" : "本周", rate.weekly]]) {
+        if (pro && windowId === "5h") continue;
         const used = validCapacityPercent(item?.usedPercent);
-        if (used !== null) windows.push({ remaining: 100 - used, label });
+        if (used !== null) windows.push({ remaining: 100 - used, window: windowId, label });
       }
     }
     const limiting = windows.reduce((a, b) => !a || b.remaining < a.remaining ? b : a, null);
+    const remaining = limiting?.remaining ?? null;
+    const tone = remaining === null ? "unknown" : remaining <= 5 ? "danger" : remaining <= 20 ? "warning" : "normal";
+    return { provider, providerLabel, windows, limiting, remaining, tone, pro };
+  }
+
+  function renderQuotaSurfaces(summary) {
+    // 1. Subtle 2px outer ring on the active header account orb (zero extra layout width).
+    document.querySelectorAll("[data-header-provider]").forEach((button) => {
+      const isCurrent = button.dataset.headerProvider === summary.provider && button.dataset.active === "true";
+      if (isCurrent && summary.remaining !== null) {
+        button.dataset.quotaKnown = "true";
+        button.dataset.quotaTone = summary.tone;
+        button.style.setProperty("--orb-quota-pct", String(summary.remaining));
+        button.title = `${summary.providerLabel} 账号 · 剩余额度 ${summary.remaining}%（${summary.limiting.label}）`;
+      } else {
+        delete button.dataset.quotaKnown;
+        delete button.dataset.quotaTone;
+        button.style.removeProperty("--orb-quota-pct");
+      }
+    });
+
+    // 1.5 Explicit composer toolbar quota pill (always unmistakable right beside Send).
+    const pill = $("#composerQuotaPill");
+    const pillValue = $("#composerQuotaValue");
+    if (pill && pillValue) {
+      pill.dataset.tone = summary.tone;
+      pill.style.setProperty("--quota-fill-pct", `${summary.remaining ?? 0}%`);
+      if (summary.remaining !== null) {
+        pillValue.textContent = `${summary.remaining}%`;
+        const winSummary = summary.windows.map((w) => `${w.label}剩余 ${w.remaining}%`).join("，");
+        pill.title = `${summary.providerLabel} 额度：${winSummary}（点击查看详情）`;
+        pill.setAttribute("aria-label", `${summary.providerLabel} 剩余额度 ${summary.remaining}%，点击查看详情`);
+      } else if (state.usageLoading) {
+        pillValue.textContent = "…";
+        pill.title = `正在读取 ${summary.providerLabel} 额度`;
+        pill.setAttribute("aria-label", "正在读取额度");
+      } else {
+        pillValue.textContent = summary.provider === "claude" ? "用量" : "—";
+        pill.title = `点击查看 ${summary.providerLabel} 额度与用量`;
+        pill.setAttribute("aria-label", `查看 ${summary.providerLabel} 额度与用量`);
+      }
+    }
+
+    // 2. Single-line remaining quota strip at the bottom of the model & reasoning popover.
+    const bar = $("#quickModelQuotaBar");
+    const text = $("#quickModelQuotaText");
+    if (bar && text) {
+      bar.dataset.tone = summary.tone;
+      if (summary.remaining !== null) {
+        const parts = summary.windows.slice(0, 2).map((w) => `${w.label}余 ${w.remaining}%`).join(" · ");
+        text.textContent = `${summary.providerLabel} ${parts}`;
+      } else if (state.usageLoading) {
+        text.textContent = `正在读取 ${summary.providerLabel} 额度…`;
+      } else if (summary.provider === "claude") {
+        text.textContent = "查看 Claude 账号用量";
+      } else {
+        text.textContent = `查看 ${summary.providerLabel} 账号额度`;
+      }
+    }
+
+    // 3. Low-quota automatic alert above composer (hidden whenever remaining > 20%).
+    const alertWrap = $("#composerQuotaAlert");
+    if (alertWrap) {
+      const low = summary.remaining !== null && summary.remaining <= 20;
+      const alertKey = `${summary.provider}:${summary.tone}`;
+      if (!low || dismissedQuotaAlertKey === alertKey) {
+        alertWrap.hidden = true;
+        alertWrap.replaceChildren();
+      } else {
+        alertWrap.hidden = false;
+        const label = summary.remaining <= 0
+          ? `${summary.providerLabel} 当前窗口额度已用尽`
+          : `${summary.providerLabel} 额度仅剩 ${summary.remaining}%（${summary.limiting.label}）`;
+        alertWrap.innerHTML = `<div class="composer-quota-banner" data-tone="${summary.tone}" role="status">
+          <span class="codex-quota-dot" aria-hidden="true"></span>
+          <span class="composer-quota-banner-text">${escapeHtml(label)}</span>
+          <button type="button" class="composer-quota-action" data-quota-open>查看额度</button>
+          <button type="button" class="composer-quota-dismiss" data-quota-dismiss="${escapeHtml(alertKey)}" aria-label="暂时收起提示">×</button>
+        </div>`;
+      }
+    }
+  }
+
+  function updateHeaderCapsule() {
+    renderHeaderAccountSwitch();
+    const summary = currentQuotaSummary();
+    renderQuotaSurfaces(summary);
+    const quota = $("#headerQuotaButton"), context = $("#headerContextButton");
+    if (!quota || !context) return;
     function paint(button, valueNode, percent, tone, description) {
       button.dataset.known = String(percent !== null);
       button.dataset.tone = percent === null ? "unknown" : tone;
@@ -1223,10 +1513,9 @@
       valueNode.textContent = percent === null ? "—" : `${percent}%`;
       button.setAttribute("aria-label", description); button.title = description;
     }
-    const remaining = limiting?.remaining ?? null;
-    paint(quota, $("#headerQuotaValue"), remaining, remaining <= 5 ? "danger" : remaining <= 20 ? "warning" : "normal",
-      remaining === null ? "额度尚未读取或此账号暂不提供额度，点击查看用量" :
-        `额度剩余 ${remaining}%，取当前限制窗口中较低的剩余额度。${windows.map(w => `${w.label}剩余 ${w.remaining}%`).join("，")}。点击查看详情`);
+    paint(quota, $("#headerQuotaValue"), summary.remaining, summary.tone,
+      summary.remaining === null ? "额度尚未读取或此账号暂不提供额度，点击查看用量" :
+        `额度剩余 ${summary.remaining}%，取当前限制窗口中较低的剩余额度。${summary.windows.map(w => `${w.label}剩余 ${w.remaining}%`).join("，")}。点击查看详情`);
     const usage = headerContextUsage();
     paint(context, $("#headerContextValue"), usage?.percent ?? null, usage?.percent >= 95 ? "danger" : usage?.percent >= 80 ? "warning" : "normal",
       usage ? `上下文已用 ${usage.percent}%，${formatTokens(usage.used)} / ${formatTokens(usage.windowSize)} tokens，点击查看详情` : "尚未收到当前对话的上下文统计，点击查看详情");
@@ -1254,36 +1543,68 @@
   function updateQuotaStatus() {
     updateHeaderCapsule();
     const button = $("#quotaButton");
-    if (["antigravity", "claude"].includes(state.codexProfile)) {
-      button.hidden = false;button.classList.remove("pro-quota");
-      $("#fiveHourQuotaLabel").hidden = false;$("#weeklyQuotaLabel").hidden = true;
-      $("#fiveHourQuotaLabel").textContent = state.codexProfile === "antigravity" ? "查看反重力额度" : "查看 Claude 额度";
-      button.setAttribute("aria-label", "查看当前账号额度");return;
-    }
-    const { fiveHour, weekly, pro } = rateLimitWindows(state.usage?.rateLimits || {});
-    const fiveHourUsed = rateLimitUsed(fiveHour);
-    const weeklyUsed = rateLimitUsed(weekly);
-    if (fiveHourUsed === null && weeklyUsed === null) {
-      button.hidden = true;
-      return;
-    }
-    button.hidden = false;
-    button.classList.toggle("pro-quota", pro);
+    const summary = currentQuotaSummary();
     const fiveHourLabel = $("#fiveHourQuotaLabel");
     const weeklyLabel = $("#weeklyQuotaLabel");
-    fiveHourLabel.hidden = pro || fiveHourUsed === null;
-    weeklyLabel.hidden = weeklyUsed === null;
-    if (fiveHourUsed !== null) fiveHourLabel.textContent = `5小时 ${fiveHourUsed}%`;
-    if (weeklyUsed !== null) weeklyLabel.textContent = `${pro ? "Pro · 本周" : "本周"} ${weeklyUsed}%`;
-    button.setAttribute("aria-label", `查看 Codex 额度：${[
-      pro || fiveHourUsed === null ? "" : `五小时已用 ${fiveHourUsed}%`,
-      weeklyUsed === null ? "" : `${pro ? "Pro " : ""}本周已用 ${weeklyUsed}%`,
-    ].filter(Boolean).join("，")}`);
+    if (summary.windows.length) {
+      button.hidden = false;
+      button.classList.toggle("pro-quota", summary.pro);
+      const first = summary.windows[0];
+      const second = summary.windows[1] || null;
+      fiveHourLabel.hidden = false;
+      fiveHourLabel.textContent = `${first.label}余 ${first.remaining}%`;
+      weeklyLabel.hidden = !second;
+      if (second) weeklyLabel.textContent = `${second.label}余 ${second.remaining}%`;
+      button.setAttribute("aria-label", `查看 ${summary.providerLabel} 额度：${summary.windows.map((w) => `${w.label}剩余 ${w.remaining}%`).join("，")}`);
+      return;
+    }
+    if (["antigravity", "claude"].includes(state.codexProfile)) {
+      button.hidden = false;
+      button.classList.remove("pro-quota");
+      fiveHourLabel.hidden = false;
+      weeklyLabel.hidden = true;
+      fiveHourLabel.textContent = state.codexProfile === "antigravity" ? "查看 Gemini 额度" : "查看 Claude 用量";
+      button.setAttribute("aria-label", "查看当前账号额度");
+      return;
+    }
+    button.hidden = true;
+  }
+
+  function usageCacheKey(profileId = state.codexProfile || "default") {
+    return `witt_usage_cache_v1:${state.cacheScope || "device"}:${profileId}`;
+  }
+
+  function loadCachedUsage(profileId = state.codexProfile || "default") {
+    try {
+      const saved = JSON.parse(localStorage.getItem(usageCacheKey(profileId)) || "null");
+      if (!saved || typeof saved !== "object") return null;
+      const expectedProvider = profileProvider(profileId);
+      const savedProvider = saved.provider === "antigravity" ? "gemini" : saved.provider === "claude" ? "claude" : "gpt";
+      if (savedProvider !== expectedProvider) return null;
+      return saved;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveCachedUsage(profileId, payload) {
+    if (!payload || typeof payload !== "object") return;
+    try { localStorage.setItem(usageCacheKey(profileId), JSON.stringify(payload)); } catch {}
+  }
+
+  function hydrateCachedUsage(profileId = state.codexProfile || "default") {
+    if (state.usage) return false;
+    const cached = loadCachedUsage(profileId);
+    if (!cached) return false;
+    state.usage = cached;
+    state.usageStale = true;
+    return true;
   }
 
   function refreshUsage() {
     if (state.usageLoading || typeof bridge()?.requestUsage !== "function") return;
     state.usageLoading = true;
+    updateHeaderCapsule();
     bridge().requestUsage(state.activeId || "");
   }
 
@@ -1341,13 +1662,22 @@
 
   function updateModelControls() {
     selectAccountCapabilities();
-    $("#modelLabel").textContent = modelDisplayName(state.model);
+    $("#modelLabel").textContent = composerModelDisplayName(state.model);
     $("#modelButton").dataset.modelSource = modelSource({id:state.model || ""}).id;
-    $(".model-spark").innerHTML=providerIcons[profileProvider(state.codexProfile)==="gpt" ? "openai" : profileProvider(state.codexProfile)] || "✦";
+    $(".model-spark").innerHTML = modelBrandIcon(state.model || (profileProvider(state.codexProfile) === "gemini" ? "gemini:" : profileProvider(state.codexProfile) === "claude" ? "claude:" : "gpt-6.1-sol"));
     $("#reasoningLabel").textContent = reasoningNames[state.reasoning] || "均衡";
     $("#accessLabel").textContent = accessNames[state.accessMode] || "完全访问";
-    $("#projectLabel").textContent = projectName(state.workDir);
-    $("#moreProjectLabel").textContent = projectName(state.workDir);
+    const currentProjectName = projectNameForConversation(state.active);
+    const remoteActive = state.active?.remoteWorkspace?.state === "active";
+    $("#projectLabel").textContent = remoteActive ? "远程协作空间" : (currentProjectName || "选择项目");
+    const projectHint = $("#projectButtonHint");
+    if (projectHint) {
+      projectHint.textContent = remoteActive
+        ? "远程协助中，已绑定独立临时空间"
+        : (currentProjectName ? "切换或管理当前对话所属项目" : "归入或新建你的私人项目");
+    }
+    $("#moreProjectLabel").textContent = remoteActive ? "远程协作" : (currentProjectName || "无项目");
+    renderComposerProjectStrip();
     document.querySelectorAll("[data-model]").forEach((button) =>
       button.classList.toggle("selected", button.dataset.model === state.draftModel));
     document.querySelectorAll("[data-access]").forEach((button) =>
@@ -1403,22 +1733,54 @@
     return changed;
   }
 
-  function openProject() {
-    if (!state.activeId) {
+  function setInlineProjectFormOpen(open) {
+    const form = $("#inlineProjectCreateForm");
+    if (!form) return;
+    form.hidden = !open;
+    const toggle = $("#toggleCreateProjectBtn");
+    if (toggle) toggle.textContent = open ? "收起新建" : "+ 新建项目";
+    if (open) {
+      $("#inlineProjectName")?.focus();
+    } else {
+      form.reset();
+    }
+  }
+
+  function openProject(targetConversationId = null) {
+    const targetId = targetConversationId || state.activeId;
+    if (!targetId) {
       toast("请稍候，正在创建新对话");
       return;
     }
-    if (state.busy) {
+    const targetConv = targetId === state.activeId
+      ? state.active
+      : state.conversations.find((item) => item.id === targetId) || null;
+    if (targetConv?.remoteWorkspace?.state === "active") {
+      toast("远程协助会话暂不支持切换项目");
+      return;
+    }
+    if ((targetId === state.activeId && state.busy) || targetConv?.busy) {
       toast("当前任务完成后再切换项目");
       return;
     }
-    document.querySelectorAll("[data-project-path]").forEach((button) =>
-      button.classList.toggle("selected", button.dataset.projectPath === (state.workDir || "")));
+    state.projectSheetTargetId = targetId;
+    const titleEl = $("#projectSheetTitle");
+    if (titleEl) {
+      titleEl.textContent = targetId !== state.activeId && targetConv?.title
+        ? `归入项目 · ${targetConv.title.slice(0, 14)}`
+        : "选择项目";
+    }
+    if ($("#projectSearchInput")) $("#projectSearchInput").value = "";
+    setInlineProjectFormOpen(false);
+    renderProjectSheet();
     $("#projectSheet").classList.add("open");
     $("#projectSheet").setAttribute("aria-hidden", "false");
+    loadProjects(true);
   }
 
   function closeProject() {
+    state.projectSheetTargetId = null;
+    setInlineProjectFormOpen(false);
     $("#projectSheet").classList.remove("open");
     $("#projectSheet").setAttribute("aria-hidden", "true");
   }
@@ -2064,7 +2426,11 @@
     return number || "·";
   }
 
-  const providerIcons = {"openai": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z\"/></svg>", "claude": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z\"/></svg>", "gemini": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81\"/></svg>"};
+  const providerIcons = {
+    "openai": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z\"/></svg>",
+    "claude": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z\"/></svg>",
+    "gemini": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"url(#witt-gemini-official)\" d=\"M12 0C12 6.627 17.373 12 24 12C17.373 12 12 17.373 12 24C12 17.373 6.627 12 0 12C6.627 12 12 6.627 12 0Z\"/></svg>",
+  };
   const profileProvider = (id) => id === "claude" ? "claude" : id === "antigravity" ? "gemini" : "gpt";
   function renderCodexAccounts(accounts = []) {
     state.codexAccounts = accounts;
@@ -2197,7 +2563,8 @@
     state.draftModel = state.model;
     state.draftReasoning = state.reasoning;
     state.draftAccessMode = state.accessMode;
-    updateModelControls();
+    hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
     $("#settingsSheet").classList.add("open");
     $("#settingsSheet").setAttribute("aria-hidden", "false");
   }
@@ -2233,7 +2600,8 @@
     state.draftReasoning = state.reasoning;
     state.accessMode = state.draftAccessMode || state.accessMode;
     persistModelPreference();
-    updateModelControls();
+    hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
     if (state.activeId) {
       pendingModelSettings.set(state.activeId, { model: state.model, reasoning: state.reasoning,
         accessMode: state.accessMode, codexProfile: state.codexProfile, startedAt: Date.now() });
@@ -2379,18 +2747,72 @@
     return { id: "gpt", label: "GPT" };
   }
 
+  function renderDrawerProjects() {
+    const list = $("#drawerProjectList");
+    const count = $("#drawerProjectCount");
+    const toggle = $("#drawerProjectsToggle");
+    if (!list) return;
+    const collapsed = localStorage.getItem("witt_drawer_projects_collapsed") === "1";
+    list.hidden = collapsed;
+    if (toggle) toggle.setAttribute("aria-expanded", String(!collapsed));
+    if (count) count.textContent = String(state.projects.length);
+    const activeFilter = $("#historyProject")?.value || "";
+    const rows = [`<div class="drawer-project-row">
+      <button type="button" class="drawer-project-btn ${!activeFilter ? "active" : ""}" data-drawer-project="">
+        <span>全部对话</span><small>${state.conversations.length}</small>
+      </button>
+    </div>`];
+    for (const p of state.projects) {
+      const selected = activeFilter === p.id;
+      rows.push(`<div class="drawer-project-row">
+        <button type="button" class="drawer-project-btn ${selected ? "active" : ""}" data-drawer-project="${escapeHtml(p.id)}" title="${escapeHtml(p.name)}">
+          <span>${escapeHtml(p.name)}</span><small>${Number(p.conversationCount || 0)}</small>
+        </button>
+        <button type="button" class="drawer-project-icon-btn" data-drawer-project-new="${escapeHtml(p.id)}" title="在「${escapeHtml(p.name)}」中新建对话" aria-label="在 ${escapeHtml(p.name)} 中新建对话">+</button>
+        <button type="button" class="drawer-project-icon-btn" data-drawer-project-open="${escapeHtml(p.id)}" title="管理项目与参考文件" aria-label="管理 ${escapeHtml(p.name)}">⋯</button>
+      </div>`);
+    }
+    if (!state.projects.length) {
+      rows.push(`<p class="drawer-project-empty">点右上角 + 新建私人项目</p>`);
+    }
+    list.innerHTML = rows.join("");
+  }
+
   function renderConversations() {
+    renderDrawerProjects();
     $("#conversationCount").textContent = String(state.conversations.length);
     const pinned = new Set();
     const selectedProject = $("#historyProject").value;
-    const projects = [...new Set(state.conversations.map(historyProjectName))].sort();
-    $("#historyProject").innerHTML = '<option value="">全部项目</option>' + projects.map((project) => `<option value="${escapeHtml(project)}">${escapeHtml(project)}</option>`).join("");
+    const projectOptions = ['<option value="">全部项目</option>'];
+    const knownProjectIds = new Set();
+    const knownProjectNames = new Set();
+    for (const p of state.projects) {
+      knownProjectIds.add(p.id);
+      knownProjectNames.add(p.name);
+      projectOptions.push(`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`);
+    }
+    const legacyNames = [...new Set(state.conversations
+      .filter((item) => !item.workspaceProjectId && item.project && !knownProjectNames.has(item.project))
+      .map((item) => item.project))].sort();
+    for (const name of legacyNames) {
+      projectOptions.push(`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`);
+    }
+    projectOptions.push('<option value="__none__">未归属项目</option>');
+    $("#historyProject").innerHTML = projectOptions.join("");
     $("#historyProject").value = selectedProject;
+    const effectiveFilter = $("#historyProject").value;
     const q = $("#historySearch").value.trim().toLocaleLowerCase();
     const attachments = $("#historyAttachments").checked;
     const conversations = (state.historyResults || state.conversations).filter((item) => {
       if (state.historyResults) return true;
-      return (!selectedProject || historyProjectName(item) === selectedProject) &&
+      const matchesProject = !effectiveFilter
+        ? true
+        : effectiveFilter === "__none__"
+          ? (!item.workspaceProjectId && !item.project)
+          : knownProjectIds.has(effectiveFilter)
+            ? item.workspaceProjectId === effectiveFilter
+            : historyProjectName(item) === effectiveFilter;
+      return matchesProject &&
         (!q || `${item.title} ${item.lastMessage || ""}`.toLocaleLowerCase().includes(q)) &&
         (!attachments || item.hasAttachments);
     }).slice().sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
@@ -2406,20 +2828,23 @@
       const task = conversationTask(item);
       const showStatus = ["running", "queued", "awaiting_confirmation", "waiting_confirmation", "failed"].includes(task.state);
       const badge = conversationModelBadge(item);
+      const badgeIcon = badge.id === "gemini" ? providerIcons.gemini : badge.id === "gpt" ? providerIcons.openai : badge.id === "claude" ? providerIcons.claude : "";
+      const projLabel = projectNameForConversation(item);
       return `${heading}<article class="conversation-row ${item.id === state.activeId ? "active" : ""}" data-id="${item.id}" data-task-state="${escapeHtml(task.state)}" data-model-badge="${escapeHtml(badge.id)}">
         <button class="conversation-open" data-open="${item.id}" title="${escapeHtml(item.title)}">
           <span class="conversation-open-main">
             <span class="conversation-title-row">
-              <span class="conversation-model-badge model-${escapeHtml(badge.id)}" title="${escapeHtml(badge.source || badge.label)}" aria-label="${escapeHtml(`${badge.source || badge.label} · ${badge.label}`)}">${escapeHtml(badge.label)}</span>
+              <span class="conversation-model-badge model-${escapeHtml(badge.id)}" title="${escapeHtml(badge.source || badge.label)}" aria-label="${escapeHtml(`${badge.source || badge.label} · ${badge.label}`)}">${badgeIcon ? `<span class="conversation-model-icon" aria-hidden="true">${badgeIcon}</span>` : ""}${escapeHtml(badge.label)}</span>
               <strong>${escapeHtml(item.title)}</strong>
             </span>
+            ${projLabel ? `<span class="conversation-project-pill">${escapeHtml(projLabel)}</span>` : ''}
             ${q ? `<small class="history-search-snippet">${escapeHtml(item.searchSnippet || item.lastMessage || "标题匹配")}</small>` : ''}
             ${showStatus ? `<span class="conversation-task"><i></i>${escapeHtml(task.label)}</span>` : ''}
           </span>
         </button>
         <button class="conversation-more" data-conversation-menu="${item.id}" aria-label="${escapeHtml(item.title)}的更多操作" aria-haspopup="dialog">•••</button>
       </article>`;
-    }).join('') : `<div class="drawer-empty">${q || selectedProject || attachments ? "没有匹配的对话" : "还没有历史对话"}</div>`;
+    }).join('') : `<div class="drawer-empty">${q || effectiveFilter || attachments ? "没有匹配的对话" : "还没有历史对话"}</div>`;
     window.WittUpgrades?.renderTasks(state.conversations, maxConcurrentTasks);
     scheduleSummaryRefresh();
   }
@@ -3181,16 +3606,61 @@
     return `${processSummary}<div class="completed-result"><div class="stream-message final ${message.status || "completed"}">${textHtml(resultText)}</div></div>`;
   }
 
+  function copyTextToClipboard(text) {
+    const value = String(text || "");
+    if (!value) return Promise.resolve(false);
+    if (navigator.clipboard?.writeText) {
+      return navigator.clipboard.writeText(value).then(() => true).catch(() => fallbackCopy(value));
+    }
+    return Promise.resolve(fallbackCopy(value));
+  }
+
+  function fallbackCopy(value) {
+    try {
+      const area = document.createElement("textarea");
+      area.value = value;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand("copy");
+      area.remove();
+      return Boolean(ok);
+    } catch {
+      return false;
+    }
+  }
+
+  function messagePlainText(message) {
+    if (!message) return "";
+    if (message.role === "user") return String(message.text || "").trim();
+    const stream = Array.isArray(message.stream) ? message.stream : [];
+    const finalEntries = stream.filter((entry) =>
+      entry.kind === "message" && entry.phase === "final_answer" && String(entry.text || "").trim());
+    return String(finalEntries.at(-1)?.text || message.text || "").trim();
+  }
+
   function messageInnerHtml(message) {
     const files = (message.attachments || []).map(attachmentHtml).join("");
+    const msgId = escapeHtml(message.sourceMessageId || message.id || "");
+    const copyIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+    const editIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
     if (message.role === "user") {
+      const canAct = message.status !== "sending" && Boolean(String(message.text || "").trim());
       return `<div class="bubble">${message.text
         ? `<div class="user-message-copy"><div class="user-message-rich">${textHtml(message.text)}</div></div>
           <button type="button" class="user-message-toggle" aria-expanded="false" hidden>展开全文</button>`
         : ""}${files ? `<div class="message-files">${files}</div>` : ""}</div>
-        <time>${message.status === "sending"
-          ? (message.steeredInto ? "正在引导" : "正在发送")
-          : `${message.steeredInto ? "已引导 · " : ""}${formatDate(message.createdAt)}${message.senderDeviceLabel ? ` · ${escapeHtml(message.senderDeviceLabel)}${message.senderDeviceLabel === state.currentDeviceLabel ? "（本机）" : ""}` : ""}${message.status === "failed" ? " · 发送失败，可重试" : ""}`}</time>`;
+        <div class="message-meta-row">
+          <time>${message.status === "sending"
+            ? (message.steeredInto ? "正在引导" : "正在发送")
+            : `${message.steeredInto ? "已引导 · " : ""}${formatDate(message.createdAt)}${message.senderDeviceLabel ? ` · ${escapeHtml(message.senderDeviceLabel)}${message.senderDeviceLabel === state.currentDeviceLabel ? "（本机）" : ""}` : ""}${message.status === "failed" ? " · 发送失败，可重试" : ""}`}</time>
+          ${canAct ? `<div class="message-actions">
+            <button type="button" class="message-action-btn" data-msg-copy="${msgId}" title="复制消息">${copyIcon}<span>复制</span></button>
+            <button type="button" class="message-action-btn" data-msg-edit="${msgId}" title="填入输入框编辑重发">${editIcon}<span>编辑重发</span></button>
+          </div>` : ""}
+        </div>`;
     }
     const streamedImageIds = new Set(
       (message.stream || []).filter((entry) => entry.kind === "image").map((entry) => entry.imageId));
@@ -3198,12 +3668,19 @@
       .filter((image) => image.source === "delivery" || !streamedImageIds.has(image.id))
       .map((image) => inlineImageHtml(image, "delivery-image"))
       .join("");
+    const finished = ["completed", "failed", "interrupted"].includes(message.status);
+    const hasCopyable = Boolean(messagePlainText(message));
     return `<div class="assistant-body">
-      ${["completed", "failed", "interrupted"].includes(message.status)
+      ${finished
         ? completedMessageHtml(message) : streamHtml(message)}
       ${deliveredImages ? `<div class="message-image-gallery">${deliveredImages}</div>` : ""}
       ${artifactPreviewHtml(message)}
-      <time>${formatDate(message.createdAt)}</time>
+      <div class="message-meta-row">
+        <time>${formatDate(message.createdAt)}</time>
+        ${finished && hasCopyable ? `<div class="message-actions">
+          <button type="button" class="message-action-btn" data-msg-copy="${msgId}" title="复制回答（Ctrl+Shift+C）">${copyIcon}<span>复制</span></button>
+        </div>` : ""}
+      </div>
     </div>`;
   }
 
@@ -3468,6 +3945,7 @@
       ));
     });
     $("#welcome").hidden = orderedMessages.length > 0;
+    renderComposerProjectStrip();
     $("#chatStage").classList.toggle("empty-conversation", orderedMessages.length === 0);
     if (!orderedMessages.length) $("#chatStage").scrollTop = 0;
     $("#chatTitle").textContent = state.active?.title || "Witt";
@@ -3658,19 +4136,27 @@
     state.model = conversation.model || state.model;
     state.reasoning = conversation.reasoning || state.reasoning;
     state.accessMode = conversation.accessMode || state.accessMode;
-    if(state.codexProfile !== (conversation.codexProfile||"default")){state.draftModel=null;state.draftReasoning=null;state.usage=null;}
+    if (state.codexProfile !== (conversation.codexProfile || "default")) {
+      state.draftModel = null;
+      state.draftReasoning = null;
+      state.usage = null;
+      state.usageStale = false;
+    }
     state.codexProfile = conversation.codexProfile || "default";
+    hydrateCachedUsage(state.codexProfile);
     state.workDir = conversation.workDir || "";
+    state.workspaceProjectId = conversation.workspaceProjectId || null;
     restorePreferredSettings(conversation);
     persistConversation(state.active);
-    updateModelControls();
+    hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
     setConnected(true, conversation.busy ? "Witt 正在处理" : "服务器在线");
     renderMessages(true);
     if (pendingLatestConversationId === conversation.id) {
       scrollOpenedConversationToLatest(conversation.id, true);
     }
     updateQuotaStatus();
-    if (!state.usage) refreshUsage();
+    if (!state.usage || state.usageStale) refreshUsage();
     const summary = state.conversations.find((item) => item.id === conversation.id);
     if (summary) {
       summary.title = conversation.title;
@@ -3680,6 +4166,8 @@
       summary.busy = state.busy;
       summary.taskStatus = conversation.taskStatus;
       summary.pinned = conversation.pinned;
+      summary.project = conversation.project || "";
+      summary.workspaceProjectId = conversation.workspaceProjectId || null;
       summary.model = conversation.model || summary.model;
       summary.provider = conversation.provider || summary.provider;
       summary.codexProfile = conversation.codexProfile || summary.codexProfile;
@@ -3834,8 +4322,8 @@
       state.sendRequestIds = Boolean(info.sendRequestIds);
       state.workspaceOperations = Boolean(info.workspaceOperations);
       // Do not expose controls whose native transport is absent in older APKs.
-      $("#workspaceOverviewButton").hidden = !state.workspaceFeatures;
-      $("#moreGroupButton").hidden = !state.workspaceFeatures;
+      $("#workspaceOverviewButton").hidden = !(state.workspaceFeatures && state.admin);
+      $("#moreGroupButton").hidden = true;
       if (!state.workspaceFeatures) {
         $("#historySearch").placeholder = "搜索对话标题和摘要";
         $("#historySearchHint").textContent = "搜索标题与摘要 · 置顶仅保存在此设备";
@@ -3846,6 +4334,9 @@
       if (/^[a-f0-9]{24,64}$/.test(cacheScope)) {
         state.cacheScope = cacheScope;
       }
+      hydrateCachedUsage(state.codexProfile);
+      hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
       restoreDraft();
       if (version) $("#appVersion").textContent = `v${version}`;
       if (versionLessThan(version, "2.1.7")) {
@@ -3875,9 +4366,13 @@
         state.admin = Boolean(payload.principal?.admin);
         applyPrincipalPolicy(payload.principal);
         $("#adminSettingsButton").hidden = !state.admin;
+        $("#workspaceOverviewButton").hidden = !(state.workspaceFeatures && state.admin);
         $("#codexAccountsButton").hidden = !state.admin && state.allowedCodexProfiles.length < 2;
         hideActivation();
+        hydrateCachedUsage(state.codexProfile);
+        updateQuotaStatus();
         bridge()?.requestCapabilities?.();
+        refreshUsage();
         hydrateConversationCache().finally(() => bridge()?.requestConversations?.());
         return;
       }
@@ -3928,6 +4423,7 @@
       persistConversationList();
       setConnected(true, "服务器在线");
       dismissBoot();
+      loadProjects();
       renderConversations();
       if (wasSummaryRefresh) return;
       if (state.activeId && state.conversations.some((item) => item.id === state.activeId)) {
@@ -3940,7 +4436,9 @@
         state.activeId = null;
         state.active = null;
         state.workDir = "";
-        updateModelControls();
+        state.workspaceProjectId = null;
+        hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
         renderMessages();
       }
     },
@@ -3950,6 +4448,8 @@
       state.capabilities = payload;
       selectAccountCapabilities();
       renderCapabilities();
+      $("#modelLabel").textContent = composerModelDisplayName(state.model);
+      updateHeaderCapsule();
       if (pendingProviderConversation) {
         const selected = pendingProviderConversation;
         pendingProviderConversation = null;clearTimeout(pendingProviderConversationTimer);
@@ -4037,7 +4537,9 @@
       state.accessMode = conversation.accessMode || state.accessMode;
       state.codexProfile = conversation.codexProfile || "default";
       state.workDir = conversation.workDir || "";
-      updateModelControls();
+      state.workspaceProjectId = conversation.workspaceProjectId || null;
+      hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
       localStorage.setItem("wit_active_conversation", conversation.id);
       persistConversation(state.active);
       if (state.supportsSse && state.appVisible) {
@@ -4157,7 +4659,12 @@
     onConversationMetadataUpdated(json) {
       const conversation = JSON.parse(json).conversation;
       const item = state.conversations.find((entry) => entry.id === conversation?.id);
-      if (item) Object.assign(item, { title: conversation.title, pinned: conversation.pinned, project: conversation.project });
+      if (item) Object.assign(item, {
+        title: conversation.title,
+        pinned: conversation.pinned,
+        project: conversation.project,
+        workspaceProjectId: conversation.workspaceProjectId || null,
+      });
       if (conversation?.id === state.activeId) applyConversation(conversation);
       renderConversations();
       persistConversationList();
@@ -4276,7 +4783,8 @@
       persistConversation(state.active);
       persistModelPreference();
       localStorage.setItem("wit_codex_profile", state.codexProfile);
-      updateModelControls();
+      hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
       closeSettings();
       renderConversations();
       persistConversationList();
@@ -4285,13 +4793,26 @@
     },
     onConversationProjectUpdated(json) {
       const conversation = JSON.parse(json).conversation;
-      if (conversation.id !== state.activeId) return;
-      state.active = mergeVisibleConversation(conversation);
-      state.workDir = conversation.workDir || "";
-      persistConversation(state.active);
-      updateModelControls();
+      const summary = state.conversations.find((entry) => entry.id === conversation?.id);
+      if (summary) {
+        summary.project = conversation.project || "";
+        summary.workspaceProjectId = conversation.workspaceProjectId || null;
+        summary.workDir = conversation.workDir || "";
+      }
+      if (conversation?.id === state.activeId) {
+        state.active = mergeVisibleConversation(conversation);
+        state.workDir = conversation.workDir || "";
+        state.workspaceProjectId = conversation.workspaceProjectId || null;
+        persistConversation(state.active);
+        hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
+      }
+      renderConversations();
+      persistConversationList();
       closeProject();
-      toast(`已切换到${projectName(state.workDir)}`);
+      const label = projectNameForConversation(conversation);
+      toast(label ? `已归入项目「${label}」` : "已设为不归属项目");
+      loadProjects(true);
       bridge()?.requestConversations?.();
     },
     onConversationProjectError(message) {
@@ -4304,6 +4825,8 @@
       const provider = payload.provider === "antigravity" ? "gemini" : payload.provider === "claude" ? "claude" : "gpt";
       if (provider !== profileProvider(state.codexProfile)) return;
       state.usage = payload;
+      state.usageStale = false;
+      saveCachedUsage(state.codexProfile || "default", payload);
       updateQuotaStatus();
       renderUsage();
     },
@@ -4521,7 +5044,8 @@
         bridge()?.updateConversationSettings?.(state.activeId, state.model, state.reasoning, state.accessMode, state.codexProfile);
       }
       updateHeaderCapsule();
-      updateModelControls();
+      hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
       renderConversations();
       renderMessages();
       toast(`已切换至 ${profileProvider(state.codexProfile).toUpperCase()} (${modelDisplayName(state.model)})`);
@@ -4548,7 +5072,8 @@
       renderConversations();
     }
     updateHeaderCapsule();
-    updateModelControls();
+    hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
     toast(`已切换至 ${profileProvider(state.codexProfile).toUpperCase()} (${modelDisplayName(state.model)})`);
   }
 
@@ -4602,12 +5127,14 @@
     updateHeaderCapsule();
     state.loadingOlder = false;
     state.olderRequest = null;
-    state.workDir = state.codexProfile === "xuanyu" ? "/data/xuanyu-build-console" : "";
+    state.workDir = "";
+    state.workspaceProjectId = null;
     localStorage.setItem("wit_codex_profile", state.codexProfile);
     localStorage.removeItem("wit_active_conversation");
     resetComposer();
     restoreDraft();
-    updateModelControls();
+    hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
     renderMessages();
     state.transmitting = true;
     setBusy(false);
@@ -4646,10 +5173,7 @@
     setChatMoreMenu(!$("#chatMoreMenu").classList.contains("open")));
   $("#moreGroupButton").addEventListener("click", () => {
     setChatMoreMenu(false);
-    if (!state.activeId) return;
-    if (!state.workspaceFeatures) { toast("当前客户端暂不支持分组"); return; }
-    if (!window.WittUpgrades?.openGroupDialog) { toast("分组设置尚未就绪，请刷新后重试"); return; }
-    window.WittUpgrades.openGroupDialog(state.activeId, state.active?.project || "");
+    openProject(state.activeId);
   });
   $("#moreNotifyButton").setAttribute("aria-pressed", String(completionReminder));
   $("#completionNotifyLabel").textContent = completionReminder ? "已开启" : "已关闭";
@@ -5096,11 +5620,7 @@
   $("#attachButton").addEventListener("click", () => {
     setAttachmentMenu(!$("#attachmentMenu").classList.contains("open"));
   });
-  $("#attachPhotoButton").addEventListener("click", () => {
-    setAttachmentMenu(false);
-    bridge()?.pickFiles?.();
-  });
-  $("#attachFileButton").addEventListener("click", () => {
+  $("#attachFileButton")?.addEventListener("click", () => {
     setAttachmentMenu(false);
     bridge()?.pickFiles?.();
   });
@@ -5142,7 +5662,7 @@
   $("#messageInput").addEventListener("keydown", (event) => {
     // Candidate confirmation belongs to the IME, including legacy WebViews.
     if (event.isComposing || event.keyCode === 229) return;
-    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    if (event.key === "Enter" && !event.shiftKey && !event.altKey) {
       event.preventDefault();
       sendMessage();
     }
@@ -5320,34 +5840,128 @@
   $("#updateButton").addEventListener("click", () => bridge()?.checkForUpdates?.());
   $("#projectButton").addEventListener("click", () => {
     setAttachmentMenu(false);
-    openProject();
+    openProject(state.activeId);
   });
   $("#closeProject").addEventListener("click", closeProject);
   $("#projectBackdrop").addEventListener("click", closeProject);
+  $("#projectSearchInput")?.addEventListener("input", () => renderProjectSheet());
+  $("#toggleCreateProjectBtn")?.addEventListener("click", () => {
+    const form = $("#inlineProjectCreateForm");
+    setInlineProjectFormOpen(Boolean(form?.hidden));
+  });
+  $("#cancelInlineProjectBtn")?.addEventListener("click", () => setInlineProjectFormOpen(false));
+  $("#inlineProjectCreateForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const nameInput = $("#inlineProjectName");
+    const instructionsInput = $("#inlineProjectInstructions");
+    const submitBtn = $("#submitInlineProjectBtn");
+    const name = String(nameInput?.value || "").trim();
+    const instructions = String(instructionsInput?.value || "");
+    if (!name || name.length > 80) {
+      toast("项目名称须为 1–80 个字符");
+      nameInput?.focus();
+      return;
+    }
+    if (typeof window.WittFeatures?.request !== "function") {
+      toast("项目功能尚未就绪，请刷新后重试");
+      return;
+    }
+    const targetId = state.projectSheetTargetId || state.activeId;
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      const data = await window.WittFeatures.request("chat/projects", "POST", { name, instructions, shortcuts: [] });
+      const created = data?.project;
+      if (created) {
+        state.projects = [created, ...state.projects.filter((item) => item.id !== created.id)];
+        state.projectsLoaded = true;
+      }
+      setInlineProjectFormOpen(false);
+      renderProjectSheet();
+      renderConversations();
+      if (targetId && created?.id) {
+        bindConversationProject(targetId, created.id);
+      } else {
+        toast(`已创建项目「${name}」`);
+      }
+    } catch (error) {
+      toast(error.message || "创建项目失败");
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  });
   $(".project-options").addEventListener("click", (event) => {
-    const button = event.target.closest("[data-project-path]");
-    if (!button || !state.activeId) return;
-    const workDir = button.dataset.projectPath || "";
-    if (workDir === state.workDir) {
+    const manageBtn = event.target.closest("[data-project-manage]");
+    if (manageBtn) {
+      const projectId = manageBtn.dataset.projectManage;
+      closeProject();
+      window.WittFeatures?.openProject?.(projectId);
+      return;
+    }
+    const button = event.target.closest("[data-project-id]");
+    const targetId = state.projectSheetTargetId || state.activeId;
+    if (!button || !targetId) return;
+    const projectId = button.dataset.projectId || "";
+    const targetConv = targetId === state.activeId
+      ? state.active
+      : state.conversations.find((item) => item.id === targetId) || null;
+    const currentId = targetConv?.workspaceProjectId || "";
+    if (projectId === currentId) {
       closeProject();
       return;
     }
-    document.querySelectorAll("[data-project-path]").forEach((item) =>
+    document.querySelectorAll("[data-project-id]").forEach((item) =>
       item.classList.toggle("selected", item === button));
-    if (typeof bridge()?.updateConversationProject !== "function") {
-      toast("项目切换需要更新到最新版 App");
-      bridge()?.checkForUpdates?.();
+    bindConversationProject(targetId, projectId);
+  });
+  $("#composerProjectStrip")?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-clear-project]")) {
+      if (!state.activeId) return;
+      if (state.busy) { toast("当前任务完成后再切换项目"); return; }
+      bindConversationProject(state.activeId, "");
       return;
     }
-    bridge().updateConversationProject(state.activeId, workDir);
+    if (event.target.closest("[data-open-project-picker]")) {
+      openProject(state.activeId);
+    }
+  });
+  $("#projectShortcutsStrip")?.addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-project-shortcut]");
+    if (!chip) return;
+    const linked = activeProjectObject();
+    const shortcut = linked?.shortcuts?.[Number(chip.dataset.projectShortcut)];
+    if (!shortcut?.prompt) return;
+    $("#messageInput").value = shortcut.prompt;
+    $("#messageInput").dispatchEvent(new Event("input"));
+    $("#messageInput").focus();
   });
   $("#modelButton").addEventListener("click", () => {
     if (state.busy) { toast("当前任务完成后再切换模型"); return; }
     state.draftModel = state.model;
     state.draftReasoning = state.reasoning;
     state.draftAccessMode = state.accessMode;
-    updateModelControls();
-    setQuickModelMenu(!$("#quickModelMenu").classList.contains("open"));
+    hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
+    const opening = !$("#quickModelMenu").classList.contains("open");
+    setQuickModelMenu(opening);
+    if (opening && !state.usage && !state.usageLoading) refreshUsage();
+  });
+  $("#quickModelQuotaBar")?.addEventListener("click", () => {
+    setQuickModelMenu(false);
+    openProfile();
+  });
+  $("#composerQuotaPill")?.addEventListener("click", () => {
+    openProfile();
+  });
+  $("#composerQuotaAlert")?.addEventListener("click", (event) => {
+    const dismiss = event.target.closest("[data-quota-dismiss]");
+    if (dismiss) {
+      dismissedQuotaAlertKey = dismiss.dataset.quotaDismiss || "";
+      renderQuotaSurfaces(currentQuotaSummary());
+      return;
+    }
+    if (event.target.closest("[data-quota-open]")) {
+      openProfile();
+    }
   });
   $("#quickModelExpand")?.addEventListener("click", () => {
     const menu = $("#quickModelMenu");
@@ -5420,13 +6034,15 @@
     const model = event.target.closest("[data-model]")?.dataset.model;
     if (!model) return;
     state.draftModel = model;
-    updateModelControls();
+    hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
   });
   const selectReasoning = (event) => {
     const reasoning = event.target.closest("[data-reasoning]")?.dataset.reasoning;
     if (!reasoning) return;
     state.draftReasoning = reasoning;
-    updateModelControls();
+    hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
   };
   $("#reasoningStops").addEventListener("click", selectReasoning);
   $("#reasoningSegments").addEventListener("click", selectReasoning);
@@ -5434,7 +6050,8 @@
     const accessMode = event.target.closest("[data-access]")?.dataset.access;
     if (!accessMode) return;
     state.draftAccessMode = accessMode;
-    updateModelControls();
+    hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
   });
   $("#saveSettings").addEventListener("click", () => applySettings());
   $("#forkConversationButton").addEventListener("click", () => {
@@ -5458,6 +6075,19 @@
     archive: openArchiveDialog,
     toast,
     refresh: renderConversations,
+    openProjectPicker: (id) => openProject(id || state.activeId),
+    syncProjects: (list) => {
+      if (Array.isArray(list)) {
+        state.projects = list;
+        state.projectsLoaded = true;
+        hydrateCachedUsage(state.codexProfile);
+  updateModelControls();
+        renderConversations();
+        if ($("#projectSheet")?.classList.contains("open")) renderProjectSheet();
+      } else {
+        loadProjects(true);
+      }
+    },
     refreshSummaries: () => { summaryRefreshPending = true; summaryRefreshAt = Date.now(); bridge()?.requestConversations?.(); },
     updateMetadata: (id, changes) => {
       if (!state.workspaceFeatures) { toast("此操作需要新版客户端，请先检查更新"); return false; }
@@ -5471,6 +6101,160 @@
     },
     refreshMath: () => { document.querySelectorAll(".message").forEach((node) => delete node.dataset.fingerprint); renderMessages(true); },
   };
+  // Message action buttons: copy, edit-resend, regenerate
+  $("#messageList").addEventListener("click", async (event) => {
+    const copyBtn = event.target.closest("[data-msg-copy]");
+    if (copyBtn) {
+      const id = copyBtn.dataset.msgCopy;
+      const msg = (state.active?.messages || []).find((m) => m.id === id);
+      const text = messagePlainText(msg);
+      if (!text) return;
+      const ok = await copyTextToClipboard(text);
+      if (ok) {
+        copyBtn.classList.add("copied");
+        const span = copyBtn.querySelector("span");
+        if (span) span.textContent = "已复制";
+        setTimeout(() => {
+          copyBtn.classList.remove("copied");
+          if (span) span.textContent = "复制";
+        }, 1600);
+        toast("已复制到剪贴板");
+      } else {
+        toast("复制失败，请手动选中复制");
+      }
+      return;
+    }
+    const editBtn = event.target.closest("[data-msg-edit]");
+    if (editBtn) {
+      const id = editBtn.dataset.msgEdit;
+      const msg = (state.active?.messages || []).find((m) => m.id === id);
+      if (!msg?.text) return;
+      const input = $("#messageInput");
+      input.value = msg.text;
+      input.dispatchEvent(new Event("input"));
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+      toast("已填入输入框，修改后发送即可");
+      return;
+    }
+  });
+
+  // Global keyboard shortcut: Ctrl+Shift+C / Cmd+Shift+C copies latest assistant reply
+  document.addEventListener("keydown", async (event) => {
+    if (event.isComposing || event.keyCode === 229) return;
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "c") {
+      if (window.getSelection?.()?.toString()) return;
+      const msgs = state.active?.messages || [];
+      const latest = [...msgs].reverse().find((m) => m.role === "assistant" && messagePlainText(m));
+      if (!latest) return;
+      event.preventDefault();
+      const ok = await copyTextToClipboard(messagePlainText(latest));
+      if (ok) toast("已复制最新回复（Ctrl+Shift+C）");
+    }
+  });
+
+  // Paste screenshot / files directly into composer (Web & desktop)
+  $("#messageInput").addEventListener("paste", (event) => {
+    const dt = event.clipboardData;
+    if (!dt || typeof bridge()?.addPickedFiles !== "function") return;
+    const files = [];
+    if (dt.items) {
+      for (const item of dt.items) {
+        if (item.kind === "file") {
+          const f = item.getAsFile();
+          if (f) {
+            const stamp = new Date().toTimeString().slice(0, 8).replaceAll(":", "");
+            const ext = f.type === "image/jpeg" ? ".jpg" : f.type === "image/webp" ? ".webp" : f.type === "image/gif" ? ".gif" : ".png";
+            const named = (!f.name || f.name === "image.png") && f.type.startsWith("image/")
+              ? new File([f], `screenshot-${stamp}${ext}`, { type: f.type })
+              : f;
+            files.push(named);
+          }
+        }
+      }
+    } else if (dt.files?.length) {
+      files.push(...dt.files);
+    }
+    if (!files.length) return;
+    const added = bridge().addPickedFiles(files);
+    if (added > 0 && !dt.getData("text/plain")) event.preventDefault();
+  });
+
+  // Drag-and-drop files/images directly onto chat / composer
+  let dragDepth = 0;
+  const appShellEl = $(".app-shell");
+  if (appShellEl) {
+    appShellEl.addEventListener("dragenter", (event) => {
+      if (!event.dataTransfer?.types?.includes("Files")) return;
+      dragDepth += 1;
+      $("#composer")?.classList.add("drop-active");
+    });
+    appShellEl.addEventListener("dragover", (event) => {
+      if (!event.dataTransfer?.types?.includes("Files")) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    });
+    appShellEl.addEventListener("dragleave", () => {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) $("#composer")?.classList.remove("drop-active");
+    });
+    appShellEl.addEventListener("drop", (event) => {
+      dragDepth = 0;
+      $("#composer")?.classList.remove("drop-active");
+      const files = event.dataTransfer?.files;
+      if (!files?.length || typeof bridge()?.addPickedFiles !== "function") return;
+      event.preventDefault();
+      bridge().addPickedFiles(files);
+    });
+  }
+
+  // Sidebar "My Projects" quick controls
+  $("#drawerProjectsToggle")?.addEventListener("click", () => {
+    const list = $("#drawerProjectList");
+    if (!list) return;
+    const nextCollapsed = !list.hidden;
+    try { localStorage.setItem("witt_drawer_projects_collapsed", nextCollapsed ? "1" : "0"); } catch {}
+    renderDrawerProjects();
+  });
+  $("#drawerProjectsAdd")?.addEventListener("click", () => {
+    closeDrawer();
+    openProject(state.activeId);
+    setInlineProjectFormOpen(true);
+  });
+  $("#drawerProjectList")?.addEventListener("click", async (event) => {
+    const openBtn = event.target.closest("[data-drawer-project-open]");
+    if (openBtn) {
+      closeDrawer();
+      window.WittFeatures?.openProject?.(openBtn.dataset.drawerProjectOpen);
+      return;
+    }
+    const newBtn = event.target.closest("[data-drawer-project-new]");
+    if (newBtn) {
+      const projectId = newBtn.dataset.drawerProjectNew;
+      if (typeof window.WittFeatures?.request !== "function") return;
+      try {
+        const data = await window.WittFeatures.request(`chat/projects/${projectId}/conversations`, "POST", window.WittUI.settings());
+        window.DropVault.onConversationCreated(JSON.stringify(data));
+        closeDrawer();
+        loadProjects(true);
+      } catch (err) {
+        toast(err.message || "无法创建项目对话");
+      }
+      return;
+    }
+    const filterBtn = event.target.closest("[data-drawer-project]");
+    if (filterBtn) {
+      const projectId = filterBtn.dataset.drawerProject || "";
+      const select = $("#historyProject");
+      if (select) {
+        select.value = projectId;
+        refreshHistorySearch();
+      }
+      renderDrawerProjects();
+    }
+  });
+
+  hydrateCachedUsage(state.codexProfile);
   updateModelControls();
   document.addEventListener("visibilitychange", () => setAppVisible(!document.hidden));
   // Native calls nativeReady with version and cache scope after the main frame is loaded.

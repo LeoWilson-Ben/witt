@@ -78,23 +78,30 @@
     if (!item) return;
     menuId = id;
     $('#conversationActionsTitle').textContent = item.title;
+    const projectBtn = $('#conversationProjectButton');
+    if (projectBtn) {
+      projectBtn.disabled = Boolean(item.busy || item.remoteWorkspace?.state === 'active');
+      const label = projectBtn.querySelector('span');
+      if (label) label.textContent = item.project ? item.project : '无项目';
+    }
     $('#conversationArchiveButton').disabled = Boolean(item.busy);
     $('#conversationActions small').textContent = item.busy ? '任务进行中，暂停或完成后即可归档。' : '归档只移出列表，历史记录仍会保留。';
     open('conversationActions');
   }
-  function openGroupDialog(id, currentGroup = '') {
-    open('conversationGroupSheet');
-    groupConversationId = id;
-    returnFocus = $('#chatMoreButton');
-    $('#conversationGroupInput').value = currentGroup;
-    $('#conversationGroupInput').focus();
-    $('#conversationGroupInput').select();
+  function openGroupDialog(id) {
+    close(false);
+    ui.openProjectPicker?.(id);
   }
-  $('#conversationGroupForm').addEventListener('submit', event => {
+  $('#conversationProjectButton')?.addEventListener('click', () => {
+    const id = menuId;
+    close(false);
+    if (id) ui.openProjectPicker?.(id);
+  });
+  $('#conversationGroupForm')?.addEventListener('submit', event => {
     event.preventDefault();
-    const project = $('#conversationGroupInput').value.trim();
-    if (project.length > 80) { ui.toast('分组名称请保持在 80 字以内'); return; }
-    if (groupConversationId && ui.updateMetadata(groupConversationId, { project })) close();
+    const id = groupConversationId;
+    close(false);
+    if (id) ui.openProjectPicker?.(id);
   });
   window.WittUpgrades = { renderTasks, openConversationMenu, openGroupDialog };
   document.querySelectorAll('[data-close-upgrade]').forEach(button => button.addEventListener('click', () => close()));

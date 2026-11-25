@@ -20,7 +20,7 @@
   </script>
   <title>Witt · 私人服务器助手</title>
   <link rel="icon" href="/vault/icon.svg">
-  <link rel="stylesheet" href="/vault/witt-base-20261008.css?v=1">
+  <link rel="stylesheet" href="/vault/witt-base-20261008.min.css?v=20261125-1">
   <style id="workspace-critical-style">
 /* Semantic workspace layer. Legacy terminal/artifact/theme styles stay intact. */
 :root { --ws-ink: #243839; --ws-muted: #718181; --ws-line: rgba(42,68,68,.12); --ws-surface: rgba(255,255,255,.94); --ws-accent: #227b70; --ws-radius: 16px; }
@@ -78,17 +78,21 @@
 }
 @media (prefers-reduced-motion: reduce) { .task-status-strip, .workspace-overview, .history-load { animation: none; transition: none; } }
   </style>
-  <link rel="stylesheet" href="/vault/witt-interface-20261008.css?v=8-file-transfer-20261026&deviceNotes=20261114-2&historyModelBadge=20261116-3&bootSilk=20261125-1">
-  <link rel="stylesheet" href="/vault/conversation-entry.css?v=20261114-spacing-1">
-  <link rel="stylesheet" href="/vault/provider-accounts.css?v=20261116-model-source-2">
-  <link rel="stylesheet" href="/vault/simplified-settings.css?v=20261102-keyboard-1">
-  <link rel="stylesheet" href="/vault/settings-glass.css?v=20261104-device-layout-1">
-  <link rel="stylesheet" href="/vault/quota-panel.css?v=20261114-layout-2">
-  <link rel="stylesheet" href="/vault/header-capsule.css?v=20261114-three-orbs-1">
-  <link rel="stylesheet" href="/vault/xuanyu-build-panel.css?v=20261118-6">
-  <link rel="stylesheet" href="/vault/web-desktop-adapt.css?v=20261124-codex1">
+  <link rel="stylesheet" href="/vault/witt-interface-20261008.min.css?v=20261125-1">
+  <link rel="stylesheet" href="/vault/witt-overlays.min.css?v=20261125-1">
 </head>
 <body>
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden;pointer-events:none">
+    <defs>
+      <linearGradient id="witt-gemini-official" x1="2" y1="22" x2="22" y2="2" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#3186FF"/>
+        <stop offset="28%" stop-color="#4285F4"/>
+        <stop offset="56%" stop-color="#9B72CB"/>
+        <stop offset="82%" stop-color="#D96570"/>
+        <stop offset="100%" stop-color="#EA4335"/>
+      </linearGradient>
+    </defs>
+  </svg>
   <div class="app-atmosphere" aria-hidden="true"><i></i><i></i><i></i></div>
   <div class="boot-screen" id="bootScreen" aria-label="Witt 正在启动">
     <canvas class="boot-silk-canvas" id="bootSilkCanvas" aria-hidden="true"></canvas>
@@ -115,7 +119,8 @@
   <div class="app-shell">
     <header class="compact-nav animate-blur-fade-up" style="animation-delay:0ms">
       <button class="compact-nav-button compact-menu-button" id="menuButton" aria-label="打开对话列表">
-        <svg viewBox="0 0 24 24"><path d="M4.5 9h15M4.5 15h10.5"/></svg>
+        <svg class="menu-icon-mobile" viewBox="0 0 24 24"><path d="M4.5 9h15M4.5 15h10.5"/></svg>
+        <svg class="menu-icon-desktop" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg>
       </button>
       <h1 id="chatTitle" class="visually-hidden">Witt</h1>
       <div class="compact-nav-actions">
@@ -140,13 +145,13 @@
       </div>
       <section class="chat-more-menu" id="chatMoreMenu" aria-hidden="true">
         <p id="chatMoreTitle" hidden style="display:none!important">当前对话</p>
-        <button id="moreGroupButton" class="chat-more-item"><span>分组</span><small>整理聊天记录</small></button>
+        <button id="moreGroupButton" class="chat-more-item" hidden><span>分组</span><small>已合并至项目</small></button>
         <button id="quotaButton" class="chat-more-item quota-button" aria-label="查看 Codex 额度" hidden>
           <svg viewBox="0 0 24 24"><path d="M5 18V9m7 9V5m7 13v-6"/></svg><span>额度与用量</span>
           <small><b id="fiveHourQuotaLabel">5小时 —</b><b id="weeklyQuotaLabel">本周 —</b></small>
         </button>
         <button id="moreProjectButton" class="chat-more-item">
-          <svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17v-11Z"/></svg><span>当前项目</span><small id="moreProjectLabel">空白</small>
+          <svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17v-11Z"/></svg><span>所属项目</span><small id="moreProjectLabel">无项目</small>
         </button>
         <button id="moreArchiveButton" class="chat-more-item">
           <svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="M8 9h8"/></svg><span>归档对话</span>
@@ -201,6 +206,9 @@
     </section>
 
     <section class="composer-wrap" id="composerWrap">
+      <div class="composer-quota-alert" id="composerQuotaAlert" hidden></div>
+      <div class="composer-project-strip" id="composerProjectStrip" hidden></div>
+      <div class="project-shortcuts-strip" id="projectShortcutsStrip" hidden></div>
       <div class="attachment-strip" id="attachmentStrip"></div>
       <div class="composer liquid-glass" id="composer">
         <textarea id="messageInput" rows="1" maxlength="48000" placeholder="回复 Witt"></textarea>
@@ -212,6 +220,11 @@
             <span class="model-spark">✦</span><b id="modelLabel">Astra</b><i></i><span id="reasoningLabel">均衡</span>
             <span id="accessLabel" class="visually-hidden">完全访问</span>
           </button>
+          <button type="button" class="composer-quota-pill" id="composerQuotaPill" data-tone="unknown" aria-label="查看当前账号额度">
+            <i class="composer-quota-fill" aria-hidden="true"></i>
+            <span class="composer-quota-label">额度</span>
+            <strong id="composerQuotaValue">—</strong>
+          </button>
 
           <button class="send-button" id="sendButton" aria-label="发送">
             <svg viewBox="0 0 24 24"><path d="M12 19V5m0 0L6.5 10.5M12 5l5.5 5.5"/></svg>
@@ -219,9 +232,8 @@
         </div>
       </div>
       <div class="attachment-menu" id="attachmentMenu" aria-hidden="true">
-        <button id="attachPhotoButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M4 7h3l1.4-2h7.2L17 7h3v12H4V7Zm8 9a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/></svg></span><span><b>照片</b><small>选择图片或拍摄后发送</small></span></button>
-        <button id="attachFileButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M8 12.5 13.7 6a3.1 3.1 0 1 1 4.6 4.2l-7.4 8.2A4.5 4.5 0 0 1 4.2 12l7.1-7.8"/></svg></span><span><b>文件</b><small>文档、表格、压缩包等</small></span></button>
-        <button id="projectButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17v-11Z"/></svg></span><span><b id="projectLabel">空白项目</b><small>选择本次任务的工作目录</small></span></button>
+        <button id="attachFileButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M8 12.5 13.7 6a3.1 3.1 0 1 1 4.6 4.2l-7.4 8.2A4.5 4.5 0 0 1 4.2 12l7.1-7.8"/></svg></span><span><b>图片与文件</b><small>上传照片、文档、表格、压缩包等</small></span></button>
+        <button id="projectButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17v-11Z"/></svg></span><span><b id="projectLabel">选择项目</b><small id="projectButtonHint">归入或新建你的私人项目</small></span></button>
       </div>
       <section class="quick-model-menu codex-popover-minimal" id="quickModelMenu" aria-hidden="true" aria-label="模型与推理强度">
         <!-- 视图 1: 主滑块面板 (对标 Codex 官方界面，移除无后端支持的闪电) -->
@@ -252,6 +264,12 @@
               <div class="codex-slider-hitbox" id="codexSliderHitbox"></div>
             </div>
           </div>
+
+          <button type="button" class="codex-quota-footer" id="quickModelQuotaBar" data-tone="unknown" aria-label="查看当前账号额度详情">
+            <span class="codex-quota-dot" aria-hidden="true"></span>
+            <span class="codex-quota-text" id="quickModelQuotaText">当前账号额度</span>
+            <span class="codex-quota-arrow" aria-hidden="true">›</span>
+          </button>
         </div>
 
         <!-- 视图 2: 点击模型名称时展开的模型选择列表 -->
@@ -326,17 +344,28 @@
       <div class="drawer-head">
         <h2>Witt</h2>
         <button class="icon-button drawer-search-toggle" id="drawerSearchToggle" type="button" aria-label="搜索对话" aria-expanded="false" aria-controls="drawerSearchControls"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg></button>
-        <button class="icon-button" id="closeDrawer" aria-label="关闭边栏"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+        <button class="icon-button" id="closeDrawer" aria-label="关闭边栏"><svg class="close-icon-mobile" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg><svg class="close-icon-desktop" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg></button>
       </div>
       <section class="drawer-history" aria-labelledby="drawerHistoryTitle">
+        <section class="drawer-projects" id="drawerProjectsSection" aria-label="我的项目">
+          <div class="drawer-projects-head">
+            <button type="button" class="drawer-projects-toggle" id="drawerProjectsToggle" aria-expanded="true">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+              <span>我的项目</span>
+              <b id="drawerProjectCount">0</b>
+            </button>
+            <button type="button" class="drawer-projects-add" id="drawerProjectsAdd" aria-label="新建项目" title="新建项目">+</button>
+          </div>
+          <div class="drawer-project-list" id="drawerProjectList"></div>
+        </section>
         <div class="drawer-history-head">
           <span id="drawerHistoryTitle">最近</span>
           <b id="conversationCount">0</b><button type="button" id="taskOverviewButton" aria-label="查看全部任务">任务 <span id="taskOverviewCount">0</span></button>
         </div>
         <div class="history-controls" id="drawerSearchControls" hidden>
           <input id="historySearch" type="search" placeholder="搜索对话和消息" aria-label="搜索历史对话" autocomplete="off">
-          <div><select id="historyProject" aria-label="按分组筛选"><option value="">全部分组</option></select><label><input type="checkbox" id="historyAttachments"> 含附件</label></div>
-          <small id="historySearchHint">按分组筛选，最近更新优先</small>
+          <div><select id="historyProject" aria-label="按项目筛选"><option value="">全部项目</option></select><label><input type="checkbox" id="historyAttachments"> 含附件</label></div>
+          <small id="historySearchHint">按项目筛选，仅显示你自己的项目与对话</small>
         </div>
         <div class="conversation-list" id="conversationList"></div>
       </section>
@@ -345,7 +374,7 @@
         <svg viewBox="0 0 24 24"><path d="M5 19h4l10-10a2.8 2.8 0 0 0-4-4L5 15v4Z M13.5 6.5l4 4"/></svg>
         <span><strong>新建对话</strong><small>开启一个独立上下文</small></span>
       </button>
-        <button class="drawer-avatar" id="drawerAvatar" type="button" aria-label="我的与设置" aria-expanded="false" aria-controls="drawerAccountMenu"><span aria-hidden="true">W</span></button>
+        <button class="drawer-avatar" id="drawerAvatar" type="button" aria-label="我的与设置" aria-expanded="false" aria-controls="drawerAccountMenu"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></span></button>
       </div>
 
     </div>
@@ -354,34 +383,30 @@
   <aside id="drawerAccountMenu" class="user-settings-sheet" hidden>
     <button type="button" class="upgrade-backdrop" id="userSettingsBackdrop" aria-label="关闭设置"></button>
       <div class="drawer-tools user-settings-panel" role="dialog" aria-modal="true" aria-labelledby="userSettingsTitle">
-        <div class="drawer-account-head"><strong id="userSettingsTitle">设置</strong><button id="closeDrawerAccount" type="button" aria-label="关闭头像菜单">×</button></div>
-        <div class="settings-user-identity">
-          <span class="settings-brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5"/><path d="M12 12v9"/></svg>
-          </span>
-          <div class="settings-identity-copy">
-            <strong>Witt 工作台</strong>
-            <small>私人服务器 AI 助手 · 在线</small>
+        <div class="drawer-account-head">
+          <div class="settings-title-group">
+            <strong id="userSettingsTitle">设置</strong>
+            <span class="settings-status-badge" aria-label="服务在线"><i></i>在线</span>
           </div>
-          <em class="settings-online-pill">ONLINE</em>
+          <button id="closeDrawerAccount" type="button" aria-label="关闭设置">×</button>
         </div>
 
         <section class="settings-block settings-bento-block">
-          <div class="settings-section-label">核心管理</div>
+          <div class="settings-section-label">账号与常用</div>
           <div class="drawer-utilities settings-bento-grid">
             <button class="drawer-profile drawer-admin-entry" id="codexAccountsButton" hidden>
               <span class="profile-monogram accent-violet"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.2"/><path d="M5 20v-1.8a7 7 0 0 1 14 0V20"/></svg></span>
-              <span><strong>AI 账号</strong><small>GPT / Claude / Gemini</small></span>
+              <span><strong>AI 账号</strong><small>GPT · Claude · Gemini</small></span>
               <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
             </button>
             <button class="drawer-profile" id="profileButton">
               <span class="profile-monogram accent-blue"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18V10m7 8V5m7 13v-6"/></svg></span>
-              <span><strong>额度与用量</strong><small>模型配额与统计</small></span>
+              <span><strong>额度与用量</strong><small>剩余配额与统计</small></span>
               <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
             </button>
             <button class="drawer-profile" id="localSshButton">
               <span class="profile-monogram terminal-monogram accent-emerald"><svg viewBox="0 0 24 24"><path d="m6 8 4 4-4 4M12 17h6"/></svg></span>
-              <span><strong>SSH 终端</strong><small id="localSshDrawerStatus">本地终端与 SFTP</small></span>
+              <span><strong>SSH 终端</strong><small id="localSshDrawerStatus">终端与 SFTP</small></span>
               <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
             </button>
             <button class="drawer-profile drawer-admin-entry" id="adminSettingsButton" hidden>
@@ -393,18 +418,17 @@
         </section>
 
         <section class="settings-block settings-list-block">
-          <div class="settings-section-label">工作区与自动化</div>
+          <div class="settings-section-label">工作区与效率</div>
           <div class="settings-group-card">
-            <button class="feature-entry" id="featureProjects"><span>项目工作区</span><small>目录与常用指令</small></button>
-            <button class="feature-entry" id="featureSchedules"><span>定时任务</span><small>自动巡检与计划</small></button>
-            <button class="feature-entry" id="windowsNodesEntry"><span>Windows 节点</span><small>远程算力协同</small></button>
-            <button class="feature-entry" id="remoteAssistEntry"><span>远程协助 CLI</span><small>终端授权与操作</small></button>
-            <button class="workspace-entry" id="workspaceOverviewButton" type="button"><span>系统服务状态</span><small>运行监控</small><span>›</span></button>
+            <button class="feature-entry" id="featureProjects"><span>我的项目</span><small>说明、参考文件与常用指令</small></button>
+            <button class="feature-entry" id="featureSchedules"><span>定时任务</span><small>自动巡检与计划执行</small></button>
+            <button class="feature-entry" id="remoteAssistEntry"><span>远程协助 CLI</span><small>终端授权与远程协作</small></button>
+            <button class="workspace-entry" id="workspaceOverviewButton" type="button" hidden><span>系统服务状态</span><small>本机运行监控</small><span>›</span></button>
           </div>
         </section>
 
         <section class="settings-block settings-list-block">
-          <div class="settings-section-label">外观与通知</div>
+          <div class="settings-section-label">外观与提醒</div>
           <div class="settings-group-card">
             <section class="drawer-theme" aria-labelledby="themeTitle">
               <span>
@@ -416,8 +440,15 @@
                 <button type="button" data-theme-choice="dark">深色</button>
               </div>
             </section>
-            <button id="moreNotifyButton" class="feature-entry" aria-pressed="false"><span>前台完成提醒</span><small id="completionNotifyLabel">已关闭</small></button>
-            <button class="feature-entry" id="featureNotifications" data-enabled="false">后台任务通知：开启</button>
+            <button id="moreNotifyButton" class="feature-entry settings-toggle-row" aria-pressed="false">
+              <span>前台完成提醒</span>
+              <small id="completionNotifyLabel" class="visually-hidden">已关闭</small>
+              <span class="settings-switch" aria-hidden="true"><i></i></span>
+            </button>
+            <button class="feature-entry settings-toggle-row" id="featureNotifications" data-enabled="false">
+              <span id="featureNotificationsLabel">后台任务通知</span>
+              <span class="settings-switch" aria-hidden="true"><i></i></span>
+            </button>
           </div>
         </section>
 
@@ -432,16 +463,27 @@
     <div class="sheet-panel project-panel">
       <div class="sheet-handle"></div>
       <div class="sheet-head">
-        <div><span class="eyebrow">WORKING DIRECTORY</span><h2>选择当前项目</h2></div>
+        <div><span class="eyebrow">MY PROJECTS</span><h2 id="projectSheetTitle">选择项目</h2></div>
         <button class="icon-button" id="closeProject" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </div>
-      <p class="project-intro">项目仅决定当前对话的工作目录；选择“空白”时从服务器主目录开始。</p>
-      <div class="project-options">
-        <button data-project-path=""><span class="project-code">—</span><span><strong>空白</strong><small>不绑定项目</small></span><i></i></button>
-        <button data-project-path="/home/ubuntu/Documents/Codex/2026-07-20-skill/upload-app"><span class="project-code">WI</span><span><strong>维特</strong><small>Witt 客户端与服务</small></span><i></i></button>
-        <button data-project-path="/home/ubuntu/Documents/Codex/2026-07-26-xlsb"><span class="project-code">年</span><span><strong>年报</strong><small>道路桥梁协同工作台</small></span><i></i></button>
-        <button data-project-path="/data/xuanyu-build-console/repo"><span class="project-code">玄</span><span><strong>玄遇</strong><small>玄遇项目工作区</small></span><i></i></button>
+      <p class="project-intro">项目仅你本人可见，拥有独立的项目说明、对话整理与文件空间。</p>
+      <div class="project-toolbar">
+        <input id="projectSearchInput" class="project-search-input" type="search" placeholder="搜索我的项目…" aria-label="搜索我的项目" autocomplete="off">
+        <button type="button" id="toggleCreateProjectBtn" class="project-create-toggle">+ 新建项目</button>
       </div>
+      <form id="inlineProjectCreateForm" class="project-inline-form" hidden>
+        <label>项目名称
+          <input id="inlineProjectName" name="name" maxlength="80" required placeholder="例如：毕业论文、周报助手、个人应用" autocomplete="off">
+        </label>
+        <label>项目说明（选填）
+          <textarea id="inlineProjectInstructions" name="instructions" maxlength="12000" rows="3" placeholder="背景信息、回复风格或长期要求"></textarea>
+        </label>
+        <div class="project-inline-actions">
+          <button type="button" id="cancelInlineProjectBtn">取消</button>
+          <button type="submit" id="submitInlineProjectBtn">创建并使用</button>
+        </div>
+      </form>
+      <div class="project-options" id="projectOptionsList"></div>
     </div>
   </aside>
 
@@ -454,11 +496,6 @@
         <button type="button" class="quota-panel-refresh" id="refreshQuota" aria-label="刷新额度">刷新</button>
         <button class="icon-button" id="closeProfile" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </div>
-      <section class="profile-hero">
-        <div class="profile-letter">W</div>
-        <div><strong>Witt on your server</strong><small>你的 Codex 使用概览</small></div>
-        <span>在线</span>
-      </section>
       <div id="usageContent">
         <div class="usage-loading"><i></i><span>正在读取 Token 用量</span></div>
       </div>
@@ -672,6 +709,7 @@
     <section class="upgrade-panel conversation-actions-panel" role="dialog" aria-modal="true" aria-labelledby="conversationActionsTitle">
       <header><h2 id="conversationActionsTitle">对话操作</h2><button type="button" data-close-upgrade aria-label="关闭">×</button></header>
       <button type="button" id="conversationRenameButton">重命名 <span>↗</span></button>
+      <button type="button" id="conversationProjectButton">移至项目 <span>无项目</span></button>
       <button type="button" id="conversationArchiveButton">归档 <span>↓</span></button>
       <small>归档只移出列表，历史记录仍会保留。</small>
     </section>
@@ -714,12 +752,11 @@
       <button class="workspace-refresh" id="refreshWorkspace">刷新状态</button>
     </section>
   </aside>
-  <script src="/vault/browser-bridge.js?v=20261028-history"></script>
-  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102&groupDialog=20261102-1&codeCopy=20261102-1&imageKeyboard=20261102-1&composerIme=20261103-1&accountRecovery=20261103-1&serviceStatus=20261103-1&headerCapsule=20261106-1&deviceNotes=20261114-1&headerSpacing=20261114-1&antigravityLogin=20261114-1&invitePermission=20261114-1&geminiCreate=20261114-1&accountOrb=20261114-three-orbs-1&accountQuota=20261114-1&quotaLayout=20261114-2&historyModelBadge=20261116-3&modelSource=20261116-2&mdFormat=20261118-4&codexPicker=20261124-1&antigravitySettings=20261125-1&bootSilk=20261125-1"></script>
-  <script src="/vault/sidebar-layout.js?v=20261008-2"></script>
-  <script src="/vault/ui-upgrades.js?v=20261008-2&simplify=20261102-1&actions=20261102-2&groupDialog=20261102-1&keyboard=20261102-1&focusReturn=20261102-1&renameValidation=20261102-1&imeEscape=20261102-1&longPressCancel=20261102-1&taskFocus=20261102-1&taskPending=20261102-1"></script>
-  <script src="/vault/witt-features.js?v=20261008-1&simplify=20261102-1"></script>
-  <script src="/vault/windows-nodes-panel.js?v=20261117-2"></script>
+  <script src="/vault/browser-bridge.js?v=20261125-settings-1"></script>
+  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102&groupDialog=20261102-1&codeCopy=20261102-1&imageKeyboard=20261102-1&composerIme=20261103-1&accountRecovery=20261103-1&serviceStatus=20261103-1&headerCapsule=20261106-1&deviceNotes=20261114-1&headerSpacing=20261114-1&antigravityLogin=20261114-1&invitePermission=20261114-1&geminiCreate=20261114-1&accountOrb=20261114-three-orbs-1&accountQuota=20261114-1&quotaLayout=20261114-2&historyModelBadge=20261116-3&modelSource=20261116-2&mdFormat=20261118-4&codexPicker=20261124-1&antigravitySettings=20261125-1&bootSilk=20261125-1&enterSend=20261125-1&messageTop=20261125-1&userProjects=20261125-2&quotaDisplay=20261125-3&officialIcons=20261125-1&upgrades=20261125-5"></script>
+  <script src="/vault/sidebar-layout.js?v=20261125-sidebar-1"></script>
+  <script src="/vault/ui-upgrades.js?v=20261008-2&simplify=20261102-1&actions=20261102-2&groupDialog=20261102-1&keyboard=20261102-1&focusReturn=20261102-1&renameValidation=20261102-1&imeEscape=20261102-1&longPressCancel=20261102-1&taskFocus=20261102-1&taskPending=20261102-1&userProjects=20261125-1"></script>
+  <script src="/vault/witt-features.js?v=20261008-1&simplify=20261102-1&userProjects=20261125-3"></script>
   <script src="/vault/remote-assist-panel.js?v=20261125-3"></script>
   <script src="/vault/xuanyu-build-panel.js?v=20261118-7"></script>
 </body>

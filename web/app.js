@@ -4001,11 +4001,7 @@
   $("#attachButton").addEventListener("click", () => {
     setAttachmentMenu(!$("#attachmentMenu").classList.contains("open"));
   });
-  $("#attachPhotoButton").addEventListener("click", () => {
-    setAttachmentMenu(false);
-    bridge()?.pickFiles?.();
-  });
-  $("#attachFileButton").addEventListener("click", () => {
+  $("#attachFileButton")?.addEventListener("click", () => {
     setAttachmentMenu(false);
     bridge()?.pickFiles?.();
   });
@@ -4042,7 +4038,8 @@
     refreshActionButton();
   });
   $("#messageInput").addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    if (event.isComposing || event.keyCode === 229) return;
+    if (event.key === "Enter" && !event.shiftKey && !event.altKey) {
       event.preventDefault();
       sendMessage();
     }

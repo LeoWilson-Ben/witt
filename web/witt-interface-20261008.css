@@ -605,6 +605,8 @@ body .composer-hint,
 #drawer .drawer-new small { display:none !important; }
 #drawer .drawer-avatar { display:grid; place-items:center; flex:none; width:52px; height:52px; padding:5px; border:1px solid var(--line); border-radius:50%; background:var(--rail-menu); color:#fff; cursor:pointer; }
 #drawer .drawer-avatar span { display:grid; place-items:center; width:40px; height:40px; border-radius:50%; background:linear-gradient(150deg,#617b73,#263d39); font-size:18px; font-weight:600; }
+#drawer .drawer-avatar span svg { width:20px; height:20px; display:block; transition:transform .25s ease; }
+#drawer .drawer-avatar:hover span svg, #drawer .drawer-avatar[aria-expanded="true"] span svg { transform:rotate(30deg); }
 #drawer .drawer-avatar[aria-expanded="true"] { outline:2px solid #b4973e; outline-offset:3px; }
 #drawer .drawer-tools { position:absolute; z-index:5; left:16px; right:16px; bottom:calc(86px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:8px !important; max-height:calc(100% - 110px - env(safe-area-inset-bottom)); overflow-y:auto; overscroll-behavior:contain; margin:0; padding:14px !important; border:1px solid var(--line) !important; border-radius:20px !important; color:var(--rail-ink); background:var(--rail-menu) !important; box-shadow:0 12px 48px #0002 !important; }
 #drawer .drawer-account-head { display:flex; justify-content:space-between; align-items:center; font-size:15px; padding-left:8px; }

@@ -3,8 +3,8 @@
 .account-provider-tabs button{min-width:0;min-height:58px;padding:10px 7px;display:flex;align-items:center;justify-content:center;gap:7px;border:1px solid transparent;border-radius:12px;background:transparent;color:var(--muted,#857d91);font:inherit;cursor:pointer}
 .account-provider-tabs button.selected{border-color:#c7bbdf;background:var(--bg,#fff);color:var(--ink,#3b3050);box-shadow:0 3px 10px #32233e0c}
 .account-provider-tabs b{font-size:13px;font-weight:600}.account-provider-tabs small{font-size:10px;opacity:.65}
-.provider-icon{display:inline-grid;place-items:center;flex:none}.provider-icon svg{display:block;width:23px;height:23px}
-.provider-icon.gpt{color:#438475}.provider-icon.claude{color:#c67b55}.provider-icon.gemini{color:#577dd3}
+.provider-icon{display:inline-grid;place-items:center;flex:none}.provider-icon svg{display:block;width:22px;height:22px}
+.provider-icon.gpt{color:#0d0d0d}.provider-icon.claude{color:#d97757}.provider-icon.gemini{color:#4285f4}
 .account-provider-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 2px 12px}.account-provider-heading strong{font-size:14px}.account-provider-heading>span{font-size:11px;color:var(--muted,#8b8393)}
 .account-provider-panel{display:flex;flex-direction:column;gap:10px;min-height:112px}.account-provider-empty{font-size:13px;line-height:1.8;color:var(--muted,#8b8393)}
 #codexAccountSheet .provider-account-card{display:grid!important;grid-template-columns:40px minmax(0,1fr);gap:12px!important;padding:17px!important;border:1px solid var(--line,#e2dce9)!important;border-radius:16px!important;background:var(--surface,#fbfaff)!important}
@@ -15,15 +15,15 @@
 #codexAccountSheet .provider-account-card .codex-account-actions button{min-height:36px;padding:8px 12px!important;font-size:12px!important;border-radius:9px!important}
 .model-spark svg{display:block;width:16px;height:16px}.composer-model #modelLabel{max-width:145px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .account-provider-tabs button:focus-visible{outline:2px solid #9276bb;outline-offset:2px}
-:root[data-theme="dark"] .provider-icon.gpt{color:#91cebb}:root[data-theme="dark"] .provider-icon.claude{color:#e2a885}:root[data-theme="dark"] .provider-icon.gemini{color:#9dbaff}
+:root[data-theme="dark"] .provider-icon.gpt{color:#f5f5f5}:root[data-theme="dark"] .provider-icon.claude{color:#e89b78}:root[data-theme="dark"] .provider-icon.gemini{color:#8ab4f8}
 @media(max-width:350px){.account-provider-tabs{gap:3px;padding:3px}.account-provider-tabs button{gap:4px;padding-inline:4px}.account-provider-tabs b{font-size:12px}.account-provider-tabs .provider-icon svg{width:19px;height:19px}.account-provider-tabs small{display:none}.composer-model #modelLabel{max-width:120px}}
 #codexAccountList[hidden]{display:none!important}
-#codexAccountSheet .codex-account-avatar.provider-icon.gpt{color:#438475!important;background:#e9f3ee!important}
-#codexAccountSheet .codex-account-avatar.provider-icon.claude{color:#c67b55!important;background:#fbede4!important}
-#codexAccountSheet .codex-account-avatar.provider-icon.gemini{color:#577dd3!important;background:#eaf0fc!important}
-:root[data-theme="dark"] #codexAccountSheet .codex-account-avatar.provider-icon.gpt{color:#91cebb!important;background:#284139!important}
-:root[data-theme="dark"] #codexAccountSheet .codex-account-avatar.provider-icon.claude{color:#e2a885!important;background:#49372b!important}
-:root[data-theme="dark"] #codexAccountSheet .codex-account-avatar.provider-icon.gemini{color:#9dbaff!important;background:#2c3957!important}
+#codexAccountSheet .codex-account-avatar.provider-icon.gpt{color:#0d0d0d!important;background:#efefef!important}
+#codexAccountSheet .codex-account-avatar.provider-icon.claude{color:#d97757!important;background:#fbede4!important}
+#codexAccountSheet .codex-account-avatar.provider-icon.gemini{color:#4285f4!important;background:#eef3fe!important}
+:root[data-theme="dark"] #codexAccountSheet .codex-account-avatar.provider-icon.gpt{color:#f5f5f5!important;background:#2e2e2e!important}
+:root[data-theme="dark"] #codexAccountSheet .codex-account-avatar.provider-icon.claude{color:#e89b78!important;background:#49372b!important}
+:root[data-theme="dark"] #codexAccountSheet .codex-account-avatar.provider-icon.gemini{color:#8ab4f8!important;background:#24324d!important}
 
 /* One GPT sign-in entry; account slots remain private backend state. */
 .account-provider-heading>.login{min-height:38px;padding:8px 18px;border:0;border-radius:12px;background:var(--accent,#6c5ce7);color:#fff;font:inherit;font-size:13px;cursor:pointer}.account-provider-heading>span{margin-left:auto}
@@ -38,14 +38,31 @@
 #quickModelOptions button > span { min-width: 0; overflow-wrap: anywhere; }
 #modelButton[data-model-source] .model-spark { color: var(--model-origin); }
 
-/* Visible origin indicators also work when the mobile spark is hidden. */
+/* Official brand icons in composer model button, quick picker, and settings. */
+#modelButton .model-spark{display:inline-grid!important;place-items:center;width:16px;height:16px;flex:none}
+#modelButton[data-model-source="openai"] .model-spark{color:#0d0d0d!important}
+:root[data-theme="dark"] #modelButton[data-model-source="openai"] .model-spark{color:#f5f5f5!important}
 #modelButton[data-model-source]::before,
 #quickModelOptions button[data-model-source]::before,
-.model-options button[data-model-source]::before {
-  content: ""; display: inline-block; width: 9px; height: 9px;
-  min-width: 9px; flex: 0 0 9px; border-radius: 50%;
-  background: var(--model-origin); margin-right: 7px;
-}
+.model-options button[data-model-source]::before{display:none!important;content:none!important}
+.quick-model-brand-icon{display:inline-grid;place-items:center;width:16px;height:16px;flex:none}
+.quick-model-brand-icon svg{display:block;width:15px;height:15px}
+.quick-model-brand-icon.gpt{color:#0d0d0d}
+.quick-model-brand-icon.claude{color:#d97757}
+.quick-model-brand-icon.gemini{color:#4285f4}
+:root[data-theme="dark"] .quick-model-brand-icon.gpt{color:#f5f5f5}
+:root[data-theme="dark"] .quick-model-brand-icon.claude{color:#e89b78}
+:root[data-theme="dark"] .quick-model-brand-icon.gemini{color:#8ab4f8}
+.model-glyph svg{display:block;width:18px;height:18px}
+.model-glyph.brand-gpt{color:#0d0d0d!important;background:#f0f0f0!important}
+.model-glyph.brand-gemini{color:#4285f4!important;background:#eef3fe!important}
+.model-glyph.brand-claude{color:#d97757!important;background:#fbede4!important}
+:root[data-theme="dark"] .model-glyph.brand-gpt{color:#f5f5f5!important;background:#2e2e2e!important}
+:root[data-theme="dark"] .model-glyph.brand-gemini{color:#8ab4f8!important;background:#24324d!important}
+:root[data-theme="dark"] .model-glyph.brand-claude{color:#e89b78!important;background:#49372b!important}
+.conversation-model-badge{display:inline-flex!important;align-items:center;gap:4px}
+.conversation-model-icon{display:inline-grid;place-items:center;width:12px;height:12px;flex:none}
+.conversation-model-icon svg{display:block;width:11px;height:11px}
 #quickModelOptions button[data-model-source] { gap: 6px; }
 #quickModelOptions button[data-model-source] > span { flex: 1; }
 #quickModelOptions button[data-model-source] .model-source-tag {
