@@ -1463,15 +1463,25 @@ class ChatService {
         this.sendJson(res, 200, { conversation: this.publicConversation(conversation) });
         return;
       }
-      const targetProfile=Object.hasOwn(body || {}, "codexProfile") ? this.codexProfiles[String(body.codexProfile||"")] : this.profileFor(conversation);
+      const explicitProfile = Object.hasOwn(body || {}, "codexProfile");
+      const currentProfile = this.profileFor(conversation);
+      // Installed Android bridges only send model, effort and access mode.
+      const inferredProfile = !explicitProfile && typeof body?.model === "string" &&
+        body.model.startsWith("gemini:") ? "antigravity" : currentProfile.id;
+      const targetProfile = this.codexProfiles[explicitProfile ? String(body.codexProfile || "") : inferredProfile];
       if(!targetProfile || !this.allowedCodexProfiles.has(targetProfile.id)) {this.sendJson(res,403,{error:"该账号不可用"});return;}
       const requestedModel = body?.model == null
         ? (this.modelAllowed(conversation.model, targetProfile.id)
           ? conversation.model : this.defaultModelFor(targetProfile.id))
         : body.model;
-      const requestedReasoning = body?.reasoning == null
+      let requestedReasoning = body?.reasoning == null
         ? this.reasoningFor(requestedModel,targetProfile.id,conversation.reasoning)
         : body.reasoning;
+      // A model switch may carry an effort from the previous model's slider.
+      // Only normalize known effort names; model and access checks remain strict.
+      if (targetProfile.provider === "antigravity" && ALLOWED_REASONING.has(requestedReasoning)) {
+        requestedReasoning = this.reasoningFor(requestedModel, targetProfile.id, requestedReasoning);
+      }
       const requestedAccess = body?.accessMode == null
         ? (ALLOWED_ACCESS.has(conversation.accessMode)
           ? conversation.accessMode : "danger-full-access")
@@ -1504,8 +1514,8 @@ class ChatService {
         }
       }
       let requestedProfile = targetProfile;
-      if (Object.hasOwn(body || {}, "codexProfile")) {
-        requestedProfile = this.codexProfiles[String(body.codexProfile || "")];
+      if (explicitProfile || targetProfile.id !== currentProfile.id) {
+        requestedProfile = targetProfile;
         if (!requestedProfile) {
           this.sendJson(res, 400, { error: "Codex 账号不可用" });
           return;
@@ -2823,7 +2833,7 @@ class ChatService {
       const response = String(finalEntry?.text || active.finalResponse || "");
       const interrupted = params.turn?.status === "interrupted";
       const success = params.turn?.status === "completed" && Boolean(response.trim());
-      const detail = params.turn?.error?.message || "Codex 未返回有效结果";
+      const detail = params.turn?.error?.message || `${this.profileFor(conversation)?.label || "Codex"} 未返回有效结果`;
       this.finishActive(success, response, interrupted ? "已暂停" : detail, interrupted, conversationId);
       return;
     } else {

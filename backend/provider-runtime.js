@@ -26,7 +26,7 @@ class ProviderRuntime{
   let rows=this.service(provider).modelCache.get(this.owner)?.models;
   if(!rows)try{rows=JSON.parse(fs.readFileSync(path.join(this.home(provider),'witt-models.json'),'utf8'));}catch{rows=[];}
   const groups=new Map();for(const row of rows||[]){if(!/^(?:gemini|claude|gpt)-[a-zA-Z0-9._-]+$/.test(row.slug||''))continue;const m=row.slug.match(/^(.*)-(low|medium|high|xhigh|max)$/),base=m?m[1]:row.slug,level=m?m[2]:'medium';const g=groups.get(base)||{id:'gemini:'+base,model:'gemini:'+base,displayName:String(row.name||base).replace(/\s*\((Low|Medium|High|Max)\)\s*$/i,''),description:'通过 Antigravity CLI',variants:{}};g.variants[level]=row.slug;groups.set(base,g);}
-  const result=[...groups.values()].map(g=>({...g,reasoningEfforts:efforts(EFFORTS.filter(e=>g.variants[e])),defaultReasoningEffort:g.variants.medium?'medium':Object.keys(g.variants)[0]}));
+  const result=[...groups.values()].map(g=>({...g,displayName:g.displayName.replace(/\s*\((?:Low|Medium|High|XHigh|Max)\)\s*$/i,''),reasoningEfforts:efforts(EFFORTS.filter(e=>g.variants[e])),defaultReasoningEffort:g.variants.medium?'medium':Object.keys(g.variants)[0]}));
   if(result.length){const primary=result.find(m=>/3\.8.*flash/i.test(m.id))||result[0];primary.isDefault=true;}return result;
  }
  defaultModel(provider){return this.models(provider).find(m=>m.isDefault)?.id||this.models(provider)[0]?.id||'';}
@@ -44,17 +44,36 @@ class CliAgentClient extends EventEmitter{
  sessionDir(){const dir=path.join(this.runtime.home(this.provider),'witt-sessions');fs.mkdirSync(dir,{recursive:true,mode:0o700});return dir;}
  loadSession(id){if(!/^[a-f0-9-]{36}$/.test(id||''))throw Error('会话编号无效');let s=this.sessions.get(id);if(!s){try{s=JSON.parse(fs.readFileSync(path.join(this.sessionDir(),id+'.json'),'utf8'));}catch{throw Error('这个账号的会话上下文不可用，请新建对话');}this.sessions.set(id,s);}return s;}
  saveSession(s){fs.writeFileSync(path.join(this.sessionDir(),s.id+'.json'),JSON.stringify(s),{mode:0o600});}
+ contextWindowFor(modelId){
+  const name=String(modelId||'').toLowerCase();
+  if(name.includes('gemini'))return 1000000;
+  if(name.includes('claude'))return 200000;
+  if(name.includes('gpt'))return 128000;
+  return 200000;
+ }
  async request(method,args={}){
   if(method==='thread/start'){const id=crypto.randomUUID(),s={id,cwd:args.cwd,instructions:args.developerInstructions||'',nativeSession:null,sandbox:args.sandbox,mcpConfigPath:args.mcpConfigPath||null};this.sessions.set(id,s);this.saveSession(s);return {thread:{id}};}
   if(method==='thread/resume'){const s=this.loadSession(args.threadId);s.cwd=args.cwd||s.cwd;s.instructions=args.developerInstructions||s.instructions;s.sandbox=args.sandbox||s.sandbox;if(args.mcpConfigPath!==undefined)s.mcpConfigPath=args.mcpConfigPath;return {thread:{id:s.id}};}
   if(method==='turn/start'){
    if(!(await this.runtime.service(this.provider).account(this.runtime.owner)).authenticated)throw Error('请先登录对应账号');
    if(!this.runtime.allowed(args.model,this.profile))throw Error('该账号的模型不可用，请刷新模型列表');
-   const id=crypto.randomUUID(),s=this.loadSession(args.threadId),run={id,threadId:s.id,session:s,args,stopped:false,settled:false,pending:[],part:0};this.runs.set(id,run);
+   const id=crypto.randomUUID(),s=this.loadSession(args.threadId),run={id,threadId:s.id,session:s,args,stopped:false,settled:false,pending:[],part:0,expectedResults:0,completedResults:0,stdinOpen:false,stepTexts:new Map(),lastMessageItemId:null,lastMessageText:''};this.runs.set(id,run);
    setImmediate(()=>this.launch(run,args.input));return {turn:{id}};
   }
-  if(method==='turn/interrupt'){const run=this.runs.get(args.turnId)||[...this.runs.values()].find(r=>r.threadId===args.threadId);if(run){run.stopped=true;this.kill(run);this.finish(run,'interrupted','');}return {};}
-  if(method==='turn/steer'){const run=[...this.runs.values()].find(r=>r.threadId===args.threadId&&!r.settled);if(!run)throw Error('当前任务已经结束');run.pending.push(args.input);return {};}
+  if(method==='turn/interrupt'){const run=this.runs.get(args.turnId)||[...this.runs.values()].find(r=>r.threadId===args.threadId);if(run){run.stopped=true;run.stdinOpen=false;this.kill(run);this.finish(run,'interrupted','');}return {};}
+  if(method==='turn/steer'){
+   const run=[...this.runs.values()].find(r=>r.threadId===args.threadId&&!r.settled&&!r.stopped);
+   if(!run)throw Error('no active turn');
+   if(this.provider==='antigravity'){
+    if(!run.stdinOpen||!run.child?.stdin?.writable)throw Error('no active turn');
+    const content=this.inputText(args.input);
+    if(!content)return {};
+    run.expectedResults+=1;
+    run.child.stdin.write(JSON.stringify({event:'user',message:{content}})+'\n');
+    return {};
+   }
+   run.pending.push(args.input);return {};
+  }
   if(method==='skills/list'||method==='mcpServerStatus/list'||method==='experimentalFeature/list')return {data:[]};
   if(method==='model/list')return {data:this.runtime.models(this.provider)};
   if(method==='collaborationMode/list')return {data:[]};
@@ -73,28 +92,109 @@ class CliAgentClient extends EventEmitter{
    if(s.instructions)args.push('--append-system-prompt',s.instructions);
    if((run.args.sandbox||s.sandbox)==='read-only')args.push('--permission-mode','plan');else if((run.args.sandbox||s.sandbox)==='danger-full-access')args.push('--dangerously-skip-permissions');else args.push('--permission-mode','acceptEdits');
   }else{
-   args.push('--input-format','stream-json','--output-format','stream-json','--model',model.variants[effort],'--effort',effort,'--log-file','/dev/null');
+   const variantSlug=model.variants[effort]||Object.values(model.variants||{})[0]||model.id.replace(/^gemini:/,'');
+   args.push('--input-format','stream-json','--output-format','stream-json','--model',variantSlug,'--log-file','/dev/null');
+   if(/-(?:low|medium|high|xhigh|max)$/.test(variantSlug))args.push('--effort',effort);
    if(s.nativeSession)args.push('--conversation',s.nativeSession);
    if((run.args.sandbox||s.sandbox)==='read-only')args.push('--mode','plan');else if((run.args.sandbox||s.sandbox)==='danger-full-access')args.push('--dangerously-skip-permissions');else args.push('--mode','accept-edits','--sandbox');
   }
-  const text=this.provider==='antigravity'&&!s.nativeSession?s.instructions+'\n\n'+prompt:prompt;
+  const text=this.provider==='antigravity'&&!s.nativeSession&&s.instructions?s.instructions+'\n\n'+prompt:prompt;
   const child=this.runtime.spawn(service.bin,args,{cwd:s.cwd,env,detached:true,stdio:['pipe','pipe','pipe']});run.child=child;run.part++;run.itemId=`${run.id}-message-${run.part}`;run.text='';run.result=null;run.failed=false;run.failureMessage='';run.diagnostics='';
-  this.notify(run,'turn/started',{turn:{id:run.id}});
+  if(run.part===1)this.notify(run,'turn/started',{turn:{id:run.id}});
   const lines=readline.createInterface({input:child.stdout,crlfDelay:Infinity});
   lines.on('line',line=>{if(run.stopped||run.settled||line.length>4*1024*1024)return;try{this.event(run,JSON.parse(line));}catch{}});
-  child.stderr.on('data',chunk=>{if(run.settled)return;run.diagnostics=(run.diagnostics+chunk.toString()).slice(-8192);run.failureMessage=run.failureMessage||cliFailureMessage(run.diagnostics);});child.stdin.on('error',()=>{});
-  child.on('error',()=>{if(!run.stopped)this.finish(run,'failed','无法启动对应 CLI，请检查安装与登录状态');});
+  child.stderr.on('data',chunk=>{if(run.settled)return;run.diagnostics=(run.diagnostics+chunk.toString()).slice(-8192);run.failureMessage=run.failureMessage||cliFailureMessage(run.diagnostics);});child.stdin.on('error',()=>{run.stdinOpen=false;});
+  child.on('error',()=>{run.stdinOpen=false;if(!run.stopped)this.finish(run,'failed','无法启动对应 CLI，请检查安装与登录状态');});
   child.on('close',code=>{
+   run.stdinOpen=false;
    if(run.stopped||run.settled)return;
    if(run.pending.length&&code===0&&!run.failed){const next=run.pending.splice(0).flat();setImmediate(()=>this.launch(run,next));return;}
-   if(code===0&&!run.failed&&(run.result||run.text))this.finish(run,'completed',run.result||run.text);
+   const finalText=run.result||run.lastMessageText||run.text;
+   if(code===0&&!run.failed&&finalText)this.finish(run,'completed',finalText,run.lastMessageItemId||run.itemId);
    else this.finish(run,'failed',run.failureMessage||'执行未完成，请检查该账号的登录状态、模型访问权限或额度');
   });
-  if(this.provider==='antigravity')child.stdin.end(JSON.stringify({event:'user',message:{content:text}})+'\n');else child.stdin.end(text);
+  if(this.provider==='antigravity'){
+   run.expectedResults=1;run.completedResults=0;run.stdinOpen=true;
+   child.stdin.write(JSON.stringify({event:'user',message:{content:text}})+'\n');
+  }else child.stdin.end(text);
+ }
+ emitUsage(run,usage){
+  if(!usage||typeof usage!=='object')return;
+  const inputTokens=Math.max(0,Number(usage.input_tokens||0)+Number(usage.cache_read_tokens||0));
+  const totalTokens=Math.max(0,Number(usage.total_tokens||0));
+  if(!inputTokens&&!totalTokens)return;
+  this.notify(run,'thread/tokenUsage/updated',{
+   tokenUsage:{
+    modelContextWindow:this.contextWindowFor(run.args.model),
+    last:{inputTokens},
+    total:{totalTokens},
+   },
+  });
+ }
+ mapAntigravityTool(run,step){
+  const done=step.state==='DONE';
+  const method=done?'item/completed':'item/started';
+  const itemId=`${run.id}-tool-${step.step_index}`;
+  const info=step.tool_info||{};
+  const name=String(step.tool_name||info.name||'工具执行');
+  const params=info.parameters&&typeof info.parameters==='object'?info.parameters:{};
+  const output=typeof info.output==='string'?info.output:'';
+  const errText=info.error?(typeof info.error==='string'?info.error:String(info.error.message||info.error.type||'执行失败')):'';
+  const durationMs=typeof step.duration_seconds==='number'&&Number.isFinite(step.duration_seconds)?Math.round(step.duration_seconds*1000):null;
+
+  if(name==='update_steps'){
+   const rawSteps=Array.isArray(params.steps)?params.steps:[];
+   const statusMap={done:'completed',completed:'completed',in_progress:'in_progress',pending:'pending',failed:'failed',skipped:'completed'};
+   const plan=rawSteps.map(s=>({step:String(s?.title||s?.step||''),status:statusMap[String(s?.status||'pending').toLowerCase()]||'pending'})).filter(s=>s.step);
+   this.notify(run,'turn/plan/updated',{plan,explanation:''});
+   return;
+  }
+  if(name==='run_command'||name==='send_command_input'||name==='command_status'){
+   const cmd=String(params.CommandLine||params.command||params.Input||name);
+   let exitCode=null;
+   if(done){
+    if(errText)exitCode=1;
+    else{const m=output.match(/Command exited with code (\d+)/);exitCode=m?Number(m[1]):0;}
+   }
+   const aggregatedOutput=errText?(output?`${output}\n${errText}`:errText):output;
+   this.notify(run,method,{item:{id:itemId,type:'commandExecution',command:cmd,cwd:String(params.Cwd||run.session.cwd||''),aggregatedOutput,exitCode,durationMs}});
+   return;
+  }
+  if(['write_to_file','write_file','replace_file_content','multi_replace_file_content','edit_file','sed_file','notebook_edit'].includes(name)){
+   const filePath=String(params.TargetFile||params.Path||params.FilePath||params.file_path||'');
+   const kindType=(name==='write_to_file'||name==='write_file')?'create':'update';
+   const diff=String(output||params.ReplacementContent||params.Replacement||'').slice(0,64*1024);
+   const changes=filePath?[{path:filePath,kind:{type:kindType},diff}]:[];
+   this.notify(run,method,{item:{id:itemId,type:'fileChange',changes}});
+   return;
+  }
+  if(name==='search_web'||name==='read_url_content'){
+   const query=String(params.query||params.Query||params.Url||params.url||name).slice(0,200);
+   this.notify(run,method,{item:{id:itemId,type:'webSearch',query}});
+   return;
+  }
+  if(['invoke_subagent','manage_subagents','run_workflow','browser_subagent','swarm'].includes(name)){
+   const tool=name==='invoke_subagent'||name==='browser_subagent'?'spawn_agent':name;
+   this.notify(run,method,{item:{id:itemId,type:'collabToolCall',tool,agentStatus:done?'completed':'running'}});
+   return;
+  }
+  if(name==='generate_image'&&done){
+   const match=output.match(/(\/[^\s"'<>]+\.(?:png|jpg|jpeg|webp|gif))/i);
+   if(match){
+    this.notify(run,'item/completed',{item:{id:itemId,type:'imageGeneration',savedPath:match[1]}});
+    return;
+   }
+  }
+  let label=name;
+  if(name==='read_file'||name==='view_file'){const p=String(params.Path||params.AbsolutePath||params.file_path||'');label=p?`读取 ${path.basename(p)}`:'读取文件';}
+  else if(name==='grep_search'){const q=String(params.Query||params.query||'').slice(0,40);label=q?`搜索 ${q}`:'代码搜索';}
+  else if(name==='find_by_name'){const p=String(params.Pattern||params.pattern||'').slice(0,40);label=p?`查找 ${p}`:'查找文件';}
+  else if(name==='list_dir'){const d=String(params.DirectoryPath||'');label=d?`查看目录 ${path.basename(d)||d}`:'查看目录';}
+  this.notify(run,method,{item:{id:itemId,type:'dynamicToolCall',tool:label}});
  }
  event(run,event){
   const s=run.session;
-  const native=event.session_id||event.conversation_id||event.result?.conversation_id;
+  const native=event.session_id||event.conversation_id||event.result?.conversation_id||event.step_update?.conversation_id;
   if(native&&/^[a-f0-9-]{36}$/i.test(native)){s.nativeSession=native;this.saveSession(s);}
   if(this.provider==='claude'){
    if(event.type==='stream_event'){
@@ -108,20 +208,58 @@ class CliAgentClient extends EventEmitter{
   }else{
    if(event.event==='step_update'){
     const step=event.step_update||{};
-    if(step.step_type==='agent_response'&&step.text_delta)this.delta(run,step.text_delta);
-    if(step.step_type==='tool')this.tool(run,'step-'+step.step_index,step.tool_name||'工具执行',step.state==='DONE');
+    if(step.usage)this.emitUsage(run,step.usage);
+    if(step.step_type==='agent_response'){
+     const itemId=`${run.id}-step-${step.step_index??run.part}`;
+     if(step.text_delta){
+      const nextText=(run.stepTexts.get(itemId)||'')+String(step.text_delta);
+      run.stepTexts.set(itemId,nextText);
+      run.text=nextText;run.lastMessageItemId=itemId;run.lastMessageText=nextText;
+      this.notify(run,'item/agentMessage/delta',{itemId,delta:String(step.text_delta)});
+     }
+     if(step.state==='DONE'){
+      const stepText=run.stepTexts.get(itemId)||'';
+      if(stepText.trim()){
+       run.lastMessageItemId=itemId;run.lastMessageText=stepText;
+       this.notify(run,'item/completed',{item:{id:itemId,type:'agentMessage',text:stepText,phase:'commentary'}});
+      }
+     }
+    }
+    if(step.step_type==='tool')this.mapAntigravityTool(run,step);
    }
-   if(event.event==='result'){run.failed=event.result?.status!=='SUCCESS';run.failureMessage=cliFailureMessage(event.result?.error)||run.failureMessage;run.result=event.result?.response||run.text;}
+   if(event.event==='result'){
+    const res=event.result||{};
+    if(res.usage)this.emitUsage(run,res.usage);
+    run.completedResults+=1;
+    const status=String(res.status||'').toUpperCase();
+    if(status==='INTERRUPTED'||status==='CANCELED'){
+     run.stdinOpen=false;try{run.child?.stdin?.end();}catch{}
+     this.finish(run,'interrupted','');
+     return;
+    }
+    if(status!=='SUCCESS'){
+     run.failed=true;
+     run.failureMessage=cliFailureMessage(res.error)||(res.error?String(res.error).slice(0,300):'')||run.failureMessage;
+     run.stdinOpen=false;try{run.child?.stdin?.end();}catch{}
+     return;
+    }
+    const finalText=typeof res.response==='string'&&res.response.trim()?res.response:(run.lastMessageText||run.text);
+    run.result=finalText;
+    if(run.completedResults>=run.expectedResults){
+     run.stdinOpen=false;try{run.child?.stdin?.end();}catch{}
+     this.finish(run,'completed',finalText,run.lastMessageItemId||`${run.id}-final`);
+    }
+   }
   }
  }
  delta(run,text){run.text+=text;this.notify(run,'item/agentMessage/delta',{itemId:run.itemId,delta:text});}
  tool(run,id,name,done){this.notify(run,done?'item/completed':'item/started',{item:{id:String(id||crypto.randomUUID()),type:'commandExecution',command:String(name||'工具执行').slice(0,100),aggregatedOutput:'',exitCode:done?0:null}});}
- finish(run,status,text){if(run.settled)return;run.settled=true;run.diagnostics='';this.runs.delete(run.id);
-  if(status==='completed')this.notify(run,'item/completed',{item:{id:run.itemId,type:'agentMessage',text,phase:'final_answer'}});
+ finish(run,status,text,itemId=run.itemId){if(run.settled)return;run.settled=true;run.stdinOpen=false;run.diagnostics='';this.runs.delete(run.id);
+  if(status==='completed')this.notify(run,'item/completed',{item:{id:itemId,type:'agentMessage',text,phase:'final_answer'}});
   this.notify(run,'turn/completed',{turn:{id:run.id,status,error:status==='failed'?{message:text}:undefined}});
  }
  kill(run){if(!run.child)return;try{process.kill(-run.child.pid,'SIGTERM');}catch{run.child.kill();}const timer=setTimeout(()=>{try{process.kill(-run.child.pid,'SIGKILL');}catch{}},1500);timer.unref?.();}
- close(){for(const run of this.runs.values()){run.stopped=true;this.kill(run);}this.runs.clear();this.closed=true;}
+ close(){for(const run of this.runs.values()){run.stopped=true;run.stdinOpen=false;this.kill(run);}this.runs.clear();this.closed=true;}
  respond(){}
 }
 module.exports={ProviderRuntime,CliAgentClient,cliFailureMessage};

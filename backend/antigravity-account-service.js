@@ -16,10 +16,18 @@ function authorizationUrl(text){
  return '';
 }
 class AntigravityAccountService extends ClaudeAccountService{
- constructor(options={}){super({...options,bin:options.bin||'/home/ubuntu/.local/bin/agy',root:options.root||'/home/ubuntu/.antigravity-witt'});this.helper=options.helper||path.join(__dirname,'antigravity-pty.py');this.modelCache=new Map();this.modelChecks=new Map();}
+ constructor(options={}){super({...options,bin:options.bin||'/usr/local/bin/agy',root:options.root||'/home/ubuntu/.antigravity-witt'});this.helper=options.helper||path.join(__dirname,'antigravity-pty.py');this.modelCache=new Map();this.modelChecks=new Map();
+  // Use the connected server account for every authenticated Witt member.
+  this.sharedOwner=options.sharedOwner||null;
+  if(!this.sharedOwner)try{for(const owner of fs.readdirSync(this.root).sort()){
+   if(!/^(?:legacy|[a-f0-9-]{36})$/.test(owner))continue;
+   try{if(JSON.parse(fs.readFileSync(path.join(this.root,owner,'home','witt-account.json'),'utf8')).authenticated===true){this.sharedOwner=owner;break;}}catch{}
+  }}catch{}
+ }
  owner(principal){if(!/^(?:legacy|[a-f0-9-]{36})$/.test(principal?.userId||''))throw Error('请先登录维特，再连接自己的 Gemini 账号');return principal.userId;}
  env(owner){
   if(!/^(?:legacy|[a-f0-9-]{36})$/.test(owner))throw Error('账号无效');
+  owner=this.sharedOwner||owner;
   const home=path.join(this.root,owner,'home');fs.mkdirSync(home,{recursive:true,mode:0o700});fs.chmodSync(path.dirname(home),0o700);fs.chmodSync(home,0o700);
   const env={HOME:home,PATH:'/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin',LANG:'C.UTF-8',TERM:'xterm-256color',BROWSER:'/bin/false',SSH_CONNECTION:'127.0.0.1 12345 127.0.0.1 22',XDG_CONFIG_HOME:path.join(home,'.config'),XDG_DATA_HOME:path.join(home,'.local/share')};
   for(const n of ['HTTPS_PROXY','HTTP_PROXY','NO_PROXY'])if(process.env[n])env[n]=process.env[n];return env;
@@ -49,6 +57,7 @@ class AntigravityAccountService extends ClaudeAccountService{
  authenticated(owner,login,email=''){
   if(login.finished)return;
   fs.writeFileSync(this.marker(owner),JSON.stringify({authenticated:true,email,connectedAt:new Date().toISOString()}),{mode:0o600});
+  this.sharedOwner=owner;this.modelCache.clear();this.modelChecks.clear();
   login.finish('authenticated');login.child.kill();
  }
  async verifyLogin(owner,login){

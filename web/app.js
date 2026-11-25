@@ -940,7 +940,7 @@
     state.draftAccessMode = state.accessMode;
     if (changed && state.nativeInitialized && state.activeId) {
       if (state.supports21) {
-        bridge()?.updateConversationSettings?.(state.activeId, state.model, state.reasoning, state.accessMode);
+        bridge()?.updateConversationSettings?.(state.activeId, state.model, state.reasoning, state.accessMode, state.codexProfile);
       } else {
         bridge()?.updateConversationSettings?.(state.activeId, state.model, state.reasoning);
       }
@@ -1715,13 +1715,20 @@
   function applySettings({ closeSheet = true, announce = true } = {}) {
     state.model = state.draftModel || state.model;
     state.reasoning = state.draftReasoning || state.reasoning;
+    const capability = selectedModelCapability();
+    const offered = (capability?.reasoningEfforts || []).map(e => e.id);
+    if (offered.length && !offered.includes(state.reasoning)) {
+      state.reasoning = offered.includes(capability.defaultReasoningEffort)
+        ? capability.defaultReasoningEffort : offered[0];
+    }
+    state.draftReasoning = state.reasoning;
     state.accessMode = state.draftAccessMode || state.accessMode;
     persistModelPreference();
     updateModelControls();
     if (state.activeId) {
       if (state.supports21) {
         bridge()?.updateConversationSettings?.(
-          state.activeId, state.model, state.reasoning, state.accessMode);
+          state.activeId, state.model, state.reasoning, state.accessMode, state.codexProfile);
       } else {
         bridge()?.updateConversationSettings?.(state.activeId, state.model, state.reasoning);
       }
