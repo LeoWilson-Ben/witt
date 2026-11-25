@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -40,6 +41,24 @@ func readTerminalLine(reader *bufio.Reader, prompt string) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
+var pairingCodeExtractPattern = regexp.MustCompile(`(?i)([A-F0-9]{5}-?[A-F0-9]{5})`)
+
+// normalizePairingCode 从用户输入（纯协助码或粘贴的 "chloe XXXXX-XXXXX" 命令）中提取标准协助码。
+func normalizePairingCode(raw string) string {
+	trimmed := strings.ToUpper(strings.TrimSpace(raw))
+	if trimmed == "" {
+		return ""
+	}
+	if match := pairingCodeExtractPattern.FindStringSubmatch(trimmed); len(match) >= 2 {
+		cleaned := strings.ReplaceAll(match[1], "-", "")
+		if len(cleaned) == 10 {
+			return cleaned[:5] + "-" + cleaned[5:]
+		}
+		return match[1]
+	}
+	return trimmed
+}
+
 func runAssistCLI(options assistOptions) error {
 	if options.Server == "" {
 		options.Server = "https://13-208-127-58.sslip.io/vault-api"
@@ -57,7 +76,7 @@ func runAssistCLI(options assistOptions) error {
 			return errors.New("未读取到协助码")
 		}
 	}
-	code = strings.ToUpper(strings.TrimSpace(code))
+	code = normalizePairingCode(code)
 	if code == "" {
 		return errors.New("协助码不能为空")
 	}

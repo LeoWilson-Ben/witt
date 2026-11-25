@@ -1,4 +1,6 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$OutputEncoding = [System.Text.UTF8Encoding]::new()
 
 $baseUrl = $env:WITT_CLI_BASE_URL
 if ([string]::IsNullOrWhiteSpace($baseUrl)) {

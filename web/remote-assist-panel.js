@@ -59,8 +59,11 @@
     const runCmd = connectCommand(session.pairing_code);
     return `
       <div class="feature-card" id="remoteAssistPairingCard" style="border:1px solid rgba(26,115,232,.25);border-radius:12px;padding:12px;margin:10px 0;background:rgba(26,115,232,.04);">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <strong>协助码：${escapeHtml(session.pairing_code)}</strong>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <strong>协助码：${escapeHtml(session.pairing_code)}</strong>
+            <button type="button" data-ra-copy="${escapeHtml(session.pairing_code)}">复制协助码</button>
+          </div>
           <small>有效至 ${escapeHtml(new Date(session.expires_at).toLocaleTimeString())}</small>
         </div>
         <p class="feature-note" style="margin:4px 0;">1. 首次使用在客户 Windows 终端安装 Chloe CLI（已装可跳过）：</p>

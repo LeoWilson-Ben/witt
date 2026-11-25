@@ -15,3 +15,20 @@ func TestAssistClientValidation(t *testing.T) {
 		t.Fatalf("expected https server allowed: %v", err)
 	}
 }
+
+func TestNormalizePairingCode(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"7acc5-c6a87", "7ACC5-C6A87"},
+		{"chloe 7ACC5-C6A87", "7ACC5-C6A87"},
+		{"  chloe assist 7acc5c6a87  ", "7ACC5-C6A87"},
+		{"协助码：7ACC5-C6A87", "7ACC5-C6A87"},
+	}
+	for _, tc := range cases {
+		if got := normalizePairingCode(tc.input); got != tc.want {
+			t.Fatalf("normalizePairingCode(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
