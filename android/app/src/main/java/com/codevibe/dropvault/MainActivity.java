@@ -282,7 +282,9 @@ public class MainActivity extends Activity {
                     + "," + JSONObject.quote(path) + ")");
             }
         });
-        applySystemBars("light");
+        boolean systemDark = (getResources().getConfiguration().uiMode
+            & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        applySystemBars(systemDark ? "dark" : "light");
 
         rootView = new FrameLayout(this);
         webView = new WebView(this);

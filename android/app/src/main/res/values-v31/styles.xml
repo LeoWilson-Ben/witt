@@ -4,13 +4,13 @@
         <item name="android:fontFamily">sans</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:colorAccent">#536FE8</item>
+        <item name="android:colorAccent">#147468</item>
         <item name="android:windowBackground">@color/splash_background</item>
-        <item name="android:statusBarColor">#F9FAF8</item>
-        <item name="android:navigationBarColor">#F9FAF8</item>
+        <item name="android:statusBarColor">#F6F7F5</item>
+        <item name="android:navigationBarColor">#F6F7F5</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
-        <item name="android:windowSplashScreenBackground">#F9FAF8</item>
+        <item name="android:windowSplashScreenBackground">#F6F7F5</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_empty</item>
     </style>
 </resources>
