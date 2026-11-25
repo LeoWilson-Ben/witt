@@ -4511,7 +4511,7 @@
           activeSummary.reasoning = state.reasoning;
           activeSummary.codexProfile = state.codexProfile;
         }
-        bridge()?.updateConversationSettings?.(state.activeId, state.model, state.reasoning, state.accessMode);
+        bridge()?.updateConversationSettings?.(state.activeId, state.model, state.reasoning, state.accessMode, state.codexProfile);
       }
       updateHeaderCapsule();
       updateModelControls();

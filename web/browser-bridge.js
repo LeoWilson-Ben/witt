@@ -196,8 +196,10 @@
         model, reasoning, accessMode, workDir: workDir || "", codexProfile: codexProfile || "default",
       } }, "onConversationCreated", "onChatError", "无法创建对话");
     },
-    updateConversationSettings(id, model, reasoning, accessMode) {
-      run(`chat/conversations/${id}`, { method: "PATCH", json: { model, reasoning, accessMode } },
+    updateConversationSettings(id, model, reasoning, accessMode, codexProfile) {
+      const payload = { model, reasoning, accessMode };
+      if (codexProfile) payload.codexProfile = codexProfile;
+      run(`chat/conversations/${id}`, { method: "PATCH", json: payload },
         "onSettingsUpdated", "onChatError", "设置保存失败");
     },
     updateConversationProject(id, workDir) {
