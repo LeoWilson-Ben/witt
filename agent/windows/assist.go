@@ -51,7 +51,7 @@ type assistPolicy struct {
 func (a *assistPolicy) check(p packet) error {
 	a.RLock()
 	defer a.RUnlock()
-	if a.paused || !time.Now().Before(a.expires) {
+	if a.paused || (!a.expires.IsZero() && !time.Now().Before(a.expires)) {
 		return errors.New("ASSIST_NOT_ACTIVE")
 	}
 	var args workspaceArgs

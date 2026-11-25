@@ -109,7 +109,6 @@ func runAssistCLI(options assistOptions) error {
 		return err
 	}
 
-	expiresTime := time.UnixMilli(preview.ExpiresAt).Local()
 	modeLabel := "单目录安全模式 (读写/命令需本机确认)"
 	if preview.AccessMode == "full" {
 		modeLabel = "完整执行模式 (当前 Windows 用户权限，免逐条审批)"
@@ -123,7 +122,10 @@ func runAssistCLI(options assistOptions) error {
 	fmt.Printf("  操作员:   %s\n", preview.Operator)
 	fmt.Printf("  授权模式: %s\n", modeLabel)
 	fmt.Printf("  默认目录: %s\n", canonicalRoot)
-	fmt.Printf("  有效期至: %s\n", expiresTime.Format("2006-01-02 15:04:05"))
+	if preview.ExpiresAt > 0 {
+		expiresTime := time.UnixMilli(preview.ExpiresAt).Local()
+		fmt.Printf("  有效期至: %s\n", expiresTime.Format("2006-01-02 15:04:05"))
+	}
 	fmt.Println("========================================")
 
 	if !options.AutoApprove {
@@ -186,6 +188,10 @@ func runAssistCLI(options assistOptions) error {
 		}
 	}
 
+	var assistExpires time.Time
+	if grant.Expires > 0 {
+		assistExpires = time.UnixMilli(grant.Expires)
+	}
 	isFull := grant.AccessMode == "full"
 	config := agentConfig{
 		roots:      map[string]string{"project": canonicalRoot},
@@ -194,7 +200,7 @@ func runAssistCLI(options assistOptions) error {
 		processes:  processes,
 		assist: &assistPolicy{
 			sessionID:    grant.SessionID,
-			expires:      time.UnixMilli(grant.Expires),
+			expires:      assistExpires,
 			capabilities: append([]string(nil), grant.Capabilities...),
 			fullAccess:   isFull,
 			approve:      cliApprove,
@@ -216,7 +222,7 @@ func runAssistCLI(options assistOptions) error {
 
 	backoff := time.Second
 	for ctx.Err() == nil {
-		if !time.Now().Before(config.assist.expires) {
+		if !config.assist.expires.IsZero() && !time.Now().Before(config.assist.expires) {
 			cliRecord("协助授权已到期，正在退出")
 			break
 		}

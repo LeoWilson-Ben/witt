@@ -15,7 +15,7 @@ function createRemoteAssist(options) {
     if (!priorConnect(id)) return false;
     if (!isAssist(id)) return true;
     const s=sessions.devices.get(id);
-    return Boolean(s && s.state==="active" && sessions.now()<s.expires_at);
+    return Boolean(s && s.state==="active" && (!s.expires_at || sessions.now()<s.expires_at));
   };
   return {sessions,transport:sessions.transport(),routes:createAssistRoutes({...options,sessions}),close:()=>sessions.close()};
 }

@@ -31,7 +31,7 @@ class AssistSessions {
     this.history = this.db.prepare("INSERT OR REPLACE INTO assist_history VALUES(?,?,?)");
     for (const row of this.db.prepare("SELECT summary_json FROM assist_history").all()) {
       const saved = JSON.parse(row.summary_json);
-      saved.state = this.now() >= saved.expires_at ? "expired" : "revoked";
+      saved.state = (saved.expires_at && this.now() >= saved.expires_at) ? "expired" : "revoked";
       saved.token_hash = null; saved.code_hash = null;
       this.sessions.set(saved.assist_session_id, saved);
       if (saved.workspace_id) {
@@ -45,15 +45,13 @@ class AssistSessions {
   create(operator, input = {}) {
     if (!operator?.userId) fail("OPERATOR_REQUIRED");
     if ([...this.sessions.values()].filter(s => s.operator_id === operator.userId && !["revoked", "expired"].includes(s.state)).length >= 10) fail("SESSION_LIMIT");
-    const ttl = input.ttl_minutes === undefined ? 30 : input.ttl_minutes;
-    if (!Number.isInteger(ttl) || ttl < 1 || ttl > 60) fail("INVALID_EXPIRY");
     if (input.access_mode !== undefined && !["workspace", "full"].includes(input.access_mode)) fail("INVALID_ACCESS_MODE");
     const code = crypto.randomBytes(5).toString("hex").toUpperCase();
     const session = { assist_session_id: crypto.randomUUID(), operator_id: operator.userId,
       operator_label: String(operator.label || "Witt 操作者").slice(0, 100),
       customer_label: String(input.customer_label || "临时协助").slice(0, 100),
-      state: "pending", created_at: this.now(), expires_at: this.now() + ttl * 60_000,
-      pairing_expires_at: this.now() + Math.min(ttl * 60_000, 5 * 60_000), code_hash: digest(code),
+      state: "pending", created_at: this.now(), expires_at: null,
+      pairing_expires_at: null, code_hash: digest(code),
       access_mode: input.access_mode === "full" ? "full" : "workspace",
       allowed_capabilities: input.access_mode === "full" ? [...FULL] : [...READ, ...(input.allow_edits === true ? EDIT : []), ...(input.allow_environment === true ? ["workspace.system_info"] : []), ...(input.allow_commands === true ? EXEC_OPS : [])],
       device_id: null, workspace_root: null, workspace_id: null };
@@ -76,9 +74,9 @@ class AssistSessions {
     const normalized = String(code || "").toUpperCase().replace(/-/g, "");
     if (!/^[A-F0-9]{10}$/.test(normalized)) fail("PAIR_NOT_AVAILABLE");
     const s = [...this.sessions.values()].find(s => s.state === "pending" && s.code_hash === digest(normalized));
-    if (!s || this.now() >= s.pairing_expires_at || this.now() >= s.expires_at) fail("PAIR_NOT_AVAILABLE");
+    if (!s || (s.pairing_expires_at && this.now() >= s.pairing_expires_at) || (s.expires_at && this.now() >= s.expires_at)) fail("PAIR_NOT_AVAILABLE");
     const ticket = crypto.randomBytes(32).toString("base64url");
-    this.tickets.set(digest(ticket), { session: s, expires: Math.min(s.pairing_expires_at, this.now() + 120_000) });
+    this.tickets.set(digest(ticket), { session: s, expires: s.pairing_expires_at ? Math.min(s.pairing_expires_at, this.now() + 120_000) : this.now() + 120_000 });
     return { pair_ticket: ticket, operator_label: s.operator_label, service_name: "Witt Remote Assist",
       assist_session_id: s.assist_session_id, expires_at: s.expires_at, allowed_capabilities: s.allowed_capabilities,
       access_mode: s.access_mode || "workspace", minimum_connector_version: null };
@@ -112,7 +110,7 @@ class AssistSessions {
     return s;
   }
   expire(s) {
-    if (this.now() >= s.expires_at && !["expired", "revoked"].includes(s.state)) this.transition(s, "expired");
+    if (s.expires_at && this.now() >= s.expires_at && !["expired", "revoked"].includes(s.state)) this.transition(s, "expired");
   }
   transition(s, state) {
     if (!["active", "paused", "revoked", "expired"].includes(state)) fail("INVALID_STATE");
@@ -146,7 +144,7 @@ class AssistSessions {
       this.disconnectTimers.delete(deviceId);
     }
     const s = this.devices.get(deviceId);
-    if (s && s.state === "active" && this.now() < s.expires_at) {
+    if (s && s.state === "active" && (!s.expires_at || this.now() < s.expires_at)) {
       this.record(s, "session.reconnect", null, "active");
     }
   }
@@ -164,7 +162,7 @@ class AssistSessions {
       const current = this.devices.get(deviceId);
       if (!current || current.state !== "active") return;
       if (this.gateway.registry.describe(deviceId, this.now())?.status === "online") return;
-      this.transition(current, this.now() >= current.expires_at ? "expired" : "revoked");
+      this.transition(current, current.expires_at && this.now() >= current.expires_at ? "expired" : "revoked");
     }, this.reconnectGraceMs);
     timer.unref?.();
     this.disconnectTimers.set(deviceId, timer);
@@ -173,17 +171,17 @@ class AssistSessions {
     if (!isAssist(deviceId)) return;
     const s = this.devices.get(deviceId);
     if (!s) fail("SESSION_NOT_AUTHORIZED"); this.expire(s);
-    if (s.state !== "active" || this.now() >= s.expires_at) fail("SESSION_NOT_ACTIVE");
+    if (s.state !== "active" || (s.expires_at && this.now() >= s.expires_at)) fail("SESSION_NOT_ACTIVE");
     if (allowed.tool !== "workspace" || !s.workspace_id || allowed.context?.workspaceSessionId !== s.assist_session_id ||
         (allowed.capability === "workspace.system_info" ? allowed.args.root !== undefined : allowed.args.root !== "project") || !s.allowed_capabilities.includes(allowed.capability)) fail("SESSION_SCOPE_DENIED");
   }
   commandsAllowed(deviceId) {
     const s = this.devices.get(deviceId);
-    return !!s && s.state === "active" && this.now() < s.expires_at && s.allowed_capabilities.includes("workspace.exec");
+    return !!s && s.state === "active" && (!s.expires_at || this.now() < s.expires_at) && s.allowed_capabilities.includes("workspace.exec");
   }
   fullAccessAllowed(deviceId) {
     const s = this.devices.get(deviceId);
-    return !!s && s.state === "active" && this.now() < s.expires_at && s.access_mode === "full" && s.allowed_capabilities.includes("workspace.full_access");
+    return !!s && s.state === "active" && (!s.expires_at || this.now() < s.expires_at) && s.access_mode === "full" && s.allowed_capabilities.includes("workspace.full_access");
   }
   bindWorkspace(s, chat, input = {}) {
     this.expire(s); if (s.state !== "active" || !this.public(s).connected) fail("DEVICE_OFFLINE");

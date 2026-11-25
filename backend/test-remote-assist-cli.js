@@ -136,13 +136,14 @@ test("Remote Assist CLI: full flow, reconnect grace period, exec_start/poll/kill
   let ws = null;
   let ws2 = null;
   try {
-    // 1. 创建 full 模式协助码
+    // 1. 创建 full 模式协助码（无强制时长限制）
     const created = await httpJson(`${baseUrl}/remote-assist/sessions`, "POST", {
       customer_label: "Test-PC",
-      ttl_minutes: 15,
       access_mode: "full",
     });
     assert.equal(created.status, 200);
+    assert.equal(created.body.expires_at, null);
+    assert.equal(created.body.pairing_expires_at, null);
     assert.match(created.body.pairing_code, /^[A-F0-9]{5}-[A-F0-9]{5}$/);
     assert.equal(created.body.access_mode, "full");
     assert.ok(created.body.allowed_capabilities.includes("workspace.exec_start"));
@@ -357,7 +358,6 @@ test("Real chloe.exe E2E smoke: interactive stdin pairing code, list, exec_start
   try {
     const created = await httpJson(`${baseUrl}/remote-assist/sessions`, "POST", {
       customer_label: "Real-CLI-PC",
-      ttl_minutes: 10,
       access_mode: "full",
     });
     assert.equal(created.status, 200);
