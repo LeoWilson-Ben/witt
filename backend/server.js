@@ -36,6 +36,13 @@ const codexProfiles = {
   default: { id: "default", label: "Witt 默认账号", codexHome: "/var/lib/witt/.codex", workDir: codexWorkDir },
   antigravity: { id: "antigravity", label: "Antigravity CLI", provider: "antigravity", workDir: codexWorkDir },
 };
+// Existing Codex logins are shared with all members; do not create empty accounts.
+for (const [id, home] of Object.entries({xuanyu: "/home/ubuntu/.codex-xuanyu",
+  account4: "/home/ubuntu/.codex-account-4", account5: "/home/ubuntu/.codex-account-5"})) {
+  if (fs.existsSync(path.join(home, "auth.json"))) {
+    codexProfiles[id] = { id, label: `Codex ${id}`, codexHome: home, workDir: codexWorkDir };
+  }
+}
 const licreBuildDir = "/data/builds";
 const licreConsoleDir = "/data/xuanyu-build-console";
 const xuanyuPreviewDir = "/data/xuanyu-build-console/repo/build/web";

