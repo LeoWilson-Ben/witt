@@ -73,6 +73,7 @@ class ChatService {
       ? Math.max(0, options.turnIdleTimeoutMs)
       : DEFAULT_TURN_IDLE_TIMEOUT_MS;
     this.providerRuntime = options.providerRuntime || null;
+    this.remoteWorkspaceService = options.remoteWorkspaceService || null;
     this.codexProfiles = options.codexProfiles || {
       default: {
         id: "default",
@@ -139,9 +140,17 @@ class ChatService {
     return candidates.length === 1 ? candidates[0] : null;
   }
 
-  clientFor(profile, model = this.defaultModel) {
+  activeRemoteRuntimeFor(conversation) {
+    if (!this.remoteWorkspaceService || !conversation?.id) return null;
+    const binding = this.remoteWorkspaceService.bindingForConversation(conversation.id);
+    if (!binding || binding.state !== "active") return null;
+    return { binding, runtime: this.remoteWorkspaceService.runtimeFor(binding) };
+  }
+
+  clientFor(profile, model = this.defaultModel, conversation = null) {
     const deepseek = DEEPSEEK_MODELS.has(model);
     const stellar = stellarbit.models(this.providerRuntime?.owner).some(m=>m.id===model);
+    const remote = this.activeRemoteRuntimeFor(conversation);
     const configOverrides = ["features.default_mode_request_user_input=true"];
     if (!this.serverAdministrator) configOverrides.push(
       'sandbox_mode="workspace-write"',
@@ -149,6 +158,9 @@ class ChatService {
       'sandbox_workspace_write.network_access=false',
       `sandbox_workspace_write.writable_roots=${JSON.stringify([this.userWorkspaceDir, this.dataDir])}`,
     );
+    if (remote?.runtime?.codexConfigOverrides?.length) {
+      configOverrides.push(...remote.runtime.codexConfigOverrides);
+    }
     if (deepseek) configOverrides.push(
       'model_provider="witt-deepseek"',
       'model_providers.witt-deepseek.name="DeepSeek through Witt"',
@@ -166,13 +178,14 @@ class ChatService {
       'model_providers.witt-stellarbit.request_max_retries=0',
       'model_providers.witt-stellarbit.stream_max_retries=0',
     );
+    const clientScope = remote ? `${this.clientScope}:rw:${remote.binding.workspace_id}` : this.clientScope;
     const client = profile.provider && this.providerRuntime && !stellar ? this.providerRuntime.client(profile) : sharedAppServer({
       codexBin: this.codexBin,
-      cwd: profile.workDir,
+      cwd: remote ? remote.runtime.cwd : profile.workDir,
       home: "/var/lib/witt",
       codexHome: stellar ? this.codexProfiles.default.codexHome : profile.codexHome,
       configOverrides,
-      clientScope: this.clientScope,
+      clientScope,
     });
     if (!this.boundClients.has(client)) {
       this.boundClients.add(client);
@@ -855,6 +868,17 @@ class ChatService {
     return conversation;
   }
 
+  createRemoteWorkspaceConversation({ title = "远程协助", model = this.defaultModel, reasoning = "medium",
+      codexProfile = null, harnessSessionId = null } = {}) {
+    const conversation = this.createConversation(title, model || this.defaultModel, reasoning || "medium",
+      "danger-full-access", "", codexProfile || null);
+    if (harnessSessionId) {
+      conversation.harnessSessionId = harnessSessionId;
+      this.writeConversation(conversation);
+    }
+    return conversation;
+  }
+
   readUpload(id) {
     if (!/^[a-zA-Z0-9-]+$/.test(String(id || ""))) return null;
     try {
@@ -999,15 +1023,17 @@ class ChatService {
   async resumeOnClient(conversation) {
     if (!conversation.codexThreadId) throw new Error("这个对话还没有可复用的 Codex 上下文");
     const profile = this.profileFor(conversation);
-    const client = this.clientFor(profile, conversation.model);
+    const remote = this.activeRemoteRuntimeFor(conversation);
+    const client = this.clientFor(profile, conversation.model, conversation);
     await client.start();
     await client.request("thread/resume", {
       threadId: conversation.codexThreadId,
-      cwd: this.effectiveWorkDir(conversation),
+      cwd: remote ? remote.runtime.cwd : this.effectiveWorkDir(conversation),
       model: conversation.model,
       sandbox: conversation.accessMode,
       approvalPolicy: "on-request",
       developerInstructions: this.buildDeveloperInstructions(conversation),
+      mcpConfigPath: remote?.runtime?.mcpConfigPath || null,
       excludeTurns: true,
     });
     return client;
@@ -2357,10 +2383,19 @@ class ChatService {
 
   buildDeveloperInstructions(conversation) {
     const workDir = this.effectiveWorkDir(conversation);
+    const remoteBinding = this.remoteWorkspaceService?.bindingForConversation(conversation?.id);
+    const remoteGuidance = remoteBinding?.state === "active"
+      ? [
+          "当前对话已绑定客户 Windows 电脑的远程协助 CLI 会话，请通过 MCP 工具 `witt_remote_workspace` 操作客户电脑。",
+          `客户授权工作区路径：${remoteBinding.display_path || "当前项目目录"}；不要尝试直接读写服务器本地文件路径来代替操作客户电脑。`,
+          "需要安装依赖（npm/pip/winget等）或启动常驻后台服务（FastAPI/Vite/Node等）时，请使用 `workspace_exec_start` 启动并结合 `workspace_exec_poll` 查看实时日志与确认就绪，不再用或结束时调用 `workspace_exec_kill`。",
+        ].join("\n")
+      : "";
     return [
       "你是运行在用户私人服务器上的 AI 助手维特（Witt）。",
       `固定工作目录：${workDir}`,
       `Witt 附件目录：${this.dataDir}`,
+      remoteGuidance,
       "记住用户在本线程中的上下文，回答使用简洁自然的中文。",
       this.workspace.projectFor(conversation)?.instructions ? `用户为本项目提供的说明：\n${this.workspace.projectFor(conversation).instructions}` : "",
       "只处理用户明确要求的任务，保留现有数据和未提交修改。",
@@ -2467,9 +2502,10 @@ class ChatService {
     const reasoning = this.reasoningFor(model,this.profileFor(conversation).id,conversation.reasoning);
     const policy = executionPolicy(this.serverAdministrator, conversation);
     const accessMode = policy.sandbox;
-    const workDir = this.effectiveWorkDir(conversation);
+    const remote = this.activeRemoteRuntimeFor(conversation);
+    const workDir = remote ? remote.runtime.cwd : this.effectiveWorkDir(conversation);
     const profile = this.profileFor(conversation);
-    const client = this.clientFor(profile, model);
+    const client = this.clientFor(profile, model, conversation);
     const active = {
       conversationId: conversation.id,
       messageId: assistant.id,
@@ -2498,6 +2534,7 @@ class ChatService {
         sandbox: accessMode,
         approvalPolicy: policy.approvalPolicy,
         developerInstructions: this.buildDeveloperInstructions(conversation),
+        mcpConfigPath: remote?.runtime?.mcpConfigPath || null,
       };
       const threadResult = conversation.codexThreadId
         ? await client.request("thread/resume", {

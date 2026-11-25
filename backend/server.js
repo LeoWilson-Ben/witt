@@ -16,6 +16,10 @@ const { AntigravityAccountService } = require("./antigravity-account-service");
 const { ProviderRuntime } = require("./provider-runtime");
 const { claimStandby } = require("./failover");
 const { WindowsNodeService } = require("./windows-node-service");
+const { DeviceGateway } = require("./remote-device/device-gateway");
+const { WorkspaceStore, WorkspaceAuditStore, ApprovalGate, WorkspaceDispatcher } = require("./remote-workspace");
+const { RemoteWorkspaceService } = require("./remote-workspace-service");
+const { createRemoteAssist } = require("./remote-assist");
 
 const host = "127.0.0.1";
 const port = Number(process.env.DROP_VAULT_PORT || 3003);
@@ -181,6 +185,40 @@ function readJsonBody(req, limit, callback) {
   req.on("error", () => fail("请求连接异常"));
 }
 
+const remoteAssistDir = path.join(path.dirname(dataDir), "remote-assist");
+fs.mkdirSync(remoteAssistDir, { recursive: true, mode: 0o700 });
+const deviceGateway = new DeviceGateway({ configFile: path.join(remoteAssistDir, "devices.json") });
+const workspaceStore = new WorkspaceStore(remoteAssistDir);
+const workspaceApprovals = new ApprovalGate();
+const workspaceAudit = new WorkspaceAuditStore(remoteAssistDir);
+let remoteWorkspaceService = null;
+const remoteAssist = createRemoteAssist({
+  gateway: deviceGateway,
+  workspaceStore,
+  auditDirectory: remoteAssistDir,
+  readJsonBody,
+  sendJson,
+  chatFor,
+  prepareWorkspace: (workspace) => remoteWorkspaceService?.runtimeFor(workspace),
+});
+const workspaceDispatcher = new WorkspaceDispatcher({
+  workspaceStore,
+  transport: remoteAssist.transport,
+  approvals: workspaceApprovals,
+  audit: workspaceAudit,
+  assistCommandsFor: (deviceId) => remoteAssist.sessions.commandsAllowed(deviceId),
+  fullAccessFor: (deviceId) => remoteAssist.sessions.fullAccessAllowed(deviceId),
+});
+remoteWorkspaceService = new RemoteWorkspaceService({
+  workspaceStore,
+  dispatcher: workspaceDispatcher,
+  approvals: workspaceApprovals,
+  audit: workspaceAudit,
+  runtimeDir: path.join(remoteAssistDir, "runtime"),
+  apiBase: `http://${host}:${port}`,
+  capabilitiesFor: (deviceId) => deviceGateway.registry.definition(deviceId)?.capabilities || null,
+});
+
 const chatService = new ChatService({
   serverAdministrator: true,
   chatDir,
@@ -191,6 +229,7 @@ const chatService = new ChatService({
   sendJson,
   readJsonBody,
   codexProfiles,
+  remoteWorkspaceService,
 });
 const authService = new AuthService({ dir: authDir, sendJson, readJsonBody });
 const windowsNodeService = new WindowsNodeService({ dir: authDir, sendJson, readJsonBody });
@@ -283,6 +322,7 @@ function chatFor(principal) {
     defaultModel: principal.admin || principal.unrestrictedModels ? "gpt-6.1-sol" : "gpt-5.5",
     quotaExhausted: !principal.admin && !principal.unrestrictedModels,
     codexProfiles,
+    remoteWorkspaceService,
     providerRuntime: providerRuntimeFor(principal.userId),
     allowedCodexProfiles: principal.admin
       ? Object.keys(codexProfiles)
@@ -703,8 +743,9 @@ function handleLicre(req, res, url) {
   return true;
 }
 
-http.createServer((req, res) => {
+const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${host}:${port}`);
+  if (remoteWorkspaceService.handleInternalMcp(req, res, url, readJsonBody, sendJson)) return;
   if (url.pathname === "/health") {
     sendJson(res, 200, { ok: true, nonAdminExecution: "sandboxed", serverAccessPolicy: "per-device" });
     return;
@@ -753,10 +794,12 @@ http.createServer((req, res) => {
   }
   if (authService.handle(req, res, url, principal, legacyAuthorized)) return;
   if (windowsNodeService.handle(req, res, url, principal)) return;
+  if (remoteAssist.routes.handleCustomer(req, res, url)) return;
   if (!principal) {
     sendJson(res, 401, { error: "未授权" });
     return;
   }
+  if (remoteAssist.routes.handleOperator(req, res, url, principal)) return;
   if (req.method === "GET" && ["/chat/conversations", "/files"].includes(url.pathname)) {
     res.once("finish", () => {
       if (res.statusCode !== 200) return;
@@ -844,7 +887,9 @@ http.createServer((req, res) => {
     return;
   }
   sendJson(res, 404, { error: "接口不存在" });
-}).listen(port, host, () => {
+});
+deviceGateway.attach(server);
+server.listen(port, host, () => {
   console.log(`Witt API listening on http://${host}:${port}`);
   recoverTasks();
 });

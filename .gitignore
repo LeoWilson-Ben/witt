@@ -18,3 +18,5 @@ runtime/
 tests/legacy-token-fixture.txt
 android/app/src/main/assets/lumora/
 /web/update.json
+/web/cli/chloe.exe
+/web/cli/SHA256SUMS.txt

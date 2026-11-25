@@ -45,8 +45,8 @@ class CliAgentClient extends EventEmitter{
  loadSession(id){if(!/^[a-f0-9-]{36}$/.test(id||''))throw Error('会话编号无效');let s=this.sessions.get(id);if(!s){try{s=JSON.parse(fs.readFileSync(path.join(this.sessionDir(),id+'.json'),'utf8'));}catch{throw Error('这个账号的会话上下文不可用，请新建对话');}this.sessions.set(id,s);}return s;}
  saveSession(s){fs.writeFileSync(path.join(this.sessionDir(),s.id+'.json'),JSON.stringify(s),{mode:0o600});}
  async request(method,args={}){
-  if(method==='thread/start'){const id=crypto.randomUUID(),s={id,cwd:args.cwd,instructions:args.developerInstructions||'',nativeSession:null,sandbox:args.sandbox};this.sessions.set(id,s);this.saveSession(s);return {thread:{id}};}
-  if(method==='thread/resume'){const s=this.loadSession(args.threadId);s.cwd=args.cwd||s.cwd;s.instructions=args.developerInstructions||s.instructions;s.sandbox=args.sandbox||s.sandbox;return {thread:{id:s.id}};}
+  if(method==='thread/start'){const id=crypto.randomUUID(),s={id,cwd:args.cwd,instructions:args.developerInstructions||'',nativeSession:null,sandbox:args.sandbox,mcpConfigPath:args.mcpConfigPath||null};this.sessions.set(id,s);this.saveSession(s);return {thread:{id}};}
+  if(method==='thread/resume'){const s=this.loadSession(args.threadId);s.cwd=args.cwd||s.cwd;s.instructions=args.developerInstructions||s.instructions;s.sandbox=args.sandbox||s.sandbox;if(args.mcpConfigPath!==undefined)s.mcpConfigPath=args.mcpConfigPath;return {thread:{id:s.id}};}
   if(method==='turn/start'){
    if(!(await this.runtime.service(this.provider).account(this.runtime.owner)).authenticated)throw Error('请先登录对应账号');
    if(!this.runtime.allowed(args.model,this.profile))throw Error('该账号的模型不可用，请刷新模型列表');
@@ -69,6 +69,7 @@ class CliAgentClient extends EventEmitter{
   if(this.provider==='claude'){
    args.push('-p','--output-format','stream-json','--verbose','--include-partial-messages','--model',model.id.slice('claude:'.length),'--effort',effort);
    if(s.nativeSession)args.push('--resume',s.nativeSession);else args.push('--session-id',s.id);
+   if(s.mcpConfigPath)args.push('--mcp-config',s.mcpConfigPath);
    if(s.instructions)args.push('--append-system-prompt',s.instructions);
    if((run.args.sandbox||s.sandbox)==='read-only')args.push('--permission-mode','plan');else if((run.args.sandbox||s.sandbox)==='danger-full-access')args.push('--dangerously-skip-permissions');else args.push('--permission-mode','acceptEdits');
   }else{
