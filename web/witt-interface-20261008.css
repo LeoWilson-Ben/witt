@@ -691,22 +691,22 @@ body .composer-hint,
 #adminSettingsSheet .device-row button:disabled { opacity: .5; }
 
 
-/* boot-w.css */
-#bootScreen{--bg:#f9faf8;--ink:#253b37;--edge:#7faaa0;--shine:#d5eee6;--bloom:rgba(129,178,157,.18);background:var(--bg)!important;color:var(--ink);gap:0}
-#bootScreen .boot-stage{position:relative;width:min(300px,76vw,95dvh);aspect-ratio:280/150;isolation:isolate}
-#bootScreen .halo{position:absolute;inset:-60% -35%;background:radial-gradient(ellipse,var(--bloom),transparent 66%);filter:blur(18px);opacity:0;pointer-events:none;z-index:-1}
-#bootScreen svg{width:100%;height:100%;overflow:visible}
-#bootScreen .letter{fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1}
-#bootScreen .ink{stroke:url(#wittLaunch-ink);stroke-width:8.5}
-#bootScreen .light{stroke:var(--edge);stroke-width:4;filter:url(#wittLaunch-soft);opacity:.7}
-#bootScreen .nib{fill:var(--shine);filter:url(#wittLaunch-soft)}
-#bootScreen .nib-core{fill:var(--shine)}
-#bootScreen .spark{fill:var(--edge)}
-#bootScreen .shadow{fill:var(--ink);filter:url(#wittLaunch-shadow);opacity:0}
-#bootScreen .finish{stroke:url(#wittLaunch-sheen);stroke-width:8.5;fill:none;stroke-linecap:round;stroke-linejoin:round;opacity:0}
-#bootScreen>small{margin-top:24px;color:#888;font-size:10px}
-:root[data-theme="dark"] #bootScreen{--bg:#111917;--ink:#d5e5df;--edge:#83afa2;--shine:#f0fff8;--bloom:rgba(105,183,156,.16)}
-@media(prefers-reduced-motion:reduce){#bootScreen .letter{stroke-dashoffset:0}#bootScreen .light,#bootScreen .halo,#bootScreen .nib,#bootScreen .nib-core,#bootScreen .spark,#bootScreen .finish,#bootScreen .shadow{display:none}#bootScreen{transition:opacity .15s}}
+/* boot-w.css — Silk Ribbon optical launch */
+#bootScreen{--boot-bg:#f6f7f5;--boot-ink:#112122;--boot-muted:rgba(17,33,34,.50);--boot-accent:#147468;--boot-blue:#2f73d9;background:var(--boot-bg)!important;color:var(--boot-ink)!important;gap:0;overflow:hidden;transition:opacity .48s ease,transform .52s cubic-bezier(.4,0,.2,1),filter .48s ease}
+:root[data-theme="dark"] #bootScreen{--boot-bg:#050809;--boot-ink:#f0f7f5;--boot-muted:rgba(214,234,230,.52);--boot-accent:#62efd6;--boot-blue:#6fb6ff}
+#bootScreen.leaving{opacity:0!important;transform:scale(1.04)!important;filter:blur(10px);pointer-events:none}
+#bootScreen .boot-silk-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0}
+#bootScreen .boot-stage.boot-silk-lockup{position:relative;z-index:1;width:auto;aspect-ratio:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;pointer-events:none;isolation:isolate}
+#bootScreen .boot-silk-word{position:relative;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI","PingFang SC","Noto Sans SC",sans-serif;font-size:clamp(46px,12.5vmin,88px);font-weight:500;letter-spacing:.28em;text-indent:.28em;line-height:1;color:var(--boot-ink);opacity:0;filter:blur(20px);transform:scale(1.08);transition:opacity .82s cubic-bezier(.16,1,.3,1),filter 1s cubic-bezier(.16,1,.3,1),transform 1.08s cubic-bezier(.16,1,.3,1),letter-spacing 1.08s cubic-bezier(.16,1,.3,1),text-indent 1.08s cubic-bezier(.16,1,.3,1)}
+#bootScreen .boot-silk-lockup.focus .boot-silk-word{opacity:1;filter:blur(0);transform:scale(1);letter-spacing:.12em;text-indent:.12em}
+#bootScreen .boot-silk-word::after{content:"Witt";position:absolute;inset:0;background:linear-gradient(108deg,transparent 22%,var(--boot-accent) 46%,#ffffff 50%,var(--boot-blue) 54%,transparent 78%);background-size:240% 100%;background-position:140% 0;-webkit-background-clip:text;background-clip:text;color:transparent;opacity:0;pointer-events:none}
+#bootScreen .boot-silk-lockup.sheen .boot-silk-word::after{animation:wittBootSheen 1.08s cubic-bezier(.32,0,.18,1) forwards}
+@keyframes wittBootSheen{0%{background-position:140% 0;opacity:0}18%{opacity:.95}85%{opacity:.8}100%{background-position:-60% 0;opacity:0}}
+#bootScreen .boot-silk-meta{display:inline-flex;align-items:center;gap:9px;font-size:clamp(10px,1.7vmin,12px);font-weight:500;letter-spacing:.30em;text-indent:.30em;text-transform:uppercase;color:var(--boot-muted);opacity:0;transform:translateY(10px);transition:opacity .68s ease .22s,transform .78s cubic-bezier(.22,1,.36,1) .22s}
+#bootScreen .boot-silk-lockup.focus .boot-silk-meta{opacity:1;transform:translateY(0)}
+#bootScreen .boot-silk-dot{width:6px;height:6px;border-radius:50%;background:var(--boot-accent);box-shadow:0 0 12px var(--boot-accent);flex:none;animation:wittBootDot 2.2s ease-in-out infinite}
+@keyframes wittBootDot{0%,100%{opacity:.55;transform:scale(.9)}50%{opacity:1;transform:scale(1.22)}}
+@media(prefers-reduced-motion:reduce){#bootScreen .boot-silk-canvas{display:none}#bootScreen .boot-silk-word{opacity:1;filter:none;transform:none;letter-spacing:.12em;text-indent:.12em;transition:none}#bootScreen .boot-silk-word::after{display:none}#bootScreen .boot-silk-meta{opacity:1;transform:none;transition:none}#bootScreen .boot-silk-dot{animation:none}#bootScreen{transition:opacity .15s}}
 
 
 /* ui-upgrades.css */

@@ -1292,7 +1292,7 @@
     if (!boot || boot.classList.contains("leaving") || boot.dataset.dismissPending) return;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const remaining = reduced || window.wittNativeLaunch ? 0 : Math.max(0,
-      2800 - (performance.now() - (window.wittBootStartedAt ?? 0)));
+      2100 - (performance.now() - (window.wittBootStartedAt ?? 0)));
     if (remaining > 0) {
       boot.dataset.dismissPending = "true";
       setTimeout(() => { delete boot.dataset.dismissPending; dismissBoot(); }, remaining);

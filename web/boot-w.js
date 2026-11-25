@@ -1,64 +1,144 @@
-
 (() => {
-  const root=document.querySelector('#bootScreen .boot-stage'); if (!root) return; const word=root.querySelector('#wittLaunch-word');
-  const ink=[...root.querySelectorAll('.ink')],light=[...root.querySelectorAll('.light')];
-  const paths=['w','i','t1','t2'].map(id=>root.querySelector('#wittLaunch-'+id));
-  const lengths=paths.map(p=>p.getTotalLength());
-  const starts=[160,870,1130,1430],durations=[900,380,440,440];
-  const pen=root.querySelector('#wittLaunch-pen'),halo=root.querySelector('.halo');
-  const finish=root.querySelector('.finish'),sheen=root.querySelector('#wittLaunch-sheen');
-  const shadow=root.querySelector('.shadow'),sparkGroup=root.querySelector('#wittLaunch-sparks');
-  const motion=matchMedia('(prefers-reduced-motion: reduce)');
-  const sparks=Array.from({length:7},()=>{const el=document.createElementNS('http://www.w3.org/2000/svg','circle');el.setAttribute('class','spark');el.setAttribute('r','1.2');sparkGroup.appendChild(el);return el;});
-  let start=0,frame=0,history=[];
-  const clamp=n=>Math.max(0,Math.min(1,n));
-  const ease=n=>n*n*(3-2*n);
-  function still(){
-    cancelAnimationFrame(frame);word.setAttribute('transform','');word.setAttribute('opacity','1');
-    ink.forEach(p=>p.style.strokeDashoffset='0');light.forEach(p=>p.style.opacity='0');
-    pen.setAttribute('opacity','0');finish.style.opacity='0';halo.style.opacity='0';shadow.style.opacity='0';sparks.forEach(s=>s.setAttribute('opacity','0'));
+  const boot = document.getElementById("bootScreen");
+  const canvas = document.getElementById("bootSilkCanvas");
+  const lockup = document.getElementById("bootSilkLockup");
+  if (!boot || !canvas || !lockup) return;
+
+  const ctx = canvas.getContext("2d");
+  const motion = matchMedia("(prefers-reduced-motion: reduce)");
+  let frame = 0;
+  let start = 0;
+  let w = 0;
+  let h = 0;
+  let cleaned = false;
+  const timers = [];
+
+  function schedule(fn, ms) {
+    timers.push(setTimeout(fn, ms));
   }
-  function draw(now){
-    if(document.hidden || !root.isConnected || root.closest('#bootScreen').style.visibility==='hidden' || root.closest('#bootScreen').classList.contains('leaving'))return;
-    if(!start)start=now;
-    let time=now-start;
-    time=Math.min(time,2850);
-    const exit=ease(clamp((time-2850)/650));
-    const entrance=ease(clamp(time/850));
-    const scale=.96+.04*entrance+.035*exit;
-    word.setAttribute('transform',`translate(140 75) scale(${scale}) translate(-140 ${-75+5*(1-entrance)-4*exit})`);
-    word.setAttribute('opacity',String(1-exit));
-    let point=null;
-    for(let i=0;i<4;i++){
-      const progress=ease(clamp((time-starts[i])/durations[i]));
-      ink[i].style.strokeDashoffset=String(1-progress);
-      light[i].style.strokeDashoffset=String(1-progress);
-      light[i].style.opacity=String(.75*(1-ease(clamp((time-1850)/450))));
-      if(progress>0&&progress<1)point=paths[i].getPointAtLength(lengths[i]*progress);
+
+  function active() {
+    return (
+      !cleaned &&
+      boot.isConnected &&
+      boot.style.visibility !== "hidden" &&
+      !boot.classList.contains("leaving")
+    );
+  }
+
+  function cleanup() {
+    if (cleaned) return;
+    cleaned = true;
+    cancelAnimationFrame(frame);
+    while (timers.length) clearTimeout(timers.pop());
+    window.removeEventListener("resize", resize);
+    document.removeEventListener("visibilitychange", onVisibility);
+  }
+
+  function resize() {
+    if (!boot.isConnected) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    w = boot.clientWidth || window.innerWidth;
+    h = boot.clientHeight || window.innerHeight;
+    canvas.width = Math.max(1, Math.floor(w * dpr));
+    canvas.height = Math.max(1, Math.floor(h * dpr));
+    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function draw(now) {
+    if (!active()) {
+      if (!boot.isConnected || boot.classList.contains("leaving")) cleanup();
+      return;
     }
-    if(point){
-      pen.setAttribute('transform',`translate(${point.x} ${point.y})`);pen.setAttribute('opacity','1');
-      history.unshift({x:point.x,y:point.y,time});
-    }else pen.setAttribute('opacity','0');
-    history=history.filter(p=>time-p.time<220).slice(0,45);
-    sparks.forEach((s,i)=>{
-      const p=history[i*4];
-      if(!p){s.setAttribute('opacity','0');return;}
-      const age=(time-p.time)/220;
-      s.setAttribute('cx',String(p.x));s.setAttribute('cy',String(p.y+age*4));s.setAttribute('opacity',String((1-age)*.4*(1-exit)));
-    });
-    halo.style.opacity=String(Math.sin(clamp(time/3200)*Math.PI)*.8*(1-exit));
-    halo.style.transform=`scale(${.8+.3*entrance})`;
-    shadow.style.opacity=String(.07*entrance*(1-exit));
-    const shine=clamp((time-1900)/800);
-    sheen.setAttribute('gradientTransform',`translate(${-80+460*shine} 0)`);
-    finish.style.opacity=String(shine>0&&shine<1 ? .75*Math.sin(shine*Math.PI):0);
-    frame=requestAnimationFrame(draw);
+    if (document.hidden || !ctx) return;
+    if (!start) start = now;
+
+    const elapsed = (now - start) / 1000;
+    const isDark = document.documentElement.dataset.theme === "dark";
+    const centerY = h * 0.5;
+    const energy = 0.22 + 0.78 * Math.exp(-elapsed * 1.5);
+    const fadeIn = Math.min(1, elapsed / 0.32);
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.save();
+    ctx.globalCompositeOperation = isDark ? "screen" : "multiply";
+
+    const ribbonCount = 7;
+    const steps = Math.max(44, Math.floor(w / 14));
+    for (let r = 0; r < ribbonCount; r++) {
+      const ratio = r / (ribbonCount - 1);
+      const phase = elapsed * (1.28 + r * 0.14) + r * 0.75;
+      const amp = (18 + r * 11) * energy * (h < 500 ? 0.65 : 1);
+      const freq = 0.0042 + r * 0.0007;
+
+      ctx.beginPath();
+      for (let i = 0; i <= steps; i++) {
+        const u = i / steps;
+        const x = u * w;
+        const env = Math.sin(u * Math.PI);
+        const env2 = env * env;
+        const y =
+          centerY +
+          Math.sin(x * freq + phase) * amp * env2 +
+          Math.cos(x * freq * 1.9 - phase * 0.8) * (amp * 0.42) * env2;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+
+      const grad = ctx.createLinearGradient(0, centerY, w, centerY);
+      const centerWeight = 1 - Math.abs(ratio - 0.5) * 2;
+      if (isDark) {
+        const alpha = (0.14 + centerWeight * 0.24) * fadeIn;
+        grad.addColorStop(0, "rgba(98, 239, 214, 0)");
+        grad.addColorStop(0.28, `rgba(98, 239, 214, ${alpha})`);
+        grad.addColorStop(0.5, `rgba(185, 255, 245, ${alpha * 1.25})`);
+        grad.addColorStop(0.72, `rgba(111, 182, 255, ${alpha})`);
+        grad.addColorStop(1, "rgba(111, 182, 255, 0)");
+      } else {
+        const alpha = (0.09 + centerWeight * 0.14) * fadeIn;
+        grad.addColorStop(0, "rgba(20, 116, 104, 0)");
+        grad.addColorStop(0.3, `rgba(20, 116, 104, ${alpha})`);
+        grad.addColorStop(0.5, `rgba(38, 152, 138, ${alpha * 1.2})`);
+        grad.addColorStop(0.7, `rgba(47, 115, 217, ${alpha})`);
+        grad.addColorStop(1, "rgba(47, 115, 217, 0)");
+      }
+
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 1.2 + centerWeight * 1.4;
+      ctx.stroke();
+    }
+
+    const glowR = Math.min(w, h) * 0.36;
+    const glow = ctx.createRadialGradient(w / 2, centerY, 0, w / 2, centerY, glowR);
+    if (isDark) {
+      glow.addColorStop(0, `rgba(98, 239, 214, ${0.14 * fadeIn})`);
+      glow.addColorStop(0.5, `rgba(111, 182, 255, ${0.05 * fadeIn})`);
+      glow.addColorStop(1, "rgba(0, 0, 0, 0)");
+    } else {
+      glow.addColorStop(0, `rgba(20, 116, 104, ${0.08 * fadeIn})`);
+      glow.addColorStop(1, "rgba(255, 255, 255, 0)");
+    }
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+
+    frame = requestAnimationFrame(draw);
   }
-  function replay(){if(!root.isConnected)return;cancelAnimationFrame(frame);start=0;history=[];if(motion.matches)still();else frame=requestAnimationFrame(draw);}
 
+  function onVisibility() {
+    if (document.hidden) cancelAnimationFrame(frame);
+    else if (active() && !motion.matches) frame = requestAnimationFrame(draw);
+  }
 
-  document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelAnimationFrame(frame);else if(root.isConnected && !motion.matches)frame=requestAnimationFrame(draw);});
-  motion.addEventListener('change',replay);
-  replay();
+  if (motion.matches) {
+    lockup.classList.add("focus");
+    return;
+  }
+
+  resize();
+  window.addEventListener("resize", resize);
+  document.addEventListener("visibilitychange", onVisibility);
+  schedule(() => { if (active()) lockup.classList.add("focus"); }, 280);
+  schedule(() => { if (active()) lockup.classList.add("sheen"); }, 780);
+  frame = requestAnimationFrame(draw);
 })();

@@ -78,7 +78,7 @@
 }
 @media (prefers-reduced-motion: reduce) { .task-status-strip, .workspace-overview, .history-load { animation: none; transition: none; } }
   </style>
-  <link rel="stylesheet" href="/vault/witt-interface-20261008.css?v=8-file-transfer-20261026&deviceNotes=20261114-2&historyModelBadge=20261116-3">
+  <link rel="stylesheet" href="/vault/witt-interface-20261008.css?v=8-file-transfer-20261026&deviceNotes=20261114-2&historyModelBadge=20261116-3&bootSilk=20261125-1">
   <link rel="stylesheet" href="/vault/conversation-entry.css?v=20261114-spacing-1">
   <link rel="stylesheet" href="/vault/provider-accounts.css?v=20261116-model-source-2">
   <link rel="stylesheet" href="/vault/simplified-settings.css?v=20261102-keyboard-1">
@@ -91,28 +91,13 @@
 <body>
   <div class="app-atmosphere" aria-hidden="true"><i></i><i></i><i></i></div>
   <div class="boot-screen" id="bootScreen" aria-label="Witt 正在启动">
-    <div class="boot-stage"><div class="halo" aria-hidden="true"></div><svg viewBox="0 0 280 150" aria-hidden="true">
-<defs>
-<path id="wittLaunch-w" pathLength="1" d="M24 30 L49 112 Q52 124 57 112 L80 54 L103 112 Q108 124 111 112 L136 30"/>
-<path id="wittLaunch-i" pathLength="1" d="M158 40 L158 40.2 M158 66 L158 109 Q158 124 169 114"/>
-<path id="wittLaunch-t1" pathLength="1" d="M198 36 L198 107 Q198 127 213 114 M184 67 L212 67"/>
-<path id="wittLaunch-t2" pathLength="1" d="M244 36 L244 107 Q244 127 259 114 M230 67 L258 67"/>
-<linearGradient id="wittLaunch-ink" x1="0" y1="0" x2=".85" y2="1"><stop stop-color="var(--ink)"/><stop offset=".46" stop-color="var(--edge)"/><stop offset="1" stop-color="var(--ink)"/></linearGradient>
-<linearGradient id="wittLaunch-sheen" gradientUnits="userSpaceOnUse" x1="-65" y1="0" x2="65" y2="20"><stop stop-color="var(--shine)" stop-opacity="0"/><stop offset=".5" stop-color="var(--shine)"/><stop offset="1" stop-color="var(--shine)" stop-opacity="0"/></linearGradient>
-<filter id="wittLaunch-soft" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3"/></filter>
-<filter id="wittLaunch-shadow" x="-50%" y="-300%" width="200%" height="700%"><feGaussianBlur stdDeviation="6"/></filter>
-</defs>
-<ellipse class="shadow" cx="140" cy="143" rx="85" ry="3"/>
-<g id="wittLaunch-word">
-<g class="glow"><use class="letter light" href="#wittLaunch-w"/><use class="letter light" href="#wittLaunch-i"/><use class="letter light" href="#wittLaunch-t1"/><use class="letter light" href="#wittLaunch-t2"/></g>
-<g class="strokes"><use class="letter ink" href="#wittLaunch-w"/><use class="letter ink" href="#wittLaunch-i"/><use class="letter ink" href="#wittLaunch-t1"/><use class="letter ink" href="#wittLaunch-t2"/></g>
-<g class="finish"><use href="#wittLaunch-w"/><use href="#wittLaunch-i"/><use href="#wittLaunch-t1"/><use href="#wittLaunch-t2"/></g>
-<g id="wittLaunch-pen" opacity="0"><circle class="nib" r="8"/><circle class="nib-core" r="2.4"/></g>
-<g id="wittLaunch-sparks"></g>
-</g>
-</svg></div>
+    <canvas class="boot-silk-canvas" id="bootSilkCanvas" aria-hidden="true"></canvas>
+    <div class="boot-stage boot-silk-lockup" id="bootSilkLockup">
+      <div class="boot-silk-word" aria-hidden="true">Witt</div>
+      <div class="boot-silk-meta"><span class="boot-silk-dot" aria-hidden="true"></span><span>PRIVATE WORKSPACE · ONLINE</span></div>
+    </div>
   </div>
-  <script src="/vault/boot-w.js?v=20261007-3"></script>
+  <script src="/vault/boot-w.js?v=20261125-silk-1"></script>
   <script>window.wittBootStartedAt = performance.now(); window.WittNative?.postMessage('{"method":"launchSurfaceReady","args":[]}');</script>
   <section class="auth-gate" id="authGate" aria-hidden="true" aria-labelledby="authGateTitle">
     <div class="auth-gate-halo" aria-hidden="true"></div>
@@ -730,7 +715,7 @@
     </section>
   </aside>
   <script src="/vault/browser-bridge.js?v=20261028-history"></script>
-  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102&groupDialog=20261102-1&codeCopy=20261102-1&imageKeyboard=20261102-1&composerIme=20261103-1&accountRecovery=20261103-1&serviceStatus=20261103-1&headerCapsule=20261106-1&deviceNotes=20261114-1&headerSpacing=20261114-1&antigravityLogin=20261114-1&invitePermission=20261114-1&geminiCreate=20261114-1&accountOrb=20261114-three-orbs-1&accountQuota=20261114-1&quotaLayout=20261114-2&historyModelBadge=20261116-3&modelSource=20261116-2&mdFormat=20261118-4&codexPicker=20261124-1&antigravitySettings=20261125-1"></script>
+  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102&groupDialog=20261102-1&codeCopy=20261102-1&imageKeyboard=20261102-1&composerIme=20261103-1&accountRecovery=20261103-1&serviceStatus=20261103-1&headerCapsule=20261106-1&deviceNotes=20261114-1&headerSpacing=20261114-1&antigravityLogin=20261114-1&invitePermission=20261114-1&geminiCreate=20261114-1&accountOrb=20261114-three-orbs-1&accountQuota=20261114-1&quotaLayout=20261114-2&historyModelBadge=20261116-3&modelSource=20261116-2&mdFormat=20261118-4&codexPicker=20261124-1&antigravitySettings=20261125-1&bootSilk=20261125-1"></script>
   <script src="/vault/sidebar-layout.js?v=20261008-2"></script>
   <script src="/vault/ui-upgrades.js?v=20261008-2&simplify=20261102-1&actions=20261102-2&groupDialog=20261102-1&keyboard=20261102-1&focusReturn=20261102-1&renameValidation=20261102-1&imeEscape=20261102-1&longPressCancel=20261102-1&taskFocus=20261102-1&taskPending=20261102-1"></script>
   <script src="/vault/witt-features.js?v=20261008-1&simplify=20261102-1"></script>
