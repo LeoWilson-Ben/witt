@@ -16,9 +16,10 @@ const digest = (value) => crypto.createHash("sha256").update(value).digest("hex"
 const isAssist = (id) => typeof id === "string" && id.startsWith("assist-");
 
 class AssistSessions {
-  constructor({ gateway, workspaceStore, auditDirectory, now = Date.now, reconnectGraceMs = 60_000 }) {
+  constructor({ gateway, workspaceStore, auditDirectory, now = Date.now, reconnectGraceMs = 60_000, onWorkspaceClosed = null }) {
     this.gateway = gateway; this.workspaceStore = workspaceStore; this.now = now;
     this.reconnectGraceMs = Number.isFinite(reconnectGraceMs) && reconnectGraceMs >= 0 ? reconnectGraceMs : 60_000;
+    this.onWorkspaceClosed = onWorkspaceClosed;
     this.sessions = new Map(); this.devices = new Map(); this.tickets = new Map(); this.attempts = new Map();
     this.disconnectTimers = new Map();
     fs.mkdirSync(auditDirectory, { recursive: true, mode: 0o700 });
@@ -60,7 +61,11 @@ class AssistSessions {
   }
   public(s) {
     const { code_hash, token_hash, ...result } = s;
-    return { ...result, connected: s.device_id ? this.gateway.registry.describe(s.device_id)?.status === "online" : false };
+    return {
+      ...result,
+      connected: s.device_id ? this.gateway.registry.describe(s.device_id)?.status === "online" : false,
+      space_cleaned: Boolean(s.workspace_id && ["revoked", "expired"].includes(s.state)),
+    };
   }
   owned(id, operator) {
     const s = this.sessions.get(id);
@@ -133,6 +138,10 @@ class AssistSessions {
         if (timer) { clearTimeout(timer); this.disconnectTimers.delete(s.device_id); }
         this.gateway.registry.definitions.delete(s.device_id);
       }
+      if (s.workspace_id) {
+        try { this.onWorkspaceClosed?.(s.workspace_id, s); } catch {}
+        this.record(s, "workspace.cleanup", null, "cleaned");
+      }
     }
     this.record(s, "session." + state, null, state); return this.public(s);
   }
@@ -187,15 +196,17 @@ class AssistSessions {
     this.expire(s); if (s.state !== "active" || !this.public(s).connected) fail("DEVICE_OFFLINE");
     if (s.workspace_id) return { workspace: this.workspaceStore.get(s.workspace_id), conversation: chat.publicConversation(chat.readConversation(s.conversation_id)) };
     const harnessSessionId = crypto.randomUUID();
+    const rawLabel = String(s.customer_label || "临时协助").trim() || "临时协助";
+    const spaceTitle = rawLabel.startsWith("协助空间") ? rawLabel : `协助空间 · ${rawLabel}`;
     const conv = typeof chat.createRemoteWorkspaceConversation === "function"
       ? chat.createRemoteWorkspaceConversation({
-        title: s.customer_label,
+        title: spaceTitle,
         model: input.model,
         reasoning: input.reasoning,
         codexProfile: input.codexProfile,
         harnessSessionId,
       })
-      : chat.createConversation(s.customer_label, input.model || chat.defaultModel, input.reasoning || "medium", "danger-full-access", "", input.codexProfile || null);
+      : chat.createConversation(spaceTitle, input.model || chat.defaultModel, input.reasoning || "medium", "danger-full-access", "", input.codexProfile || null);
     const workspace = this.workspaceStore.create({ workspace_id: s.assist_session_id, conversation_id: conv.id,
       customer_id: s.operator_id, device_id: s.device_id, root_alias: "project", display_path: s.workspace_root,
       harness_id: conv.codexProfile || "default", model_id: conv.model, harness_session_id: harnessSessionId });

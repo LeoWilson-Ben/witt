@@ -14,6 +14,7 @@ const { DeviceGateway } = require("./remote-device/device-gateway");
 const { WorkspaceStore, WorkspaceAuditStore, ApprovalGate, WorkspaceDispatcher } = require("./remote-workspace");
 const { RemoteWorkspaceService } = require("./remote-workspace-service");
 const { createRemoteAssist } = require("./remote-assist");
+const { ChatService } = require("./chat-service");
 
 function createFakeChat() {
   const conversations = new Map();
@@ -90,6 +91,7 @@ test("Remote Assist CLI: full flow, reconnect grace period, exec_start/poll/kill
     },
     chatFor: () => fakeChat,
     prepareWorkspace: (ws) => remoteWorkspaceService?.runtimeFor(ws),
+    onWorkspaceClosed: (wsId) => remoteWorkspaceService?.destroySpace(wsId),
   });
 
   const dispatcher = new WorkspaceDispatcher({
@@ -199,6 +201,12 @@ test("Remote Assist CLI: full flow, reconnect grace period, exec_start/poll/kill
     });
     assert.equal(bound.status, 200);
     const runtime = remoteWorkspaceService.runtimeFor(bound.body.workspace);
+    assert.ok(fs.existsSync(runtime.spaceDir));
+    assert.ok(fs.existsSync(runtime.cwd));
+    assert.ok(runtime.cwd.endsWith(`${path.sep}work`));
+    const tempTaskFile = path.join(runtime.cwd, "temp-task-output.txt");
+    fs.writeFileSync(tempTaskFile, "temporary server artifact\n");
+    assert.ok(fs.existsSync(tempTaskFile));
     assert.ok(fs.existsSync(runtime.mcpConfigPath));
     assert.ok(runtime.codexConfigOverrides.some((line) => line.includes("witt_remote_workspace")));
 
@@ -258,10 +266,13 @@ test("Remote Assist CLI: full flow, reconnect grace period, exec_start/poll/kill
     const names = mcpOutput.result.tools.map((t) => t.name);
     assert.deepEqual(names, ["workspace_list", "workspace_exec_start"]);
 
-    // 8. 测试主动撤销后拒绝新指令与 MCP 调用
+    // 8. 测试主动撤销后拒绝新指令与 MCP 调用，并彻底清理服务器侧临时空间文件
     const revoked = await httpJson(`${baseUrl}/remote-assist/sessions/${assist_session_id}/revoke`, "POST", {});
     assert.equal(revoked.status, 200);
     assert.equal(revoked.body.state, "revoked");
+    assert.equal(revoked.body.space_cleaned, true);
+    assert.equal(fs.existsSync(runtime.spaceDir), false);
+    assert.equal(remoteWorkspaceService.spaceExists(bound.body.workspace.workspace_id), false);
     const afterRevoke = await mcpCall("workspace.list", { path: "." });
     assert.equal(afterRevoke.status, 401);
   } finally {
@@ -314,6 +325,7 @@ test("Real chloe.exe E2E smoke: interactive stdin pairing code, list, exec_start
     },
     chatFor: () => fakeChat,
     prepareWorkspace: (ws) => remoteWorkspaceService?.runtimeFor(ws),
+    onWorkspaceClosed: (wsId) => remoteWorkspaceService?.destroySpace(wsId),
   });
   const dispatcher = new WorkspaceDispatcher({
     workspaceStore,
@@ -437,6 +449,7 @@ test("Real chloe.exe E2E smoke: interactive stdin pairing code, list, exec_start
       cliProc.once("exit", (code) => { clearTimeout(timer); resolve(code); });
     });
     assert.equal(exitCode, 0, `expected witt-cli.exe exit 0 on revoke, got ${exitCode}. Logs:\n${cliLogs}`);
+    assert.equal(fs.existsSync(path.join(path.dirname(runtimeDir), "spaces", sessionId)), false);
   } finally {
     try { if (cliProc && cliProc.exitCode === null) cliProc.kill(); } catch {}
     remoteWorkspaceService.close();
@@ -445,6 +458,104 @@ test("Real chloe.exe E2E smoke: interactive stdin pairing code, list, exec_start
     try { audit.close?.(); } catch {}
     gateway.close();
     server.close();
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test("ChatService remote assist fallback, isolated temporary space, and orphan cleanup on startup", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "witt-space-isolation-"));
+  const runtimeDir = path.join(dir, "runtime");
+  const spacesDir = path.join(dir, "spaces");
+  const gateway = new DeviceGateway({ configFile: path.join(dir, "devices.json") });
+  const workspaceStore = new WorkspaceStore(dir);
+  const approvals = new ApprovalGate();
+  const audit = new WorkspaceAuditStore(dir);
+  let remoteWorkspaceService = null;
+  const assist = createRemoteAssist({
+    gateway,
+    workspaceStore,
+    auditDirectory: dir,
+    onWorkspaceClosed: (wsId) => remoteWorkspaceService?.destroySpace(wsId),
+  });
+  const dispatcher = new WorkspaceDispatcher({
+    workspaceStore,
+    transport: assist.transport,
+    approvals,
+    audit,
+    assistCommandsFor: (id) => assist.sessions.commandsAllowed(id),
+    fullAccessFor: (id) => assist.sessions.fullAccessAllowed(id),
+  });
+  remoteWorkspaceService = new RemoteWorkspaceService({
+    workspaceStore,
+    dispatcher,
+    approvals,
+    audit,
+    runtimeDir,
+    spacesDir,
+    capabilitiesFor: (id) => gateway.registry.definition(id)?.capabilities || null,
+  });
+
+  const chatService = new ChatService({
+    serverAdministrator: true,
+    chatDir: path.join(dir, "chat"),
+    dataDir: path.join(dir, "files"),
+    codexBin: "codex",
+    codexWorkDir: path.join(dir, "default-work"),
+    sendJson: () => {},
+    readJsonBody: () => {},
+    remoteWorkspaceService,
+  });
+
+  try {
+    // 1. 传入不存在的 codexProfile 与模型，验证安全兜底不会抛错
+    const conv = chatService.createRemoteWorkspaceConversation({
+      title: "协助空间 · 测试空间",
+      model: "non-existent-model",
+      reasoning: "extreme",
+      codexProfile: "missing-profile",
+      harnessSessionId: "h-1",
+    });
+    assert.ok(conv.id);
+
+    // 2. 创建绑定并验证工作目录被隔离到 spaces/<id>/work
+    const ws = workspaceStore.create({
+      workspace_id: crypto.randomUUID(),
+      conversation_id: conv.id,
+      customer_id: "op-1",
+      device_id: "assist-dev-1",
+      root_alias: "project",
+      display_path: "D:\\CustomerRepo",
+      harness_id: "default",
+      model_id: conv.model,
+      harness_session_id: "h-1",
+    });
+    const rt = remoteWorkspaceService.runtimeFor(ws);
+    assert.equal(chatService.effectiveWorkDir(conv), rt.cwd);
+    assert.ok(chatService.buildDeveloperInstructions(conv).includes("独立临时远程协作空间"));
+    assert.equal(chatService.publicConversation(conv).remoteWorkspace.spaceCleaned, false);
+
+    // 3. 在临时空间和孤儿目录写入文件，验证重启清扫和销毁清理彻底
+    fs.writeFileSync(path.join(rt.cwd, "scratch.log"), "temp");
+    const orphanDir = path.join(spacesDir, crypto.randomUUID());
+    fs.mkdirSync(orphanDir, { recursive: true });
+    fs.writeFileSync(path.join(orphanDir, "leftover.txt"), "stale");
+
+    remoteWorkspaceService.cleanupStaleSpaces();
+    assert.equal(fs.existsSync(orphanDir), false);
+    assert.equal(fs.existsSync(rt.spaceDir), true);
+
+    workspaceStore.setState(ws.workspace_id, "closed");
+    remoteWorkspaceService.destroySpace(ws.workspace_id);
+    assert.equal(fs.existsSync(rt.spaceDir), false);
+    assert.equal(chatService.publicConversation(conv).remoteWorkspace.spaceCleaned, true);
+    assert.ok(chatService.buildDeveloperInstructions(conv).includes("已结束"));
+  } finally {
+    chatService.close?.();
+    remoteWorkspaceService.close();
+    assist.close();
+    try { workspaceStore.close?.(); } catch {}
+    try { audit.close?.(); } catch {}
+    gateway.close();
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 });

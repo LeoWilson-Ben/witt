@@ -200,6 +200,7 @@ const remoteAssist = createRemoteAssist({
   sendJson,
   chatFor,
   prepareWorkspace: (workspace) => remoteWorkspaceService?.runtimeFor(workspace),
+  onWorkspaceClosed: (workspaceId) => remoteWorkspaceService?.destroySpace(workspaceId),
 });
 const workspaceDispatcher = new WorkspaceDispatcher({
   workspaceStore,

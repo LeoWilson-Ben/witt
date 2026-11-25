@@ -5,8 +5,10 @@ function createAssistRoutes({ sessions, chatFor, readJsonBody, sendJson, prepare
   const bearer = req => String(req.headers.authorization || "").replace(/^Bearer /, "");
   const handle = (req, res, work) => {
     res.setHeader("Cache-Control", "no-store");
-    Promise.resolve().then(work).then(body => sendJson(res, 200, body)).catch(e =>
-      sendJson(res, /RATE_LIMIT|SESSION_LIMIT/.test(e.code) ? 429 : /NOT_FOUND/.test(e.code) ? 404 : 403, { error: e.code || "ASSIST_REQUEST_FAILED" }));
+    Promise.resolve().then(work).then(body => sendJson(res, 200, body)).catch(e => {
+      console.error("[remote-assist]", req.method, req.url, e?.stack || e);
+      sendJson(res, /RATE_LIMIT|SESSION_LIMIT/.test(e?.code) ? 429 : /NOT_FOUND/.test(e?.code) ? 404 : 403, { error: e?.code || e?.message || "ASSIST_REQUEST_FAILED" });
+    });
     return true;
   };
   function handleCustomer(req, res, url) {

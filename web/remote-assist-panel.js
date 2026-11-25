@@ -12,7 +12,10 @@
   }
 
   let pollTimer = null;
+  let bannerTimer = null;
   let lastCreatedSession = null;
+  let cachedSessions = [];
+  let lastSyncedConvId = "";
 
   function ensureStyles() {
     if ($("remoteAssistPanelStyles")) return;
@@ -24,6 +27,78 @@
         line-height: 1 !important;
         display: grid !important;
         place-items: center !important;
+      }
+      #remoteSpaceBanner {
+        position: relative;
+        z-index: 25;
+        margin: 0 auto 8px;
+        width: min(760px, calc(100% - 24px));
+        padding: 8px 12px;
+        border-radius: 12px;
+        border: 1px solid color-mix(in srgb, var(--sd-accent, #5b4ee9) 28%, transparent);
+        background: color-mix(in srgb, var(--sd-accent, #5b4ee9) 7%, var(--surface, #fff));
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        box-sizing: border-box;
+        font-size: 12px;
+      }
+      #remoteSpaceBanner[hidden] {
+        display: none !important;
+      }
+      :root[data-theme="dark"] #remoteSpaceBanner {
+        background: color-mix(in srgb, var(--sd-accent, #a78bfa) 10%, rgba(28, 28, 34, .92));
+      }
+      .ra-banner-info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        min-width: 0;
+        flex: 1;
+      }
+      .ra-banner-title {
+        font-weight: 650;
+        color: var(--ink, #171717);
+      }
+      .ra-banner-path {
+        color: var(--muted, #64748b);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 280px;
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 11px;
+      }
+      .ra-banner-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex: none;
+      }
+      .ra-banner-actions button {
+        height: 28px;
+        padding: 0 10px;
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 550;
+        cursor: pointer;
+        border: 1px solid rgba(127, 127, 127, .24);
+        background: rgba(255, 255, 255, .6);
+        color: inherit;
+      }
+      :root[data-theme="dark"] .ra-banner-actions button {
+        background: rgba(255, 255, 255, .08);
+      }
+      .ra-banner-actions button.is-danger {
+        background: rgba(220, 38, 38, .1);
+        border-color: rgba(220, 38, 38, .3);
+        color: #dc2626;
+      }
+      :root[data-theme="dark"] .ra-banner-actions button.is-danger {
+        color: #f87171;
       }
       #featureContent .ra-root {
         display: grid;
@@ -234,7 +309,7 @@
         font-weight: 650;
         overflow-wrap: anywhere;
       }
-      #featureContent .ra-root .ra-badge {
+      .ra-badge {
         display: inline-flex;
         align-items: center;
         padding: 2px 9px;
@@ -243,23 +318,23 @@
         font-weight: 600;
         white-space: nowrap;
       }
-      #featureContent .ra-root .ra-badge.is-online {
+      .ra-badge.is-online {
         color: #15803d;
         background: rgba(22, 163, 74, .12);
       }
-      #featureContent .ra-root .ra-badge.is-wait {
+      .ra-badge.is-wait {
         color: #1d4ed8;
         background: rgba(37, 99, 235, .12);
       }
-      #featureContent .ra-root .ra-badge.is-idle {
+      .ra-badge.is-idle {
         color: var(--sg-muted, var(--sd-muted, #64748b));
         background: rgba(127, 127, 127, .12);
       }
-      :root[data-theme="dark"] #featureContent .ra-root .ra-badge.is-online {
+      :root[data-theme="dark"] .ra-badge.is-online {
         color: #4ade80;
         background: rgba(74, 222, 128, .15);
       }
-      :root[data-theme="dark"] #featureContent .ra-root .ra-badge.is-wait {
+      :root[data-theme="dark"] .ra-badge.is-wait {
         color: #60a5fa;
         background: rgba(96, 165, 250, .16);
       }
@@ -319,9 +394,105 @@
     if (s.state === "active") return { text: "已授权 · 等待重连", tone: "is-wait" };
     if (s.state === "pending") return { text: "等待客户输入协助码", tone: "is-wait" };
     if (s.state === "paused") return { text: "已暂停", tone: "is-idle" };
-    if (s.state === "revoked") return { text: "已撤销", tone: "is-idle" };
-    if (s.state === "expired") return { text: "已失效", tone: "is-idle" };
+    if (s.state === "revoked") return { text: "已结束 · 空间已清理", tone: "is-idle" };
+    if (s.state === "expired") return { text: "已失效 · 空间已清理", tone: "is-idle" };
     return { text: s.state || "未知", tone: "is-idle" };
+  }
+
+  function currentConversationId() {
+    const activeRow = document.querySelector(".conversation-row.active");
+    if (activeRow?.dataset?.id) return activeRow.dataset.id;
+    const welcome = $("welcome");
+    if (welcome && !welcome.hidden) return "";
+    return localStorage.getItem("wit_active_conversation") || "";
+  }
+
+  function currentConversationMeta(convId) {
+    if (!convId || !window.WittUI?.conversations) return null;
+    return window.WittUI.conversations().find((item) => item.id === convId) || null;
+  }
+
+  function renderSpaceBanner(session, fallbackMeta) {
+    const banner = $("remoteSpaceBanner");
+    if (!banner) return;
+    if (!session && !fallbackMeta?.remoteWorkspace) {
+      banner.hidden = true;
+      banner.innerHTML = "";
+      return;
+    }
+    ensureStyles();
+    const state = session?.state || fallbackMeta?.remoteWorkspace?.state || "revoked";
+    const connected = session ? Boolean(session.connected) : false;
+    const label = session?.customer_label || fallbackMeta?.title?.replace(/^协助空间\s*·\s*/, "") || "临时协助";
+    const pathText = session?.workspace_root || fallbackMeta?.remoteWorkspace?.displayPath || "";
+    const status = session
+      ? statusInfo(session)
+      : (state === "active"
+        ? { text: "独立临时空间运行中", tone: "is-wait" }
+        : { text: "已结束 · 服务器临时文件已清理", tone: "is-idle" });
+    const canEnd = session && ["pending", "active", "paused"].includes(session.state);
+    banner.innerHTML = `
+      <div class="ra-banner-info">
+        <span class="ra-banner-title">独立临时协作空间 · ${escapeHtml(label)}</span>
+        <span class="ra-badge ${status.tone}">${escapeHtml(status.text)}</span>
+        ${pathText ? `<span class="ra-banner-path" title="${escapeHtml(pathText)}">${escapeHtml(pathText)}</span>` : ""}
+      </div>
+      <div class="ra-banner-actions">
+        ${canEnd ? `<button type="button" class="is-danger" data-ra-banner-end="${escapeHtml(session.assist_session_id)}">结束并清理空间</button>` : ""}
+        <button type="button" id="raBannerPanelBtn">协助面板</button>
+      </div>`;
+    banner.hidden = false;
+  }
+
+  async function syncSpaceBanner(forceFetch = false) {
+    const convId = currentConversationId();
+    if (!convId) {
+      lastSyncedConvId = "";
+      renderSpaceBanner(null, null);
+      return;
+    }
+    const meta = currentConversationMeta(convId);
+    let matched = cachedSessions.find((s) => s.conversation_id === convId) || null;
+    const isRemoteConv = Boolean(matched || meta?.remoteWorkspace || meta?.title?.startsWith("协助空间 · "));
+    if (!isRemoteConv) {
+      renderSpaceBanner(null, null);
+      return;
+    }
+    if (forceFetch || convId !== lastSyncedConvId || !matched || ["pending", "active", "paused"].includes(matched.state)) {
+      lastSyncedConvId = convId;
+      try {
+        const data = await request("remote-assist/sessions");
+        cachedSessions = (data.sessions || []).slice().sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+        matched = cachedSessions.find((s) => s.conversation_id === convId) || null;
+      } catch {}
+    }
+    if (currentConversationId() !== convId) return;
+    renderSpaceBanner(matched, meta);
+  }
+
+  function startBannerMonitor() {
+    if (bannerTimer) return;
+    const originalSelect = window.WittUI?.select;
+    if (typeof originalSelect === "function" && !originalSelect.__raWrapped) {
+      const wrapped = function (...args) {
+        const res = originalSelect.apply(this, args);
+        setTimeout(() => { syncSpaceBanner(true); }, 60);
+        return res;
+      };
+      wrapped.__raWrapped = true;
+      window.WittUI.select = wrapped;
+    }
+    const listNode = $("conversationList");
+    if (listNode && window.MutationObserver) {
+      const observer = new MutationObserver(() => {
+        syncSpaceBanner(false);
+      });
+      observer.observe(listNode, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+    }
+    bannerTimer = setInterval(() => {
+      syncSpaceBanner(false);
+    }, 4000);
+    setTimeout(() => syncSpaceBanner(true), 400);
   }
 
   function copyText(text, btn) {
@@ -379,12 +550,12 @@
           <span class="ra-badge ${status.tone}">${escapeHtml(status.text)}</span>
         </div>
         <div class="ra-session-meta">
-          模式：${escapeHtml(modeText)}${s.workspace_root ? ` · 目录：${escapeHtml(s.workspace_root)}` : ""}
+          模式：${escapeHtml(modeText)}${s.workspace_root ? ` · 目录：${escapeHtml(s.workspace_root)}` : ""}${s.space_cleaned ? " · 服务器临时空间文件已清理" : ""}
         </div>
         <div class="ra-actions">
-          ${canBind ? `<button type="button" class="ra-btn-primary ra-btn-sm" data-ra-bind="${escapeHtml(s.assist_session_id)}">${s.conversation_id ? "打开协助对话" : "进入协助对话"}</button>` : ""}
+          ${canBind ? `<button type="button" class="ra-btn-primary ra-btn-sm" data-ra-bind="${escapeHtml(s.assist_session_id)}">${s.conversation_id ? "打开协作空间" : "进入独立协作空间"}</button>` : ""}
           <button type="button" class="ra-btn-secondary ra-btn-sm" data-ra-audit="${escapeHtml(s.assist_session_id)}">查看审计</button>
-          ${canRevoke ? `<button type="button" class="ra-btn-danger ra-btn-sm" data-ra-revoke="${escapeHtml(s.assist_session_id)}">撤销</button>` : ""}
+          ${canRevoke ? `<button type="button" class="ra-btn-danger ra-btn-sm" data-ra-revoke="${escapeHtml(s.assist_session_id)}">结束并清理</button>` : ""}
         </div>
         <div class="ra-audit-box" id="ra-audit-${escapeHtml(s.assist_session_id)}"></div>
       </article>`;
@@ -399,11 +570,12 @@
   async function render() {
     const data = await request("remote-assist/sessions");
     const sessions = (data.sessions || []).slice().sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+    cachedSessions = sessions;
     const modeSelect = $("raAccessMode")?.value || "full";
     const labelInput = $("raLabel")?.value || "";
     shell(`
       <div class="ra-root">
-        <p class="ra-lead">生成一次性协助码。客户在 Windows 终端安装一次后，输入 <code>chloe</code> 并填协助码即可接入，无需配置 AI 模型或密钥。</p>
+        <p class="ra-lead">生成一次性协助码并分配独立临时协作空间。任务结束或撤销后，服务器侧临时空间文件将自动彻底删除，确保服务器干净。</p>
         <div class="ra-card ra-form-card">
           <input id="raLabel" maxlength="48" placeholder="备注名称，例如：客户电脑 / 测试机" value="${escapeHtml(labelInput)}">
           <select id="raAccessMode" aria-label="授权模式">
@@ -436,6 +608,7 @@
     try {
       const data = await request("remote-assist/sessions");
       const sessions = (data.sessions || []).slice().sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+      cachedSessions = sessions;
       const container = $("raSessionList");
       if (container) {
         container.innerHTML = sessions.length ? sessions.map(sessionCard).join("") : '<p class="ra-lead">暂无远程协助会话。</p>';
@@ -445,6 +618,7 @@
         const card = $("remoteAssistPairingCard");
         if (card) card.remove();
       }
+      syncSpaceBanner(false);
     } catch {}
   }
 
@@ -464,6 +638,28 @@
     $("closeDrawerAccount")?.click();
     $("featureSheet").hidden = false;
     openPanel();
+  });
+
+  $("remoteSpaceBanner")?.addEventListener("click", async (event) => {
+    if (event.target.closest("#raBannerPanelBtn")) {
+      $("featureSheet").hidden = false;
+      openPanel();
+      return;
+    }
+    const endBtn = event.target.closest("[data-ra-banner-end]");
+    if (endBtn) {
+      const id = endBtn.dataset.raBannerEnd;
+      try {
+        endBtn.disabled = true;
+        await request(`remote-assist/sessions/${id}/revoke`, "POST", {});
+        window.WittUI?.toast?.("协助已结束，服务器临时空间文件已全部删除");
+        await syncSpaceBanner(true);
+      } catch (error) {
+        window.WittUI?.toast?.(error.message || "清理空间失败");
+      } finally {
+        if (endBtn.isConnected) endBtn.disabled = false;
+      }
+    }
   });
 
   $("featureContent")?.addEventListener("change", (event) => {
@@ -519,9 +715,10 @@
         if (data.conversation) {
           window.DropVault?.onConversationCreated?.(JSON.stringify({ conversation: data.conversation }));
           window.WittFeatures?.openConversation?.(data.conversation.id);
+          setTimeout(() => syncSpaceBanner(true), 150);
         }
       } catch (error) {
-        window.WittUI?.toast?.(error.message || "进入协助对话失败");
+        window.WittUI?.toast?.(error.message || "进入独立协作空间失败");
       } finally {
         if (bindBtn.isConnected) bindBtn.disabled = false;
       }
@@ -534,9 +731,10 @@
       try {
         revokeBtn.disabled = true;
         await request(`remote-assist/sessions/${id}/revoke`, "POST", {});
+        window.WittUI?.toast?.("协助已结束，服务器临时空间已清理");
         await refreshListOnly();
       } catch (error) {
-        window.WittUI?.toast?.(error.message || "撤销失败");
+        window.WittUI?.toast?.(error.message || "结束并清理失败");
       } finally {
         if (revokeBtn.isConnected) revokeBtn.disabled = false;
       }
@@ -563,4 +761,6 @@
       }
     }
   });
+
+  startBannerMonitor();
 })();

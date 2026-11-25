@@ -567,6 +567,15 @@ class ChatService {
       busy,
       lastMessage: conversation.lastMessage ?? messages.at(-1)?.text ?? "",
     };
+    const remoteBinding = this.remoteWorkspaceService?.bindingForConversation(conversation.id);
+    if (remoteBinding) {
+      result.remoteWorkspace = {
+        workspaceId: remoteBinding.workspace_id,
+        state: remoteBinding.state,
+        displayPath: remoteBinding.display_path,
+        spaceCleaned: remoteBinding.state !== "active",
+      };
+    }
     if (includeMessages) {
       result.messages = messages.map((message) => this.publicMessage(message));
       result.messageOffset = conversation.messageOffset || 0;
@@ -821,6 +830,8 @@ class ChatService {
   }
 
   effectiveWorkDir(conversation) {
+    const remote = this.activeRemoteRuntimeFor(conversation);
+    if (remote?.runtime?.cwd) return remote.runtime.cwd;
     if (!this.serverAdministrator) return this.userWorkspaceDir;
     if (!Object.hasOwn(conversation, "workDir")) return this.codexWorkDir;
     return conversation.workDir || "/var/lib/witt";
@@ -870,8 +881,18 @@ class ChatService {
 
   createRemoteWorkspaceConversation({ title = "远程协助", model = this.defaultModel, reasoning = "medium",
       codexProfile = null, harnessSessionId = null } = {}) {
-    const conversation = this.createConversation(title, model || this.defaultModel, reasoning || "medium",
-      "danger-full-access", "", codexProfile || null);
+    const requestedProfile = codexProfile && this.allowedCodexProfiles.has(String(codexProfile))
+      ? String(codexProfile) : this.defaultCodexProfile;
+    let conversation;
+    try {
+      conversation = this.createConversation(title, model || this.defaultModel, reasoning || "medium",
+        "danger-full-access", "", requestedProfile);
+    } catch {
+      const fallbackProfile = this.allowedCodexProfiles.has("default") ? "default" : this.defaultCodexProfile;
+      const fallbackModel = this.defaultModelFor(fallbackProfile) || this.defaultModel;
+      conversation = this.createConversation(title, fallbackModel, "medium",
+        "danger-full-access", "", fallbackProfile);
+    }
     if (harnessSessionId) {
       conversation.harnessSessionId = harnessSessionId;
       this.writeConversation(conversation);
@@ -2384,12 +2405,15 @@ class ChatService {
   buildDeveloperInstructions(conversation) {
     const workDir = this.effectiveWorkDir(conversation);
     const remoteBinding = this.remoteWorkspaceService?.bindingForConversation(conversation?.id);
-    const remoteGuidance = remoteBinding?.state === "active"
-      ? [
-          "当前对话已绑定客户 Windows 电脑的远程协助 CLI 会话，请通过 MCP 工具 `witt_remote_workspace` 操作客户电脑。",
-          `客户授权工作区路径：${remoteBinding.display_path || "当前项目目录"}；不要尝试直接读写服务器本地文件路径来代替操作客户电脑。`,
-          "需要安装依赖（npm/pip/winget等）或启动常驻后台服务（FastAPI/Vite/Node等）时，请使用 `workspace_exec_start` 启动并结合 `workspace_exec_poll` 查看实时日志与确认就绪，不再用或结束时调用 `workspace_exec_kill`。",
-        ].join("\n")
+    const remoteGuidance = remoteBinding
+      ? (remoteBinding.state === "active"
+        ? [
+            "当前对话运行在【独立临时远程协作空间】中。",
+            `当前工作目录（${workDir}）是服务器为本次协助单独创建的临时空间目录；请通过 MCP 工具 \`witt_remote_workspace\` 操作客户 Windows 电脑（客户授权目录：${remoteBinding.display_path || "当前项目目录"}）。`,
+            "如果必须在服务器侧暂存中转文件，只允许写入当前独立临时空间目录内，禁止修改服务器其他目录或已有项目；本次协作结束/撤销后，服务器侧该临时空间下的所有文件将被自动彻底删除，确保服务器干净无残留。",
+            "需要在客户电脑安装依赖（npm/pip/winget等）或启动常驻后台服务（FastAPI/Vite/Node等）时，请使用 `workspace_exec_start` 启动并结合 `workspace_exec_poll` 查看实时日志与确认就绪，不再用或结束时调用 `workspace_exec_kill`。",
+          ].join("\n")
+        : "当前远程协助独立临时空间已结束，服务器侧临时空间文件已清理，请勿再尝试调用客户电脑远程工具。")
       : "";
     return [
       "你是运行在用户私人服务器上的 AI 助手维特（Witt）。",

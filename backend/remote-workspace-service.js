@@ -31,6 +31,7 @@ class RemoteWorkspaceService {
     this.approvals = options.approvals;
     this.audit = options.audit;
     this.runtimeDir = options.runtimeDir;
+    this.spacesDir = options.spacesDir || (this.runtimeDir ? path.join(path.dirname(this.runtimeDir), "spaces") : null);
     this.mcpProgram = options.mcpProgram || path.join(__dirname, "mcp", "remote-workspace.js");
     this.apiBase = options.apiBase || "http://127.0.0.1:3003";
     this.approvalTtlMs = options.approvalTtlMs || 5 * 60_000;
@@ -38,7 +39,38 @@ class RemoteWorkspaceService {
     this.sessions = new Map();
     this.closed = false;
     this.waiters = new Map();
-    fs.mkdirSync(this.runtimeDir, { recursive: true, mode: 0o700 });
+    if (this.runtimeDir) fs.mkdirSync(this.runtimeDir, { recursive: true, mode: 0o700 });
+    if (this.spacesDir) fs.mkdirSync(this.spacesDir, { recursive: true, mode: 0o700 });
+    this.cleanupStaleSpaces();
+  }
+
+  spaceDirectories() {
+    return [...new Set([this.spacesDir, this.runtimeDir].filter(Boolean))];
+  }
+
+  cleanupStaleSpaces() {
+    for (const rootDir of this.spaceDirectories()) {
+      let entries = [];
+      try { entries = fs.readdirSync(rootDir, { withFileTypes: true }); } catch { continue; }
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        let active = false;
+        try {
+          const binding = this.workspaceStore.get(entry.name);
+          active = Boolean(binding && binding.state === "active");
+        } catch {
+          active = false;
+        }
+        if (!active) {
+          try { fs.rmSync(path.join(rootDir, entry.name), { recursive: true, force: true }); } catch {}
+        }
+      }
+    }
+  }
+
+  spaceExists(workspaceId) {
+    if (!workspaceId) return false;
+    return this.spaceDirectories().some((dir) => fs.existsSync(path.join(dir, workspaceId)));
   }
 
   fullAccessFor(binding) {
@@ -55,13 +87,25 @@ class RemoteWorkspaceService {
     const existing = this.sessions.get(binding.workspace_id);
     if (existing) return existing;
 
-    const directory = path.join(this.runtimeDir, binding.workspace_id);
-    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const baseDir = this.spacesDir || this.runtimeDir;
+    const spaceDir = path.join(baseDir, binding.workspace_id);
+    const workDir = path.join(spaceDir, "work");
+    const mcpDir = path.join(spaceDir, ".witt-mcp");
+    fs.mkdirSync(spaceDir, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(workDir, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(mcpDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(spaceDir, ".witt-space.json"), JSON.stringify({
+      workspace_id: binding.workspace_id,
+      conversation_id: binding.conversation_id,
+      display_path: binding.display_path,
+      created_at: new Date().toISOString(),
+    }, null, 2) + "\n", { mode: 0o600 });
+
     const capabilities = binding.device_id.startsWith("assist-") ? (this.capabilitiesFor(binding.device_id) || []) : null;
     const capabilityEnv = capabilities ? { WITT_REMOTE_WORKSPACE_CAPABILITIES: JSON.stringify(capabilities) } : {};
 
     const secret = crypto.randomBytes(32).toString("base64url");
-    const credentialFile = path.join(directory, "mcp-session-token");
+    const credentialFile = path.join(mcpDir, "mcp-session-token");
     fs.writeFileSync(credentialFile, `${secret}\n`, { mode: 0o600 });
 
     const mcpServerDef = {
@@ -75,9 +119,9 @@ class RemoteWorkspaceService {
       },
     };
     const mcpConfigJson = JSON.stringify({ mcpServers: { witt_remote_workspace: mcpServerDef } }, null, 2) + "\n";
-    const mcpConfigPath = path.join(directory, "mcp_config.json");
+    const mcpConfigPath = path.join(mcpDir, "mcp_config.json");
     fs.writeFileSync(mcpConfigPath, mcpConfigJson, { mode: 0o600 });
-    const geminiConfigDir = path.join(directory, ".gemini", "config");
+    const geminiConfigDir = path.join(mcpDir, ".gemini", "config");
     fs.mkdirSync(geminiConfigDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(path.join(geminiConfigDir, "mcp_config.json"), mcpConfigJson, { mode: 0o600 });
 
@@ -95,7 +139,9 @@ class RemoteWorkspaceService {
       workspaceId: binding.workspace_id,
       assistSession: binding.device_id.startsWith("assist-"),
       capabilities,
-      cwd: directory,
+      spaceDir,
+      mcpDir,
+      cwd: workDir,
       secret,
       credentialFile,
       mcpConfigPath,
@@ -106,11 +152,26 @@ class RemoteWorkspaceService {
     return value;
   }
 
-  invalidate(workspaceId) {
-    const existing = this.sessions.get(workspaceId);
-    if (!existing) return;
+  destroySpace(workspaceId) {
+    if (!workspaceId) return { workspaceId, cleaned: false };
     this.sessions.delete(workspaceId);
-    try { fs.rmSync(existing.credentialFile, { force: true }); } catch {}
+    for (const [approvalId, waiter] of [...this.waiters.entries()]) {
+      if (waiter.binding?.workspace_id !== workspaceId) continue;
+      clearTimeout(waiter.timer);
+      this.waiters.delete(approvalId);
+      try { this.approvals.reject(approvalId, workspaceId); } catch {}
+      waiter.reject(new RemoteWorkspaceServiceError("WORKSPACE_NOT_ACTIVE"));
+    }
+    for (const rootDir of this.spaceDirectories()) {
+      try {
+        fs.rmSync(path.join(rootDir, workspaceId), { recursive: true, force: true });
+      } catch {}
+    }
+    return { workspaceId, cleaned: true };
+  }
+
+  invalidate(workspaceId) {
+    return this.destroySpace(workspaceId);
   }
 
   authenticate(secret) {
