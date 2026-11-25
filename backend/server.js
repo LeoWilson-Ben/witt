@@ -101,8 +101,24 @@ function metadataPath(id, directory = dataDir) {
   return path.join(directory, `${id}.json`);
 }
 
+const recordCache = new Map();
+let taskCache = null;
+
+function invalidateRecordCache(directory = dataDir) {
+  recordCache.delete(directory);
+}
+
 function readRecords(directory = dataDir) {
-  return fs.readdirSync(directory)
+  let mtimeMs;
+  try {
+    mtimeMs = fs.statSync(directory).mtimeMs;
+  } catch {
+    recordCache.delete(directory);
+    return [];
+  }
+  const cached = recordCache.get(directory);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.records;
+  const records = fs.readdirSync(directory)
     .filter((name) => name.endsWith(".json"))
     .map((name) => {
       try {
@@ -113,6 +129,8 @@ function readRecords(directory = dataDir) {
     })
     .filter(Boolean)
     .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
+  recordCache.set(directory, { mtimeMs, records });
+  return records;
 }
 
 function taskPath(id) {
@@ -124,6 +142,7 @@ function writeTask(task) {
   const temporary = `${destination}.${process.pid}.tmp`;
   fs.writeFileSync(temporary, `${JSON.stringify(task)}\n`, { mode: 0o600 });
   fs.renameSync(temporary, destination);
+  taskCache = null;
 }
 
 function readTask(id) {
@@ -149,7 +168,15 @@ function publicTask(task) {
 }
 
 function readTasks() {
-  return fs.readdirSync(taskDir)
+  let mtimeMs;
+  try {
+    mtimeMs = fs.statSync(taskDir).mtimeMs;
+  } catch {
+    taskCache = null;
+    return [];
+  }
+  if (taskCache && taskCache.mtimeMs === mtimeMs) return taskCache.tasks;
+  const tasks = fs.readdirSync(taskDir)
     .filter((name) => /^[a-f0-9-]{36}\.json$/.test(name))
     .map((name) => {
       try {
@@ -160,6 +187,8 @@ function readTasks() {
     })
     .filter(Boolean)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  taskCache = { mtimeMs, tasks };
+  return tasks;
 }
 
 function readJsonBody(req, limit, callback) {
@@ -527,6 +556,7 @@ function upload(req, res, directory = dataDir) {
         uploadedAt: new Date().toISOString(),
       };
       fs.writeFileSync(metadataPath(id, directory), `${JSON.stringify(record)}\n`, { flag: "wx", mode: 0o600 });
+      invalidateRecordCache(directory);
       sendJson(res, 201, { file: record });
     } catch {
       fs.rmSync(temporary, { force: true });
