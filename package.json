@@ -1,0 +1,9 @@
+{
+  "name": "witt",
+  "private": true,
+  "scripts": {
+    "check": "bash scripts/check-all.sh",
+    "test": "bash scripts/check-all.sh",
+    "build:css": "/opt/witt-tools/node-v22.16.0-linux-x64/bin/node scripts/build-web-css.js"
+  }
+}

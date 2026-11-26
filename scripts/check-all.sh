@@ -18,7 +18,7 @@ failed=0
 failed_list=()
 
 echo "==> 1. Syntax check (backend/*.js, web/*.js)"
-for f in backend/*.js web/*.js; do
+while IFS= read -r f; do
   [ -f "$f" ] || continue
   if "$NODE_BIN" --check "$f" 2>/dev/null; then
     passed=$((passed + 1))
@@ -28,7 +28,7 @@ for f in backend/*.js web/*.js; do
     failed=$((failed + 1))
     failed_list+=("syntax:$f")
   fi
-done
+done < <(find backend -name "*.js" -not -path "*/node_modules/*" | sort; find web -maxdepth 1 -name "*.js" | sort)
 echo "Syntax checks done (passed=$passed, failed=$failed)"
 
 # Fast, self-contained unit & regression tests (excludes browser/live-server
