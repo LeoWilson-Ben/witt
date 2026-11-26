@@ -7,6 +7,9 @@
     "build:css": "/opt/witt-tools/node-v22.16.0-linux-x64/bin/node scripts/build-web-css.js",
     "typecheck:web": "PATH=\"/opt/witt-tools/node-v22.16.0-linux-x64/bin:$PATH\" npm --prefix web-app run typecheck",
     "test:web": "PATH=\"/opt/witt-tools/node-v22.16.0-linux-x64/bin:$PATH\" npm --prefix web-app run test",
-    "build:web": "/opt/witt-tools/node-v22.16.0-linux-x64/bin/node scripts/build-web-v3.js"
+    "build:web": "/opt/witt-tools/node-v22.16.0-linux-x64/bin/node scripts/build-web-v3.js",
+    "build:apk": "bash scripts/release-all.sh --apk",
+    "release:check": "bash scripts/release-all.sh --check",
+    "release:web": "bash scripts/release-all.sh --web"
   }
 }
