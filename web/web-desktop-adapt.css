@@ -258,13 +258,81 @@
   gap: 2px !important;
 }
 
-/* 档位大字：图一蔚蓝色【中】 */
+/* 档位大字：随思考程度动态变色（严格复刻 Codex 桌面端蓝→靛→紫→星云渐变） */
 .codex-level-label {
   font-size: 17px !important;
   font-weight: 600 !important;
-  color: #1a73e8 !important;
+  color: var(--codex-label-color, #1a73e8) !important;
   line-height: 1.2 !important;
   letter-spacing: -0.01em !important;
+  transition: color 0.25s ease, text-shadow 0.25s ease !important;
+}
+
+/* Codex 分级色阶变量定义（low -> medium -> high -> xhigh -> max -> ultra） */
+.codex-slider-view[data-level="low"] {
+  --codex-label-color: #3b82f6;
+  --codex-fill-bg: linear-gradient(90deg, #60a5fa, #3b82f6);
+  --codex-glow: rgba(59, 130, 246, 0.22);
+  --codex-thumb-ring: rgba(59, 130, 246, 0.28);
+}
+.codex-slider-view[data-level="medium"] {
+  --codex-label-color: #1a73e8;
+  --codex-fill-bg: linear-gradient(90deg, #2563eb, #2b73ec 55%, #38bdf8);
+  --codex-glow: rgba(43, 115, 236, 0.34);
+  --codex-thumb-ring: rgba(43, 115, 236, 0.38);
+}
+.codex-slider-view[data-level="high"] {
+  --codex-label-color: #5b5ef5;
+  --codex-fill-bg: linear-gradient(100deg, #2563eb, #5b5ef5 50%, #8b5cf6, #2563eb);
+  --codex-glow: rgba(99, 102, 241, 0.48);
+  --codex-thumb-ring: rgba(124, 58, 237, 0.45);
+}
+.codex-slider-view[data-level="xhigh"] {
+  --codex-label-color: #7c3aed;
+  --codex-fill-bg: linear-gradient(100deg, #3b82f6, #7c3aed 48%, #c026d3 82%, #3b82f6);
+  --codex-glow: rgba(139, 92, 246, 0.58);
+  --codex-thumb-ring: rgba(168, 85, 247, 0.56);
+}
+.codex-slider-view[data-level="max"] {
+  --codex-label-color: #a855f7;
+  --codex-fill-bg: linear-gradient(105deg, #4338ca, #7c3aed 34%, #d946ef 68%, #ec4899 88%, #4338ca);
+  --codex-glow: rgba(192, 38, 211, 0.65);
+  --codex-thumb-ring: rgba(217, 70, 239, 0.64);
+}
+.codex-slider-view[data-level="ultra"] {
+  --codex-label-color: #c026d3;
+  --codex-fill-bg: linear-gradient(105deg, #06b6d4, #6366f1 28%, #a855f7 54%, #ec4899 78%, #f59e0b 94%, #06b6d4);
+  --codex-glow: rgba(168, 85, 247, 0.72);
+  --codex-thumb-ring: rgba(236, 72, 153, 0.7);
+}
+
+:root[data-theme="dark"] .codex-slider-view[data-level="low"] { --codex-label-color: #60a5fa; }
+:root[data-theme="dark"] .codex-slider-view[data-level="medium"] { --codex-label-color: #4f93ff; }
+:root[data-theme="dark"] .codex-slider-view[data-level="high"] { --codex-label-color: #818cf8; }
+:root[data-theme="dark"] .codex-slider-view[data-level="xhigh"] { --codex-label-color: #a78bfa; }
+
+/* 高阶档位（极高 / 最高 / 超维）文字采用 Codex 星云渐变色 */
+.codex-slider-view[data-level="xhigh"] .codex-level-label {
+  background: linear-gradient(90deg, #4f46e5, #8b5cf6, #c026d3) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+}
+.codex-slider-view[data-level="max"] .codex-level-label {
+  background: linear-gradient(90deg, #6366f1, #a855f7, #ec4899, #6366f1) !important;
+  background-size: 220% 100% !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+  animation: codex-nebula-flow 3.2s linear infinite !important;
+}
+.codex-slider-view[data-level="ultra"] .codex-level-label {
+  background: linear-gradient(90deg, #06b6d4, #8b5cf6, #ec4899, #f59e0b, #06b6d4) !important;
+  background-size: 260% 100% !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+  animation: codex-nebula-flow 2.2s linear infinite !important;
 }
 
 /* 模型名小字按钮：图一【GPT-6.2 Sol >】 */
@@ -298,10 +366,10 @@
   color: #ffffff !important;
 }
 
-/* 3. 核心滑块轨道 (图一浅灰长圆轨 + 纯蓝填充 + 纯白大圆球 + 刻度点) */
+/* 3. 核心滑块轨道 (Codex 胶囊轨道 + 分级蓝紫星云填充 + 星尘闪烁 + 旋钮脉冲光环) */
 .codex-slider-track-wrap {
   position: relative !important;
-  padding: 2px 0 4px !important;
+  padding: 4px 0 6px !important;
 }
 
 .codex-slider-track {
@@ -310,12 +378,15 @@
   border-radius: 999px !important;
   background: #e5e7eb !important;
   overflow: visible !important;
+  touch-action: none !important;
+  user-select: none !important;
+  cursor: pointer !important;
 }
 :root[data-theme="dark"] .codex-slider-track {
   background: #333336 !important;
 }
 
-/* 蓝色激活填充条 */
+/* 分级激活填充条（低档纯蓝静止 -> 中档柔和微光 -> 高档蓝紫流动 -> 极高/最高/超维紫色星云与星尘） */
 .codex-slider-fill {
   position: absolute !important;
   left: 0 !important;
@@ -323,10 +394,107 @@
   bottom: 0 !important;
   width: 26px;
   border-radius: 999px !important;
-  background: #2b73ec !important;
-  transition: width 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+  background: var(--codex-fill-bg, #2b73ec) !important;
+  background-size: 240% 100% !important;
+  overflow: hidden !important;
+  box-shadow: 0 2px 10px var(--codex-glow, rgba(43, 115, 236, 0.28)) !important;
+  transition: width 0.24s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.28s ease !important;
   pointer-events: none !important;
   z-index: 1 !important;
+}
+.codex-slider-track.is-dragging .codex-slider-fill,
+.codex-slider-track.is-dragging .codex-slider-thumb {
+  transition: none !important;
+}
+
+/* 内部流光扫掠层 (Medium 及以上激活) */
+.codex-slider-fill::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  border-radius: inherit !important;
+  background: linear-gradient(110deg, transparent 22%, rgba(255, 255, 255, 0.42) 48%, transparent 74%) !important;
+  background-size: 220% 100% !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* 紫色星云与星尘点阵层 (High / XHigh / Max / Ultra 逐级增强) */
+.codex-slider-fill::after {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  border-radius: inherit !important;
+  background-image:
+    radial-gradient(circle at 14% 35%, rgba(255, 255, 255, 0.92) 0 1.1px, transparent 1.7px),
+    radial-gradient(circle at 36% 68%, rgba(224, 231, 255, 0.88) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 58% 30%, rgba(255, 255, 255, 0.95) 0 1.2px, transparent 1.8px),
+    radial-gradient(circle at 76% 66%, rgba(245, 208, 254, 0.9) 0 1.1px, transparent 1.7px),
+    radial-gradient(circle at 89% 38%, rgba(255, 255, 255, 0.95) 0 1.3px, transparent 2px) !important;
+  background-size: 140px 26px !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Medium: 轻柔微光扫过 */
+.codex-slider-view[data-level="medium"] .codex-slider-fill::before {
+  opacity: 0.42 !important;
+  animation: codex-shimmer-sweep 3.8s ease-in-out infinite !important;
+}
+
+/* High: 蓝紫流动光谱 + 稀疏微光星点 */
+.codex-slider-view[data-level="high"] .codex-slider-fill {
+  animation: codex-nebula-flow 4.2s linear infinite !important;
+}
+.codex-slider-view[data-level="high"] .codex-slider-fill::before {
+  opacity: 0.55 !important;
+  animation: codex-shimmer-sweep 3.1s ease-in-out infinite !important;
+}
+.codex-slider-view[data-level="high"] .codex-slider-fill::after {
+  opacity: 0.45 !important;
+  animation: codex-stardust-drift 4.6s linear infinite !important;
+}
+
+/* Extra High (xhigh): 深紫星云流动 + 明显星尘微闪 */
+.codex-slider-view[data-level="xhigh"] .codex-slider-fill {
+  animation: codex-nebula-flow 2.8s linear infinite !important;
+  box-shadow: 0 2px 14px rgba(139, 92, 246, 0.56), inset 0 1px 1px rgba(255, 255, 255, 0.35) !important;
+}
+.codex-slider-view[data-level="xhigh"] .codex-slider-fill::before {
+  opacity: 0.68 !important;
+  animation: codex-shimmer-sweep 2.4s ease-in-out infinite !important;
+}
+.codex-slider-view[data-level="xhigh"] .codex-slider-fill::after {
+  opacity: 0.72 !important;
+  animation: codex-stardust-drift 3.1s linear infinite, codex-stardust-twinkle 1.8s ease-in-out infinite !important;
+}
+
+/* Max: 紫色星云 + 璀璨星尘粒子流 */
+.codex-slider-view[data-level="max"] .codex-slider-fill {
+  animation: codex-nebula-flow 2s linear infinite !important;
+  box-shadow: 0 3px 18px rgba(192, 38, 211, 0.62), inset 0 1px 2px rgba(255, 255, 255, 0.42) !important;
+}
+.codex-slider-view[data-level="max"] .codex-slider-fill::before {
+  opacity: 0.78 !important;
+  animation: codex-shimmer-sweep 1.8s ease-in-out infinite !important;
+}
+.codex-slider-view[data-level="max"] .codex-slider-fill::after {
+  opacity: 0.9 !important;
+  animation: codex-stardust-drift 2.2s linear infinite, codex-stardust-twinkle 1.3s ease-in-out infinite !important;
+}
+
+/* Ultra: 极光星云全速流动 + 高密星尘闪烁 */
+.codex-slider-view[data-level="ultra"] .codex-slider-fill {
+  animation: codex-nebula-flow 1.4s linear infinite !important;
+  box-shadow: 0 3px 22px rgba(168, 85, 247, 0.72), 0 0 12px rgba(245, 158, 11, 0.36), inset 0 1px 2px rgba(255, 255, 255, 0.5) !important;
+}
+.codex-slider-view[data-level="ultra"] .codex-slider-fill::before {
+  opacity: 0.88 !important;
+  animation: codex-shimmer-sweep 1.35s ease-in-out infinite !important;
+}
+.codex-slider-view[data-level="ultra"] .codex-slider-fill::after {
+  opacity: 1 !important;
+  animation: codex-stardust-drift 1.6s linear infinite, codex-stardust-twinkle 0.95s ease-in-out infinite !important;
 }
 
 /* 刻度点小圆点 Tick Dots */
@@ -345,19 +513,19 @@
   height: 4px !important;
   border-radius: 50% !important;
   background: #b0b3b8 !important;
-  transition: background 0.2s ease !important;
+  transition: background 0.2s ease, transform 0.2s ease !important;
 }
 .codex-tick.active {
-  background: rgba(255, 255, 255, 0.7) !important;
+  background: rgba(255, 255, 255, 0.78) !important;
 }
 :root[data-theme="dark"] .codex-tick {
   background: #636366 !important;
 }
 :root[data-theme="dark"] .codex-tick.active {
-  background: rgba(255, 255, 255, 0.75) !important;
+  background: rgba(255, 255, 255, 0.82) !important;
 }
 
-/* 纯白实心大圆球旋钮 Thumb */
+/* 纯白实心大圆球旋钮 Thumb + 高档位水波纹星环 */
 .codex-slider-thumb {
   position: absolute !important;
   top: 50% !important;
@@ -366,15 +534,83 @@
   height: 28px !important;
   border-radius: 50% !important;
   background: #ffffff !important;
-  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.16), 0 0 1px rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.16), 0 0 0 2px var(--codex-thumb-ring, rgba(43, 115, 236, 0.2)) !important;
   transform: translate(-50%, -50%) !important;
-  transition: left 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+  transition: left 0.24s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.25s ease, transform 0.18s ease !important;
   z-index: 3 !important;
   pointer-events: none !important;
 }
+.codex-slider-track.is-dragging .codex-slider-thumb {
+  transform: translate(-50%, -50%) scale(1.07) !important;
+}
+.codex-slider-thumb::after {
+  content: "" !important;
+  position: absolute !important;
+  inset: -4px !important;
+  border-radius: 50% !important;
+  border: 2px solid var(--codex-thumb-ring, transparent) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+.codex-slider-view[data-level="high"] .codex-slider-thumb::after {
+  animation: codex-thumb-ripple 2.4s cubic-bezier(0.2, 0.6, 0.35, 1) infinite !important;
+}
+.codex-slider-view[data-level="xhigh"] .codex-slider-thumb::after {
+  animation: codex-thumb-ripple 1.85s cubic-bezier(0.2, 0.6, 0.35, 1) infinite !important;
+}
+.codex-slider-view[data-level="max"] .codex-slider-thumb::after,
+.codex-slider-view[data-level="ultra"] .codex-slider-thumb::after {
+  border-width: 2.5px !important;
+  animation: codex-thumb-ripple 1.4s cubic-bezier(0.2, 0.6, 0.35, 1) infinite !important;
+}
 :root[data-theme="dark"] .codex-slider-thumb {
   background: #ffffff !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55), 0 0 0 2px var(--codex-thumb-ring, rgba(79, 147, 255, 0.35)) !important;
+}
+
+/* 输入框底部模型按钮上的思考程度文字同步呼应变色 */
+#modelButton[data-reasoning="low"] #reasoningLabel { color: #3b82f6; }
+#modelButton[data-reasoning="medium"] #reasoningLabel { color: #1a73e8; }
+#modelButton[data-reasoning="high"] #reasoningLabel { color: #6366f1; }
+#modelButton[data-reasoning="xhigh"] #reasoningLabel { color: #7c3aed; }
+#modelButton[data-reasoning="max"] #reasoningLabel { color: #c026d3; }
+#modelButton[data-reasoning="ultra"] #reasoningLabel { color: #db2777; }
+:root[data-theme="dark"] #modelButton[data-reasoning="low"] #reasoningLabel { color: #60a5fa; }
+:root[data-theme="dark"] #modelButton[data-reasoning="medium"] #reasoningLabel { color: #60a5fa; }
+:root[data-theme="dark"] #modelButton[data-reasoning="high"] #reasoningLabel { color: #818cf8; }
+:root[data-theme="dark"] #modelButton[data-reasoning="xhigh"] #reasoningLabel { color: #a78bfa; }
+:root[data-theme="dark"] #modelButton[data-reasoning="max"] #reasoningLabel { color: #e879f9; }
+:root[data-theme="dark"] #modelButton[data-reasoning="ultra"] #reasoningLabel { color: #f472b6; }
+
+@keyframes codex-nebula-flow {
+  0% { background-position: 0% 50%; }
+  100% { background-position: -240% 50%; }
+}
+@keyframes codex-shimmer-sweep {
+  0%, 15% { background-position: 180% 0; }
+  80%, 100% { background-position: -120% 0; }
+}
+@keyframes codex-stardust-drift {
+  0% { background-position: 0 0; }
+  100% { background-position: 140px 0; }
+}
+@keyframes codex-stardust-twinkle {
+  0%, 100% { filter: brightness(0.85); }
+  50% { filter: brightness(1.35); }
+}
+@keyframes codex-thumb-ripple {
+  0% { transform: scale(0.92); opacity: 0.72; }
+  100% { transform: scale(1.48); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .codex-slider-fill,
+  .codex-slider-fill::before,
+  .codex-slider-fill::after,
+  .codex-slider-thumb::after,
+  .codex-level-label {
+    animation: none !important;
+  }
 }
 
 /* 点击热区 Hitbox */

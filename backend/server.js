@@ -268,7 +268,13 @@ const chatService = new ChatService({
   codexProfiles,
   remoteWorkspaceService,
 });
-const authService = new AuthService({ dir: authDir, sendJson, readJsonBody });
+const authService = new AuthService({
+  dir: authDir,
+  sendJson,
+  readJsonBody,
+  serverMigrationTargetUrl: process.env.WITT_MIGRATION_TARGET_URL || "",
+  serverMigrationTokenFile: tokenFile,
+});
 const windowsNodeService = new WindowsNodeService({ dir: authDir, sendJson, readJsonBody });
 const claudeAccountService = new ClaudeAccountService({
   sendJson, readJsonBody,
@@ -328,9 +334,18 @@ function browserCookieRequest(req) {
       .some((item) => item.trim().startsWith("witt_session="));
 }
 
+const allowedBrowserOrigins = new Set(
+  String(process.env.WITT_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean),
+);
+
 function browserOriginAllowed(req) {
+  const origin = String(req.headers.origin || "").trim();
+  if (origin && allowedBrowserOrigins.has(origin)) return true;
   const protocol = String(req.headers["x-forwarded-proto"] || "http").split(",")[0].trim();
-  return req.headers.origin === `${protocol}://${req.headers.host}`;
+  return origin === `${protocol}://${req.headers.host}`;
 }
 
 function chatFor(principal) {

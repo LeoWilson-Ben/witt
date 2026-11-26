@@ -1028,22 +1028,82 @@
     const levelLabel = $("#codexLevelLabel");
     if (levelLabel) {
       levelLabel.textContent = quickReasoningNames[currentReasoning] || "中";
+      levelLabel.dataset.level = currentReasoning;
+    }
+    const sliderView = $("#codexSliderView");
+    const meta = reasoningMeta[currentReasoning] || reasoningMeta.medium;
+    menu.dataset.reasoningLevel = currentReasoning;
+    if (sliderView) {
+      sliderView.dataset.level = currentReasoning;
+      sliderView.dataset.intensity = String(meta.intensity);
+    }
+    const modelBtn = $("#modelButton");
+    if (modelBtn) {
+      modelBtn.dataset.reasoning = currentReasoning;
     }
     const modelNameEl = $("#codexModelName");
     if (modelNameEl) {
       modelNameEl.textContent = modelDisplayName(selectedModel);
     }
 
-    // 2. 核心分段滑块计算 (图一纯白实心圆球 + 纯蓝填充 + 刻度点)
+    // 2. 核心分段滑块计算 (严格对标 Codex 桌面端：纯白实心圆球 + 分级光谱/星云填充 + 刻度点 + 支持拖拽)
     const index = Math.max(0, efforts.indexOf(currentReasoning));
     const total = Math.max(1, efforts.length - 1);
     const ratio = index / total; // 0.0 ~ 1.0
 
-    // 计算白色圆球与蓝色填充位置 (两端内边距各留出 13px，即圆球半径)
+    // 计算白色圆球与填充位置 (两端内边距各留出 13px，即圆球半径)
+    const trackEl = $("#codexSliderTrack");
     const thumbEl = $("#codexSliderThumb");
     const fillEl = $("#codexSliderFill");
     const thumbLeftExpr = `calc(13px + (100% - 26px) * ${ratio})`;
     const fillWidthExpr = ratio === 0 ? "26px" : `calc(26px + (100% - 26px) * ${ratio})`;
+    if (trackEl) {
+      trackEl.dataset.level = currentReasoning;
+      trackEl.dataset.intensity = String(meta.intensity);
+      trackEl.style.setProperty("--codex-ratio", String(ratio));
+      if (!trackEl.dataset.dragBound) {
+        trackEl.dataset.dragBound = "1";
+        let dragging = false;
+        const pickFromClientX = (clientX, commit = false) => {
+          const rect = trackEl.getBoundingClientRect();
+          if (!rect.width) return;
+          const list = availableReasoningEfforts();
+          if (!list.length) return;
+          const clamped = Math.max(0, Math.min(1, (clientX - rect.left - 13) / Math.max(1, rect.width - 26)));
+          const nextIdx = Math.round(clamped * Math.max(0, list.length - 1));
+          const nextEffort = list[nextIdx];
+          if (nextEffort && nextEffort !== state.draftReasoning) {
+            state.draftReasoning = nextEffort;
+            renderReasoningControl();
+            renderQuickModelPicker();
+          }
+          if (commit && state.draftReasoning !== state.reasoning) {
+            applySettings({ closeSheet: false, announce: false });
+            renderQuickModelPicker();
+          }
+        };
+        trackEl.addEventListener("pointerdown", (ev) => {
+          if (ev.button !== 0) return;
+          dragging = true;
+          trackEl.classList.add("is-dragging");
+          try { trackEl.setPointerCapture(ev.pointerId); } catch {}
+          pickFromClientX(ev.clientX, false);
+        });
+        trackEl.addEventListener("pointermove", (ev) => {
+          if (!dragging) return;
+          pickFromClientX(ev.clientX, false);
+        });
+        const endDrag = (ev) => {
+          if (!dragging) return;
+          dragging = false;
+          trackEl.classList.remove("is-dragging");
+          try { trackEl.releasePointerCapture(ev.pointerId); } catch {}
+          pickFromClientX(ev.clientX, true);
+        };
+        trackEl.addEventListener("pointerup", endDrag);
+        trackEl.addEventListener("pointercancel", endDrag);
+      }
+    }
     if (thumbEl) thumbEl.style.setProperty("left", thumbLeftExpr, "important");
     if (fillEl) fillEl.style.setProperty("width", fillWidthExpr, "important");
 
@@ -1666,6 +1726,7 @@
     $("#modelButton").dataset.modelSource = modelSource({id:state.model || ""}).id;
     $(".model-spark").innerHTML = modelBrandIcon(state.model || (profileProvider(state.codexProfile) === "gemini" ? "gemini:" : profileProvider(state.codexProfile) === "claude" ? "claude:" : "gpt-6.1-sol"));
     $("#reasoningLabel").textContent = reasoningNames[state.reasoning] || "均衡";
+    $("#modelButton").dataset.reasoning = state.reasoning || "medium";
     $("#accessLabel").textContent = accessNames[state.accessMode] || "完全访问";
     const currentProjectName = projectNameForConversation(state.active);
     const remoteActive = state.active?.remoteWorkspace?.state === "active";

@@ -29,6 +29,8 @@ class AuthService {
     this.readJsonBody = options.readJsonBody;
     // Migration is retired; enabling it again requires an explicit server option.
     this.migrationEnabled = options.migrationEnabled === true;
+    this.serverMigrationTargetUrl = String(options.serverMigrationTargetUrl || "").trim().replace(/\/+$/, "");
+    this.serverMigrationTokenFile = options.serverMigrationTokenFile || "";
     fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     this.file = path.join(this.dir, "auth.json");
     this.store = new AuthStore(this.dir);
@@ -290,7 +292,104 @@ class AuthService {
     return invite.code;
   }
 
+  serverMigrationSecret() {
+    if (!this.serverMigrationTokenFile) return "";
+    try { return fs.readFileSync(this.serverMigrationTokenFile, "utf8").trim(); }
+    catch { return ""; }
+  }
+
+  verifyServerMigrationToken(headerValue) {
+    const expected = this.serverMigrationSecret();
+    const candidate = String(headerValue || "").trim();
+    if (!expected || !candidate) return false;
+    const a = Buffer.from(expected, "utf8");
+    const b = Buffer.from(candidate, "utf8");
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
+
+  issueServerMigrationInvite(userId, label = "服务器迁移激活") {
+    const uid = String(userId || "").trim();
+    if (!ID.test(uid)) throw new Error("用户编号无效");
+    const store = this.read();
+    if (!store.admin) throw new Error("目标服务器尚未初始化");
+    const exists = store.devices.some((d) => d.userId === uid) || store.invites.some((i) => i.userId === uid);
+    if (!exists) throw new Error("目标服务器未找到对应账号");
+    const invite = {
+      id: crypto.randomUUID(),
+      code: randomToken(),
+      label: String(label || "服务器迁移激活").slice(0, 48),
+      userId: uid,
+      admin: true,
+      maxDevices: 1,
+      usedDevices: 0,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      disabled: false,
+      createdAt: now(),
+    };
+    store.invites.push(invite);
+    this.write(store);
+    return { code: invite.code, expiresAt: invite.expiresAt };
+  }
+
   handle(req, res, url, principal, legacyAuthorized = false) {
+    if (req.method === "POST" && url.pathname === "/auth/server-migration-issue") {
+      if (!this.verifyServerMigrationToken(req.headers["x-witt-migration-token"])) {
+        this.sendJson(res, 403, { error: "迁移鉴权失败" });
+        return true;
+      }
+      this.readJsonBody(req, 8 * 1024, (error, body) => {
+        try {
+          if (error) throw error;
+          const issued = this.issueServerMigrationInvite(body?.userId, body?.label);
+          this.sendJson(res, 201, issued, { "Cache-Control": "no-store" });
+        } catch (err) {
+          this.sendJson(res, 400, { error: err.message || "无法签发迁移凭证" });
+        }
+      });
+      return true;
+    }
+    if (req.method === "POST" && url.pathname === "/auth/server-migration-code") {
+      if (!principal?.userId) {
+        this.sendJson(res, 401, { error: "请先登录 Witt" });
+        return true;
+      }
+      if (!this.serverMigrationTargetUrl) {
+        this.sendJson(res, 404, { error: "当前服务器未配置迁移目标" });
+        return true;
+      }
+      const secret = this.serverMigrationSecret();
+      if (!secret) {
+        this.sendJson(res, 503, { error: "服务器迁移密钥未就绪" });
+        return true;
+      }
+      const targetBase = this.serverMigrationTargetUrl;
+      fetch(`${targetBase}/vault-api/auth/server-migration-issue`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-Witt-Migration-Token": secret,
+        },
+        body: JSON.stringify({
+          userId: principal.userId,
+          label: principal.label ? `迁移 · ${principal.label}` : "服务器迁移激活",
+        }),
+      }).then(async (resp) => {
+        const text = await resp.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch {}
+        if (!resp.ok || !data.code) {
+          throw new Error(data.error || `新服务器签发失败（${resp.status}）`);
+        }
+        this.sendJson(res, 200, {
+          targetUrl: `${targetBase}/vault/index.html`,
+          code: data.code,
+          expiresAt: data.expiresAt,
+        }, { "Cache-Control": "no-store" });
+      }).catch((err) => {
+        this.sendJson(res, 502, { error: err.message || "连接新服务器失败，请稍后重试" });
+      });
+      return true;
+    }
     if (req.method === "GET" && url.pathname === "/auth/status") {
       let migrationOffer = null;
       // Existing native clients can only fetch this established endpoint.
@@ -301,6 +400,7 @@ class AuthService {
       }
       this.sendJson(res, 200, { initialized: this.initialized(), authenticated: Boolean(principal), principal: principal || null,
         migrationSupported: this.migrationsEnabled(), migrationOffer, migration: this.migrationsEnabled() ? this.migrationStatus(principal?.deviceId) : null,
+        serverMigration: this.serverMigrationTargetUrl ? { targetUrl: `${this.serverMigrationTargetUrl}/vault/index.html` } : null,
         bootstrapEligible: this.bootstrapEligible(legacyAuthorized) }, { "Cache-Control": "no-store" }); return true;
     }
     if (req.method === "POST" && url.pathname === "/auth/activate") {
