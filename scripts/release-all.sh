@@ -222,6 +222,7 @@ build_and_verify_apk() {
       const fs = require("fs");
       const [outPath, vCode, vName, url, sha, size, notes] = process.argv.slice(1);
       const manifest = {
+        applicationId: "com.selfhosted.witt",
         versionCode: Number(vCode),
         versionName: vName,
         apkUrl: url,
