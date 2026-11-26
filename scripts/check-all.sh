@@ -74,6 +74,19 @@ for t in "${UNIT_TESTS[@]}"; do
   fi
 done
 
+
+echo "==> 3. Phase 2 frontend typecheck, unit tests & Vite build"
+NPM_BIN="$(dirname "$NODE_BIN")/npm"
+export PATH="$(dirname "$NODE_BIN"):$PATH"
+if "$NPM_BIN" --prefix web-app run typecheck && "$NPM_BIN" --prefix web-app run test && "$NODE_BIN" scripts/build-web-v3.js; then
+  echo "PASS web-app typecheck, vitest & vite build"
+  passed=$((passed + 3))
+else
+  echo "FAIL web-app Phase 2 checks"
+  failed=$((failed + 1))
+  failed_list+=("web-app-phase2")
+fi
+
 echo "=== Summary: passed=$passed, failed=$failed ==="
 if [ "$failed" -gt 0 ]; then
   printf 'Failed items:\n'

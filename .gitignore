@@ -20,3 +20,5 @@ android/app/src/main/assets/lumora/
 /web/update.json
 /web/cli/chloe.exe
 /web/cli/SHA256SUMS.txt
+web-app/node_modules/
+web-dist/

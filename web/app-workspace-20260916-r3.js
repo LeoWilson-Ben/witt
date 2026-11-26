@@ -1138,6 +1138,19 @@
         </button>`;
       }).join("");
     }
+    window.WittV3Bridge?.syncModelState?.({
+      model: selectedModel,
+      modelDisplayName: modelDisplayName(selectedModel),
+      reasoning: currentReasoning,
+      efforts,
+      models: models.map((m) => ({
+        id: m.id,
+        displayName: modelDisplayName(m.id),
+        brand: modelBrandKey(m.id),
+      })),
+      quotaTone: $("#quickModelQuotaBar")?.dataset?.tone || "unknown",
+      quotaText: $("#quickModelQuotaText")?.textContent || "当前账号额度",
+    });
   }
 
   function renderCapabilities() {
@@ -1535,6 +1548,10 @@
       } else {
         text.textContent = `查看 ${summary.providerLabel} 账号额度`;
       }
+      window.WittV3Bridge?.syncModelState?.({
+        quotaTone: bar.dataset.tone || "unknown",
+        quotaText: text.textContent || "当前账号额度",
+      });
     }
 
     // 3. Low-quota automatic alert above composer (hidden whenever remaining > 20%).
@@ -2647,6 +2664,7 @@
     menu.setAttribute("aria-hidden", String(!expanded));
     $("#modelButton")?.setAttribute("aria-expanded", String(expanded));
     $("#quickModelExpand")?.setAttribute("aria-expanded", "true");
+    window.WittV3Bridge?.setModelMenuOpen?.(expanded);
   }
 
   function applySettings({ closeSheet = true, announce = true } = {}) {
@@ -6075,6 +6093,35 @@
   $("#codexSliderHitbox")?.addEventListener("click", handleQuickReasoningSelect);
   $("#quickReasoningSection")?.addEventListener("click", handleQuickReasoningSelect);
   $("#quickReasoningOptions")?.addEventListener("click", handleQuickReasoningSelect);
+  window.WittV3Bridge?.bindLegacyHandlers?.({
+    selectReasoning(reasoning) {
+      state.draftReasoning = reasoning;
+      applySettings({ closeSheet: false, announce: false });
+      renderQuickModelPicker();
+    },
+    selectModel(model) {
+      state.draftModel = model;
+      const offered = availableReasoningEfforts();
+      if (!offered.includes(state.draftReasoning)) {
+        state.draftReasoning = offered.includes("medium") ? "medium" : offered[0];
+      }
+      applySettings({ closeSheet: false, announce: false });
+      renderQuickModelPicker();
+    },
+    resetReasoning() {
+      const offered = availableReasoningEfforts();
+      state.draftReasoning = offered.includes("medium") ? "medium" : offered[0];
+      applySettings({ closeSheet: false, announce: false });
+      renderQuickModelPicker();
+    },
+    openQuota() {
+      setQuickModelMenu(false);
+      openProfile();
+    },
+    closeMenu() {
+      setQuickModelMenu(false);
+    },
+  });
   document.addEventListener("pointerdown", (event) => {
     if (!event.target.closest(".composer-wrap")) {
       setAttachmentMenu(false);

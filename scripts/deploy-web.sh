@@ -6,11 +6,18 @@ NODE_BIN="${WITT_NODE_BIN:-/opt/witt-tools/node-v22.16.0-linux-x64/bin/node}"
 if [ ! -x "$NODE_BIN" ]; then
   NODE_BIN="$(command -v node)"
 fi
+USE_V3_DIST="${WITT_USE_V3_DIST:-0}"
 SRC_WEB="$ROOT_DIR/web"
 DST_WEB="${WITT_WEB_ROOT:-/var/www/witt}"
 
-echo "==> 1. Building minified CSS bundles"
-"$NODE_BIN" "$ROOT_DIR/scripts/build-web-css.js"
+if [ "$USE_V3_DIST" = "1" ]; then
+  echo "==> 1. Building Phase 2 Vite web-dist"
+  "$NODE_BIN" "$ROOT_DIR/scripts/build-web-v3.js"
+  SRC_WEB="$ROOT_DIR/web-dist"
+else
+  echo "==> 1. Building minified CSS bundles"
+  "$NODE_BIN" "$ROOT_DIR/scripts/build-web-css.js"
+fi
 
 echo "==> 2. Running syntax & unit checks"
 bash "$ROOT_DIR/scripts/check-all.sh"
