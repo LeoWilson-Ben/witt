@@ -1,14 +1,26 @@
 "use strict";
 
-const crypto = require("node:crypto");
-const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
-const path = require("node:path");
-const { AuthService } = require("./auth-service");
-const { refreshChatAccess } = require("./chat-access-policy");
+const { loadConfig } = require("./core/config");
 const {
-  ChatService, NON_ADMIN_MODELS, servePublicArtifactPreview, servePublicArtifactSource,
+  sendJson,
+  readJsonBody,
+  parseName,
+  sendFile,
+  previewContentType,
+  browserCookieRequest,
+  createBrowserOriginChecker,
+} = require("./core/http-utils");
+const { createRemoteAssistServices } = require("./core/remote-assist-wiring");
+const { createSessionContext } = require("./core/session-context");
+const { createFilesService } = require("./routes/files-routes");
+const { createTasksService } = require("./routes/tasks-routes");
+const { createLicreRouter } = require("./routes/licre-routes");
+const { createCodexRouter } = require("./routes/codex-routes");
+const { AuthService } = require("./auth-service");
+const {
+  ChatService, servePublicArtifactPreview, servePublicArtifactSource,
 } = require("./chat-service");
 const { CodexAccountService } = require("./codex-account-service");
 const { ClaudeAccountService } = require("./claude-account-service");
@@ -16,244 +28,71 @@ const { AntigravityAccountService } = require("./antigravity-account-service");
 const { ProviderRuntime } = require("./provider-runtime");
 const { claimStandby } = require("./failover");
 const { WindowsNodeService } = require("./windows-node-service");
-const { DeviceGateway } = require("./remote-device/device-gateway");
-const { WorkspaceStore, WorkspaceAuditStore, ApprovalGate, WorkspaceDispatcher } = require("./remote-workspace");
-const { RemoteWorkspaceService } = require("./remote-workspace-service");
-const { createRemoteAssist } = require("./remote-assist");
 
-const host = "127.0.0.1";
-const port = Number(process.env.DROP_VAULT_PORT || 3003);
-const dataDir = process.env.DROP_VAULT_DATA_DIR || "/data/drop-vault/files";
-const taskDir = process.env.DROP_VAULT_TASK_DIR || "/data/drop-vault/tasks";
-const chatDir = process.env.DROP_VAULT_CHAT_DIR || "/data/drop-vault/chat";
-const imageDir = process.env.DROP_VAULT_IMAGE_DIR || "/data/drop-vault/chat-images";
-const usersDir = process.env.DROP_VAULT_USERS_DIR || "/data/drop-vault/users";
-const authDir = process.env.DROP_VAULT_AUTH_DIR || "/data/drop-vault/auth";
-const tokenFile = process.env.DROP_VAULT_TOKEN_FILE || "/home/ubuntu/.config/drop-vault/api-token";
-const codexBin = process.env.DROP_VAULT_CODEX_BIN || "/home/ubuntu/.local/bin/codex";
-const codexWorkDir = process.env.DROP_VAULT_CODEX_WORKDIR || "/home/ubuntu/Documents/Codex/2026-07-26-xlsb";
-const codexProfiles = {
-  default: { id: "default", label: "Witt 默认账号", codexHome: "/var/lib/witt/.codex", workDir: codexWorkDir },
-  antigravity: { id: "antigravity", label: "Antigravity CLI", provider: "antigravity", workDir: codexWorkDir },
-};
-// Existing Codex logins are shared with all members; do not create empty accounts.
-for (const [id, home] of Object.entries({xuanyu: "/home/ubuntu/.codex-xuanyu",
-  account4: "/home/ubuntu/.codex-account-4", account5: "/home/ubuntu/.codex-account-5"})) {
-  if (fs.existsSync(path.join(home, "auth.json"))) {
-    codexProfiles[id] = { id, label: `Codex ${id}`, codexHome: home, workDir: codexWorkDir };
-  }
-}
-const licreBuildDir = "/data/builds";
-const licreConsoleDir = "/data/xuanyu-build-console";
-const xuanyuPreviewDir = "/data/xuanyu-build-console/repo/build/web";
-const maxBytes = 500 * 1024 * 1024;
-const maxPromptBytes = 32 * 1024;
-const maxTaskOutputBytes = 2 * 1024 * 1024;
+const config = loadConfig();
+const {
+  host,
+  port,
+  dataDir,
+  taskDir,
+  chatDir,
+  imageDir,
+  usersDir,
+  authDir,
+  remoteAssistDir,
+  tokenFile,
+  codexBin,
+  codexWorkDir,
+  codexProfiles,
+  allowedBrowserOrigins,
+  serverMigrationTargetUrl,
+  licreBuildDir,
+  licreConsoleDir,
+  xuanyuPreviewDir,
+  maxBytes,
+  maxPromptBytes,
+  maxTaskOutputBytes,
+} = config;
+
 const token = fs.readFileSync(tokenFile, "utf8").trim();
-
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(taskDir, { recursive: true });
 fs.mkdirSync(usersDir, { recursive: true, mode: 0o700 });
-
-function sendJson(res, status, body, extraHeaders = {}) {
-  res.writeHead(status, {
-    "Cache-Control": "no-store",
-    "Content-Type": "application/json; charset=utf-8",
-    "X-Content-Type-Options": "nosniff",
-    ...extraHeaders,
-  });
-  res.end(JSON.stringify(body));
-}
-
-function authorized(req) {
-  const header = req.headers.authorization || "";
-  const supplied = header.startsWith("Bearer ") ? header.slice(7) : "";
-  const expected = Buffer.from(token);
-  const actual = Buffer.from(supplied);
-  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
-}
-
-function safeFileName(name) {
-  const raw = String(name || "file").replace(/\\/g, "/");
-  const base = path.basename(raw).normalize("NFC");
-  const cleaned = base
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .replace(/[<>:"/\\|?*]/g, "_")
-    .replace(/\s+/g, " ")
-    .replace(/^\.+|[. ]+$/g, "");
-  const fallback = cleaned || "file";
-  const extension = path.extname(fallback);
-  let stem = extension ? fallback.slice(0, -extension.length) : fallback;
-  const budget = Math.max(1, 180 - Buffer.byteLength(extension, "utf8"));
-  while (Buffer.byteLength(stem, "utf8") > budget) stem = Array.from(stem).slice(0, -1).join("");
-  return (stem || "file") + extension;
-}
-
-function parseName(value) {
-  try {
-    return safeFileName(decodeURIComponent(String(value || "file")));
-  } catch {
-    return safeFileName(value);
-  }
-}
-
-function metadataPath(id, directory = dataDir) {
-  return path.join(directory, `${id}.json`);
-}
-
-const recordCache = new Map();
-let taskCache = null;
-
-function invalidateRecordCache(directory = dataDir) {
-  recordCache.delete(directory);
-}
-
-function readRecords(directory = dataDir) {
-  let mtimeMs;
-  try {
-    mtimeMs = fs.statSync(directory).mtimeMs;
-  } catch {
-    recordCache.delete(directory);
-    return [];
-  }
-  const cached = recordCache.get(directory);
-  if (cached && cached.mtimeMs === mtimeMs) return cached.records;
-  const records = fs.readdirSync(directory)
-    .filter((name) => name.endsWith(".json"))
-    .map((name) => {
-      try {
-        return JSON.parse(fs.readFileSync(path.join(directory, name), "utf8"));
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean)
-    .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
-  recordCache.set(directory, { mtimeMs, records });
-  return records;
-}
-
-function taskPath(id) {
-  return path.join(taskDir, `${id}.json`);
-}
-
-function writeTask(task) {
-  const destination = taskPath(task.id);
-  const temporary = `${destination}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(task)}\n`, { mode: 0o600 });
-  fs.renameSync(temporary, destination);
-  taskCache = null;
-}
-
-function readTask(id) {
-  if (!/^[a-f0-9-]{36}$/.test(String(id || ""))) return null;
-  try {
-    return JSON.parse(fs.readFileSync(taskPath(id), "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function publicTask(task) {
-  return {
-    id: task.id,
-    prompt: task.prompt,
-    status: task.status,
-    createdAt: task.createdAt,
-    startedAt: task.startedAt || null,
-    completedAt: task.completedAt || null,
-    result: task.result || "",
-    error: task.error || "",
-  };
-}
-
-function readTasks() {
-  let mtimeMs;
-  try {
-    mtimeMs = fs.statSync(taskDir).mtimeMs;
-  } catch {
-    taskCache = null;
-    return [];
-  }
-  if (taskCache && taskCache.mtimeMs === mtimeMs) return taskCache.tasks;
-  const tasks = fs.readdirSync(taskDir)
-    .filter((name) => /^[a-f0-9-]{36}\.json$/.test(name))
-    .map((name) => {
-      try {
-        return JSON.parse(fs.readFileSync(path.join(taskDir, name), "utf8"));
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  taskCache = { mtimeMs, tasks };
-  return tasks;
-}
-
-function readJsonBody(req, limit, callback) {
-  const chunks = [];
-  let size = 0;
-  let finished = false;
-  const fail = (message) => {
-    if (finished) return;
-    finished = true;
-    callback(new Error(message));
-  };
-  req.on("data", (chunk) => {
-    size += chunk.length;
-    if (size > limit) {
-      fail("请求内容过大");
-      req.destroy();
-      return;
-    }
-    chunks.push(chunk);
-  });
-  req.on("end", () => {
-    if (finished) return;
-    finished = true;
-    try {
-      callback(null, JSON.parse(Buffer.concat(chunks).toString("utf8")));
-    } catch {
-      callback(new Error("请求格式不正确"));
-    }
-  });
-  req.on("error", () => fail("请求连接异常"));
-}
-
-const remoteAssistDir = path.join(path.dirname(dataDir), "remote-assist");
 fs.mkdirSync(remoteAssistDir, { recursive: true, mode: 0o700 });
-const deviceGateway = new DeviceGateway({ configFile: path.join(remoteAssistDir, "devices.json") });
-const workspaceStore = new WorkspaceStore(remoteAssistDir);
-const workspaceApprovals = new ApprovalGate();
-const workspaceAudit = new WorkspaceAuditStore(remoteAssistDir);
-let remoteWorkspaceService = null;
-const remoteAssist = createRemoteAssist({
-  gateway: deviceGateway,
-  workspaceStore,
-  auditDirectory: remoteAssistDir,
+
+const browserOriginAllowed = createBrowserOriginChecker(allowedBrowserOrigins);
+const filesService = createFilesService({ dataDir, maxBytes, sendJson, parseName });
+const tasksService = createTasksService({
+  taskDir,
+  dataDir,
+  codexBin,
+  codexWorkDir,
+  maxPromptBytes,
+  maxTaskOutputBytes,
+  sendJson,
+  readJsonBody,
+});
+const licreRouter = createLicreRouter({
+  licreBuildDir,
+  licreConsoleDir,
+  xuanyuPreviewDir,
+  sendJson,
+  sendFile,
+  previewContentType,
+});
+
+let sessionContext = null;
+const {
+  deviceGateway,
+  remoteAssist,
+  remoteWorkspaceService,
+} = createRemoteAssistServices({
+  remoteAssistDir,
+  host,
+  port,
   readJsonBody,
   sendJson,
-  chatFor,
-  prepareWorkspace: (workspace) => remoteWorkspaceService?.runtimeFor(workspace),
-  onWorkspaceClosed: (workspaceId) => remoteWorkspaceService?.destroySpace(workspaceId),
-});
-const workspaceDispatcher = new WorkspaceDispatcher({
-  workspaceStore,
-  transport: remoteAssist.transport,
-  approvals: workspaceApprovals,
-  audit: workspaceAudit,
-  assistCommandsFor: (deviceId) => remoteAssist.sessions.commandsAllowed(deviceId),
-  fullAccessFor: (deviceId) => remoteAssist.sessions.fullAccessAllowed(deviceId),
-});
-remoteWorkspaceService = new RemoteWorkspaceService({
-  workspaceStore,
-  dispatcher: workspaceDispatcher,
-  approvals: workspaceApprovals,
-  audit: workspaceAudit,
-  runtimeDir: path.join(remoteAssistDir, "runtime"),
-  apiBase: `http://${host}:${port}`,
-  capabilitiesFor: (deviceId) => deviceGateway.registry.definition(deviceId)?.capabilities || null,
+  chatFor: (principal) => sessionContext.chatFor(principal),
 });
 
 const chatService = new ChatService({
@@ -272,529 +111,62 @@ const authService = new AuthService({
   dir: authDir,
   sendJson,
   readJsonBody,
-  serverMigrationTargetUrl: process.env.WITT_MIGRATION_TARGET_URL || "",
+  serverMigrationTargetUrl,
   serverMigrationTokenFile: tokenFile,
 });
 const windowsNodeService = new WindowsNodeService({ dir: authDir, sendJson, readJsonBody });
+const isProviderAuthorized = (ticket) => {
+  if (ticket.owner === "legacy") return !authService.initialized();
+  return authService.read().devices.some((device) => device.id === ticket.deviceId &&
+    device.userId === ticket.owner && device.admin && !device.disabled);
+};
 const claudeAccountService = new ClaudeAccountService({
-  sendJson, readJsonBody,
-  isAuthorized: (ticket) => {
-    if (ticket.owner === "legacy") return !authService.initialized();
-    return authService.read().devices.some((device) => device.id === ticket.deviceId &&
-      device.userId === ticket.owner && device.admin && !device.disabled);
-  },
+  sendJson,
+  readJsonBody,
+  isAuthorized: isProviderAuthorized,
 });
 const antigravityAccountService = new AntigravityAccountService({
-  sendJson, readJsonBody,
-  isAuthorized: (ticket) => {
-    if (ticket.owner === "legacy") return !authService.initialized();
-    return authService.read().devices.some((device) => device.id === ticket.deviceId &&
-      device.userId === ticket.owner && !device.disabled);
-  },
+  sendJson,
+  readJsonBody,
+  isAuthorized: isProviderAuthorized,
 });
-const providerRuntimeFor = (owner) => new ProviderRuntime({owner,
-  services:{claude:claudeAccountService,antigravity:antigravityAccountService}});
+const providerRuntimeFor = (owner) => new ProviderRuntime({
+  owner,
+  services: { claude: claudeAccountService, antigravity: antigravityAccountService },
+});
 chatService.providerRuntime = providerRuntimeFor("legacy");
 const codexAccountService = new CodexAccountService({
   codexBin,
   profiles: Object.fromEntries(Object.entries(codexProfiles).filter(([, profile]) => !profile.provider)),
   sendJson,
 });
+const handleCodexAndFailover = createCodexRouter({
+  codexAccountService,
+  claudeAccountService,
+  antigravityAccountService,
+  claimStandby,
+  sendJson,
+});
 const userChatServices = new Map();
+sessionContext = createSessionContext({
+  token,
+  authService,
+  chatService,
+  userChatServices,
+  usersDir,
+  dataDir,
+  codexBin,
+  codexWorkDir,
+  codexProfiles,
+  remoteWorkspaceService,
+  providerRuntimeFor,
+  sendJson,
+  readJsonBody,
+});
 
-function userDirectory(userId) {
-  if (!/^[a-f0-9-]{36}$/.test(String(userId || ""))) throw new Error("无效用户");
-  const directory = path.join(usersDir, userId);
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  return directory;
-}
-
-function principalFor(req) {
-  const principal = authService.authenticate(req.headers.authorization);
-  if (principal) return principal;
-  const cookies = String(req.headers.cookie || "").split(";");
-  const session = cookies.find((item) => item.trim().startsWith("witt_session="));
-  if (session) {
-    const value = session.trim().slice("witt_session=".length);
-    try {
-      const browserPrincipal = authService.authenticateToken(decodeURIComponent(value));
-      if (browserPrincipal) return browserPrincipal;
-    } catch {}
-  }
-  // The legacy client is accepted only until the owner initializes access.
-  if (!authService.initialized() && authorized(req)) {
-    return { userId: "legacy", deviceId: "legacy", admin: true, legacy: true, label: "旧版管理员" };
-  }
-  return null;
-}
-
-function browserCookieRequest(req) {
-  return !String(req.headers.authorization || "").startsWith("Bearer ") &&
-    String(req.headers.cookie || "").split(";")
-      .some((item) => item.trim().startsWith("witt_session="));
-}
-
-const allowedBrowserOrigins = new Set(
-  String(process.env.WITT_ALLOWED_ORIGINS || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean),
-);
-
-function browserOriginAllowed(req) {
-  const origin = String(req.headers.origin || "").trim();
-  if (origin && allowedBrowserOrigins.has(origin)) return true;
-  const protocol = String(req.headers["x-forwarded-proto"] || "http").split(",")[0].trim();
-  return origin === `${protocol}://${req.headers.host}`;
-}
-
-function chatFor(principal) {
-  if (principal.legacy) return chatService;
-  if (userChatServices.has(principal.userId)) {
-    return refreshChatAccess(userChatServices.get(principal.userId), {
-      serverAdministrator: Boolean(principal.admin || principal.fullServerAccess),
-      allowedModels: principal.admin || principal.unrestrictedModels ? null : NON_ADMIN_MODELS,
-      defaultModel: principal.admin || principal.unrestrictedModels ? "gpt-6.1-sol" : "gpt-5.5",
-      quotaExhausted: !principal.admin && !principal.unrestrictedModels,
-      allowedCodexProfiles: principal.admin
-        ? Object.keys(codexProfiles) : (principal.codexProfiles || ["default"]),
-    });
-  }
-  const directory = userDirectory(principal.userId);
-  const service = new ChatService({
-    serverAdministrator: Boolean(principal.admin || principal.fullServerAccess),
-    chatDir: path.join(directory, "chat"),
-    imageDir: path.join(directory, "chat-images"),
-    dataDir: path.join(directory, "files"),
-    codexBin,
-    codexWorkDir,
-    sendJson,
-    readJsonBody,
-    allowedModels: principal.admin || principal.unrestrictedModels ? null : NON_ADMIN_MODELS,
-    defaultModel: principal.admin || principal.unrestrictedModels ? "gpt-6.1-sol" : "gpt-5.5",
-    quotaExhausted: !principal.admin && !principal.unrestrictedModels,
-    codexProfiles,
-    remoteWorkspaceService,
-    providerRuntime: providerRuntimeFor(principal.userId),
-    allowedCodexProfiles: principal.admin
-      ? Object.keys(codexProfiles)
-      : (principal.codexProfiles || ["default"]),
-  });
-  userChatServices.set(principal.userId, service);
-  return service;
-}
-
-// Restore enabled schedules for authenticated users even while their devices are offline.
-function restoreScheduledUsers() {
-  const store = authService.read();
-  const seen = new Set();
-  for (const device of store.devices) {
-    if (device.disabled || seen.has(device.userId)) continue;
-    seen.add(device.userId);
-    const stateFile = path.join(usersDir,device.userId,'chat','workspace-state.json');
-    try {
-      if (!fs.existsSync(stateFile)) continue;
-      const state = JSON.parse(fs.readFileSync(stateFile,'utf8'));
-      if (!state.schedules?.some(item=>item.enabled)) continue;
-      const policy = store.userPolicies?.[device.userId] || store.defaultUserPolicy;
-      chatFor({userId:device.userId,deviceId:device.id,admin:Boolean(device.admin),
-        codexProfiles:policy?.codexProfiles||null,unrestrictedModels:Boolean(policy?.unrestrictedModels)});
-    } catch { /* A corrupt user's workspace must not stop the server. */ }
-  }
-}
-setImmediate(restoreScheduledUsers);
-const scheduleRestoreTimer=setInterval(restoreScheduledUsers,60000);scheduleRestoreTimer.unref();
-
-function filesFor(principal) {
-  return principal.legacy ? dataDir : path.join(userDirectory(principal.userId), "files");
-}
-
-let activeTaskId = null;
-
-function extractCodexResult(output) {
-  let answer = "";
-  for (const line of output.split("\n")) {
-    try {
-      const event = JSON.parse(line);
-      const item = event.item || {};
-      if (event.type === "item.completed" && item.type === "agent_message" && item.text) {
-        answer = item.text;
-      }
-    } catch {}
-  }
-  return answer.trim();
-}
-
-function runNextTask() {
-  if (activeTaskId) return;
-  const task = readTasks().reverse().find((item) => item.status === "queued");
-  if (!task) return;
-
-  activeTaskId = task.id;
-  task.status = "running";
-  task.startedAt = new Date().toISOString();
-  task.error = "";
-  writeTask(task);
-
-  const context = [
-    "你是运行在用户私人服务器上的 Codex 助手 Witt。",
-    `固定工作目录：${codexWorkDir}`,
-    `Witt 文件目录：${dataDir}`,
-    "只处理用户这条消息明确要求的任务；保留现有数据和未提交修改。",
-    "禁止展示、记录或回传凭据原文。用户明确授权时，允许认证程序使用指定的本地凭据文件完成认证，不将凭据或生成的 Token 输出到聊天及日志。",
-    "如果任务需要超出上述项目目录的写入、对外发送消息、删除数据或其他高风险操作，只说明需要用户确认，不要执行。",
-    "",
-    `用户通过 Witt 发来的消息：${task.prompt}`,
-  ].join("\n");
-  const args = [
-    "exec",
-    "--json",
-    "--sandbox", "workspace-write",
-    "--cd", codexWorkDir,
-    "--skip-git-repo-check",
-    context,
-  ];
-  const child = spawn(codexBin, args, {
-    cwd: codexWorkDir,
-    env: { ...process.env, HOME: "/home/ubuntu" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  const append = (current, chunk) => (current + chunk.toString("utf8")).slice(-maxTaskOutputBytes);
-  child.stdout.on("data", (chunk) => { stdout = append(stdout, chunk); });
-  child.stderr.on("data", (chunk) => { stderr = append(stderr, chunk); });
-
-  child.on("error", (error) => {
-    const latest = readTask(task.id) || task;
-    latest.status = "failed";
-    latest.completedAt = new Date().toISOString();
-    latest.error = `无法启动 Codex：${error.message}`;
-    writeTask(latest);
-    activeTaskId = null;
-    setImmediate(runNextTask);
-  });
-  child.on("close", (code, signal) => {
-    const latest = readTask(task.id) || task;
-    const answer = extractCodexResult(stdout);
-    latest.completedAt = new Date().toISOString();
-    if (code === 0 && answer) {
-      latest.status = "completed";
-      latest.result = answer;
-      latest.error = "";
-    } else {
-      latest.status = "failed";
-      latest.error = signal
-        ? "任务被服务终止"
-        : (stderr.trim().slice(-1200) || "Codex 未返回有效结果");
-    }
-    writeTask(latest);
-    activeTaskId = null;
-    setImmediate(runNextTask);
-  });
-}
-
-function recoverTasks() {
-  for (const task of readTasks()) {
-    if (task.status !== "running") continue;
-    task.status = "queued";
-    task.startedAt = null;
-    task.error = "服务重启后已自动重新排队";
-    writeTask(task);
-  }
-  runNextTask();
-}
-
-function listFiles(res, url, directory = dataDir) {
-  const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit")) || 100));
-  const records = readRecords(directory);
-  const totalBytes = records.reduce((sum, record) => sum + Number(record.size || 0), 0);
-  sendJson(res, 200, {
-    files: records.slice(0, limit),
-    stats: { count: records.length, totalBytes },
-  });
-}
-
-function upload(req, res, directory = dataDir) {
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const length = Number(req.headers["content-length"] || 0);
-  if (length > maxBytes) {
-    sendJson(res, 413, { error: "文件超过 500 MB 限制" });
-    req.resume();
-    return;
-  }
-
-  const originalName = parseName(req.headers["x-file-name"]);
-  const mimeType = String(req.headers["x-file-type"] || "application/octet-stream").slice(0, 160);
-  const id = `${Date.now()}-${crypto.randomUUID()}`;
-  const extension = path.extname(originalName).slice(0, 18);
-  const storedName = `${id}${extension}`;
-  const destination = path.join(directory, storedName);
-  const temporary = `${destination}.part`;
-  const output = fs.createWriteStream(temporary, { flags: "wx", mode: 0o600 });
-  const digest = crypto.createHash("sha256");
-  let size = 0;
-  let finished = false;
-
-  const fail = (status, message) => {
-    if (finished) return;
-    finished = true;
-    output.destroy();
-    fs.rm(temporary, { force: true }, () => sendJson(res, status, { error: message }));
-  };
-
-  req.on("data", (chunk) => {
-    size += chunk.length;
-    if (size > maxBytes) {
-      fail(413, "文件超过 500 MB 限制");
-      req.destroy();
-      return;
-    }
-    digest.update(chunk);
-  });
-  req.on("aborted", () => fail(499, "上传已中断"));
-  req.on("error", () => fail(400, "上传连接异常"));
-  output.on("error", () => fail(500, "服务器无法保存文件"));
-
-  output.on("finish", () => {
-    if (finished) return;
-    finished = true;
-    try {
-      fs.renameSync(temporary, destination);
-      const record = {
-        id,
-        originalName,
-        storedName,
-        size,
-        mimeType,
-        sha256: digest.digest("hex"),
-        uploadedAt: new Date().toISOString(),
-      };
-      fs.writeFileSync(metadataPath(id, directory), `${JSON.stringify(record)}\n`, { flag: "wx", mode: 0o600 });
-      invalidateRecordCache(directory);
-      sendJson(res, 201, { file: record });
-    } catch {
-      fs.rmSync(temporary, { force: true });
-      fs.rmSync(destination, { force: true });
-      sendJson(res, 500, { error: "服务器无法完成保存" });
-    }
-  });
-
-  req.pipe(output);
-}
-
-function listTasks(res, url) {
-  const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit")) || 20));
-  sendJson(res, 200, {
-    activeTaskId,
-    tasks: readTasks().slice(0, limit).map(publicTask),
-  });
-}
-
-function createTask(req, res) {
-  readJsonBody(req, maxPromptBytes, (error, body) => {
-    if (error) {
-      sendJson(res, 400, { error: error.message });
-      return;
-    }
-    const prompt = String(body?.prompt || "").trim();
-    if (!prompt) {
-      sendJson(res, 400, { error: "请填写要交给 Witt 的任务" });
-      return;
-    }
-    if (Buffer.byteLength(prompt, "utf8") > maxPromptBytes) {
-      sendJson(res, 413, { error: "任务内容过长" });
-      return;
-    }
-    const now = new Date().toISOString();
-    const task = {
-      id: crypto.randomUUID(),
-      prompt,
-      status: "queued",
-      createdAt: now,
-      startedAt: null,
-      completedAt: null,
-      result: "",
-      error: "",
-    };
-    writeTask(task);
-    sendJson(res, 202, { task: publicTask(task) });
-    setImmediate(runNextTask);
-  });
-}
-
-function sendFile(res, file, contentType, downloadName = null, req = null) {
-  fs.stat(file, (error, stats) => {
-    if (error || !stats.isFile()) {
-      sendJson(res, 404, { error: "文件不存在" });
-      return;
-    }
-    const etag = `"${stats.size.toString(16)}-${Math.floor(stats.mtimeMs).toString(16)}"`;
-    const lastModified = stats.mtime.toUTCString();
-    const headers = {
-      "Accept-Ranges": "bytes",
-      "Cache-Control": "no-store",
-      "Content-Type": contentType,
-      ETag: etag,
-      "Last-Modified": lastModified,
-      "X-Content-Type-Options": "nosniff",
-    };
-    if (downloadName) {
-      headers["Content-Disposition"] = `attachment; filename="${downloadName}"`;
-    }
-    let start = 0;
-    let end = stats.size - 1;
-    let partial = false;
-    const requestedRange = req?.headers?.range;
-    const ifRange = req?.headers?.["if-range"];
-    let rangeAllowed = Boolean(requestedRange);
-    if (rangeAllowed && ifRange) {
-      const ifRangeDate = Date.parse(ifRange);
-      rangeAllowed = ifRange === etag ||
-        (Number.isFinite(ifRangeDate) && stats.mtimeMs <= ifRangeDate + 999);
-    }
-    if (rangeAllowed) {
-      const match = /^bytes=(\d*)-(\d*)$/.exec(requestedRange);
-      if (!match || (!match[1] && !match[2])) {
-        res.writeHead(416, { ...headers, "Content-Range": `bytes */${stats.size}` });
-        res.end();
-        return;
-      }
-      if (!match[1]) {
-        const suffixLength = Number(match[2]);
-        if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
-          res.writeHead(416, { ...headers, "Content-Range": `bytes */${stats.size}` });
-          res.end();
-          return;
-        }
-        start = Math.max(0, stats.size - suffixLength);
-      } else {
-        start = Number(match[1]);
-        if (match[2]) end = Number(match[2]);
-      }
-      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
-          start < 0 || start >= stats.size || end < start) {
-        res.writeHead(416, { ...headers, "Content-Range": `bytes */${stats.size}` });
-        res.end();
-        return;
-      }
-      end = Math.min(end, stats.size - 1);
-      partial = true;
-      headers["Content-Range"] = `bytes ${start}-${end}/${stats.size}`;
-    }
-    headers["Content-Length"] = partial ? end - start + 1 : stats.size;
-    res.writeHead(partial ? 206 : 200, headers);
-    const input = fs.createReadStream(file, partial ? { start, end } : undefined);
-    input.on("error", () => res.destroy());
-    input.pipe(res);
-  });
-}
-
-function previewContentType(file) {
-  const types = {
-    ".css": "text/css; charset=utf-8",
-    ".html": "text/html; charset=utf-8",
-    ".js": "text/javascript; charset=utf-8",
-    ".json": "application/json; charset=utf-8",
-    ".png": "image/png",
-    ".svg": "image/svg+xml",
-    ".wasm": "application/wasm",
-    ".webp": "image/webp",
-  };
-  return types[path.extname(file).toLowerCase()] || "application/octet-stream";
-}
-
-function sendXuanyuPreview(res, pathname) {
-  let requested;
-  try {
-    requested = decodeURIComponent(pathname.slice("/xuanyu-preview".length));
-  } catch {
-    sendJson(res, 400, { error: "预览路径无效" });
-    return;
-  }
-  const relative = requested.replace(/^\/+/, "") || "index.html";
-  const file = path.resolve(xuanyuPreviewDir, relative);
-  const root = `${xuanyuPreviewDir}${path.sep}`;
-  if (!file.startsWith(root)) {
-    sendJson(res, 404, { error: "预览资源不存在" });
-    return;
-  }
-  fs.stat(file, (error, stats) => {
-    if (!error && stats.isFile()) {
-      sendFile(res, file, previewContentType(file));
-      return;
-    }
-    if (!path.extname(relative)) {
-      sendFile(res, path.join(xuanyuPreviewDir, "index.html"), "text/html; charset=utf-8");
-      return;
-    }
-    sendJson(res, 404, { error: "预览资源不存在" });
-  });
-}
-
-function proxyLicreApi(req, res, pathname, search) {
-  const upstreamPath = pathname.slice("/licre".length) + search;
-  const headers = {};
-  for (const name of ["content-type", "content-length", "x-licre-admin"]) {
-    if (req.headers[name] !== undefined) headers[name] = req.headers[name];
-  }
-  const upstream = http.request({
-    host: "127.0.0.1",
-    port: 3001,
-    method: req.method,
-    path: upstreamPath,
-    headers,
-  }, (upstreamResponse) => {
-    res.writeHead(upstreamResponse.statusCode || 502, {
-      "Cache-Control": "no-store",
-      "Content-Type": upstreamResponse.headers["content-type"] || "application/octet-stream",
-      "X-Content-Type-Options": "nosniff",
-    });
-    upstreamResponse.pipe(res);
-  });
-  upstream.on("error", () => {
-    if (!res.headersSent) sendJson(res, 502, { error: "LiCre 服务暂时不可用" });
-    else res.destroy();
-  });
-  req.pipe(upstream);
-}
-
-function handleLicre(req, res, url) {
-  if (!url.pathname.startsWith("/licre/")) return false;
-  if (url.pathname.startsWith("/licre/api/") || url.pathname === "/licre/health") {
-    proxyLicreApi(req, res, url.pathname, url.search);
-    return true;
-  }
-  if (req.method !== "GET") {
-    sendJson(res, 405, { error: "不支持此请求方法" });
-    return true;
-  }
-  if (url.pathname === "/licre/licre-update.json") {
-    sendFile(res, path.join(licreConsoleDir, "licre-update.json"), "application/json; charset=utf-8", null, req);
-    return true;
-  }
-  if (url.pathname === "/licre/LiCre.apk") {
-    sendFile(res, path.join(licreBuildDir, "LiCre.apk"), "application/vnd.android.package-archive", "LiCre.apk", req);
-    return true;
-  }
-  if (url.pathname === "/licre/Xuanyu-app-release.apk") {
-    sendFile(res, path.join(licreBuildDir, "Xuanyu-app-release.apk"), "application/vnd.android.package-archive", "Xuanyu-app-release.apk", req);
-    return true;
-  }
-  const release = url.pathname.match(/^\/licre\/releases\/([0-9a-f]{40})\/app-release\.apk$/);
-  if (release) {
-    sendFile(
-      res,
-      path.join(licreBuildDir, "releases", release[1], "app-release.apk"),
-      "application/vnd.android.package-archive",
-      "app-release.apk",
-      req,
-    );
-    return true;
-  }
-  sendJson(res, 404, { error: "LiCre 资源不存在" });
-  return true;
-}
+setImmediate(sessionContext.restoreScheduledUsers);
+const scheduleRestoreTimer = setInterval(sessionContext.restoreScheduledUsers, 60000);
+scheduleRestoreTimer.unref();
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${host}:${port}`);
@@ -809,10 +181,10 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === "GET" && url.pathname.startsWith("/xuanyu-preview/")) {
-    sendXuanyuPreview(res, url.pathname);
+    licreRouter.sendXuanyuPreview(res, url.pathname);
     return;
   }
-  if (handleLicre(req, res, url)) return;
+  if (licreRouter.handleLicre(req, res, url)) return;
   const publicPreviewMatch = url.pathname.match(/^\/chat\/artifact-previews\/([A-Za-z0-9_-]{32,128})$/);
   if (req.method === "GET" && publicPreviewMatch) {
     if (servePublicArtifactPreview(res, publicPreviewMatch[1])) return;
@@ -836,9 +208,9 @@ const server = http.createServer((req, res) => {
   }
   if (claudeAccountService.handle(req, res, url)) return;
   if (antigravityAccountService.handle(req, res, url)) return;
-  const legacyAuthorized = authorized(req);
+  const legacyAuthorized = sessionContext.authorized(req);
   const imageRequest = /^\/chat-images\/[a-f0-9-]{36}$/.test(url.pathname);
-  let principal = principalFor(req);
+  const principal = sessionContext.principalFor(req);
   if (!["GET", "HEAD", "OPTIONS"].includes(req.method) &&
       url.pathname !== "/auth/activate" && browserCookieRequest(req) &&
       !browserOriginAllowed(req)) {
@@ -860,62 +232,19 @@ const server = http.createServer((req, res) => {
       catch { console.error("Migration access confirmation could not be saved"); }
     });
   }
-  if (url.pathname === "/failover/claim") {
-    if (req.method !== "POST") {
-      sendJson(res, 405, { error: "请求方式不支持" });
-      return;
-    }
-    claimStandby().then(({ status, body }) => sendJson(res, status, body));
-    return;
-  }
-  if (url.pathname === "/codex/accounts") {
-    if (req.method !== "GET") {
-      sendJson(res, 405, { error: "请求方式不支持" });
-      return;
-    }
-    const extraAccounts = Promise.allSettled([
-      ...(principal.admin ? [claudeAccountService.card(principal)] : []),
-      ...((principal.admin || principal.codexProfiles?.includes("antigravity")) ? [antigravityAccountService.card(principal)] : []),
-    ]).then(results=>results.filter(r=>r.status==="fulfilled").map(r=>r.value));
-    extraAccounts.then((accounts) => codexAccountService.list(res,
-      principal.admin ? null : (principal.codexProfiles || ["default"]), accounts));
-    return;
-  }
-  const codexLoginMatch = url.pathname.match(
-    /^\/codex\/accounts\/([a-z0-9-]+)\/login\/(start|status|cancel)$/);
-  if (codexLoginMatch) {
-    if (!principal.admin) {
-      sendJson(res, 403, { error: "仅管理员可管理 Codex 账号" });
-      return;
-    }
-    const [, profileId, action] = codexLoginMatch;
-    if (action === "start" && req.method === "POST") {
-      codexAccountService.startLogin(res, profileId);
-      return;
-    }
-    if (action === "status" && req.method === "GET") {
-      codexAccountService.loginStatus(res, profileId);
-      return;
-    }
-    if (action === "cancel" && req.method === "POST") {
-      codexAccountService.cancelLogin(res, profileId);
-      return;
-    }
-    sendJson(res, 405, { error: "请求方式不支持" });
-    return;
-  }
-  const userChat = chatFor(principal);
+  if (handleCodexAndFailover(req, res, url, principal)) return;
+  const userChat = sessionContext.chatFor(principal);
   if (req.method === "POST" && url.pathname === "/usage/reset") {
     url.pathname = "/chat/usage/reset";
   }
   if (imageRequest && userChat.handlePublicImage(req, res, url)) return;
   if (userChat.handle(req, res, url, principal)) return;
   if (req.method === "GET" && url.pathname === "/files") {
-    listFiles(res, url, filesFor(principal));
+    filesService.listFiles(res, url, sessionContext.filesFor(principal));
     return;
   }
   if (req.method === "POST" && url.pathname === "/files") {
-    upload(req, res, filesFor(principal));
+    filesService.upload(req, res, sessionContext.filesFor(principal));
     return;
   }
   if (!principal.legacy && url.pathname.startsWith("/tasks")) {
@@ -923,20 +252,20 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === "GET" && url.pathname === "/tasks") {
-    listTasks(res, url);
+    tasksService.listTasks(res, url);
     return;
   }
   if (req.method === "POST" && url.pathname === "/tasks") {
-    createTask(req, res);
+    tasksService.createTask(req, res);
     return;
   }
   if (req.method === "GET" && url.pathname.startsWith("/tasks/")) {
-    const task = readTask(url.pathname.slice("/tasks/".length));
+    const task = tasksService.readTask(url.pathname.slice("/tasks/".length));
     if (!task) {
       sendJson(res, 404, { error: "任务不存在" });
       return;
     }
-    sendJson(res, 200, { task: publicTask(task) });
+    sendJson(res, 200, { task: tasksService.publicTask(task) });
     return;
   }
   sendJson(res, 404, { error: "接口不存在" });
@@ -944,5 +273,5 @@ const server = http.createServer((req, res) => {
 deviceGateway.attach(server);
 server.listen(port, host, () => {
   console.log(`Witt API listening on http://${host}:${port}`);
-  recoverTasks();
+  tasksService.recoverTasks();
 });

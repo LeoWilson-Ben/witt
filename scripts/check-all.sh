@@ -44,6 +44,7 @@ UNIT_TESTS=(
   backend/test-claude-account-service.js
   backend/test-codemagic-android-builder.js
   backend/test-github-android-builder.js
+  backend/test-phase1-modules.js
   backend/test-sqlite-store.js
   backend/test-user-projects.js
   backend/test-workspace-overview.js

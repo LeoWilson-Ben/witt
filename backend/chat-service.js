@@ -5,50 +5,31 @@ const { latestTurn } = require("./history-policy");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const { AppServerClient, sharedAppServer } = require("./app-server-client");
 const { ConversationStore } = require("./sqlite-store");
 const { UserWorkspace } = require("./user-workspace");
 const { workspaceOverview } = require("./workspace-overview");
 const { executionPolicy } = require("./execution-policy");
+const { ConversationSseHub } = require("./chat/sse-hub");
+const {
+  MediaArtifacts,
+  servePublicArtifactPreview,
+  servePublicArtifactSource,
+} = require("./chat/media-artifacts");
+const { UsageService } = require("./chat/usage-service");
+const {
+  ProviderRegistry,
+  DEEPSEEK_MODELS,
+  ADMIN_MODELS,
+  NON_ADMIN_MODELS,
+  ALL_MODELS,
+  QUOTA_EXHAUSTED_MESSAGE,
+  ALLOWED_REASONING,
+} = require("./providers/registry");
 
 const ID_PATTERN = /^[a-f0-9-]{36}$/;
-const DEEPSEEK_MODELS = new Set(["deepseek-v4-pro", "deepseek-v4-flash"]);
-const ADMIN_MODELS = new Set([
-  "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
-  "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", ...DEEPSEEK_MODELS,
-]);
-const NON_ADMIN_MODELS = new Set(["gpt-5.5", ...DEEPSEEK_MODELS]);
-const ALL_MODELS = new Set([...ADMIN_MODELS, ...NON_ADMIN_MODELS]);
-const QUOTA_EXHAUSTED_MESSAGE = "Your quota has been exhausted. Please try again later.";
-const ALLOWED_REASONING = new Set(["low", "medium", "high", "xhigh", "max", "ultra"]);
 const ALLOWED_ACCESS = new Set(["read-only", "workspace-write", "danger-full-access"]);
-const MAX_ARTIFACT_BYTES = 500 * 1024 * 1024;
-const MAX_INLINE_IMAGE_BYTES = 25 * 1024 * 1024;
-const MAX_INLINE_PREVIEW_BYTES = 5 * 1024 * 1024;
-const TEXT_ARTIFACT_PATTERN = /\.(txt|md|markdown|csv|tsv|json|jsonl|js|mjs|cjs|ts|tsx|jsx|py|java|kt|dart|css|scss|html?|xml|svg|yaml|yml|log|sh|bash|sql|c|h|cpp|hpp|rs|go|rb|php|swift|toml|ini|conf|vue|svelte)$/i;
-const ARTIFACT_PREVIEW_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_RECOVERY_MAX_AGE_MS = 30 * 60 * 1000;
 const DEFAULT_TURN_IDLE_TIMEOUT_MS = 0; // No automatic task interruption by default.
-const IMAGE_ID_PATTERN = /^[a-f0-9-]{36}$/;
-const artifactPreviewTokens = new Map();
-
-function servePublicArtifactPreview(res, token) {
-  const entry = artifactPreviewTokens.get(String(token || ""));
-  if (!entry || entry.expiresAt <= Date.now()) {
-    if (entry) artifactPreviewTokens.delete(String(token));
-    return false;
-  }
-  return entry.service.previewArtifactForToken(res, entry);
-}
-
-function servePublicArtifactSource(res, token) {
-  const entry = artifactPreviewTokens.get(String(token || ""));
-  if (!entry || entry.expiresAt <= Date.now()) {
-    if (entry) artifactPreviewTokens.delete(String(token));
-    return false;
-  }
-  return entry.service.sourceArtifactForToken(res, entry);
-}
 
 class ChatService {
   constructor(options) {
@@ -119,11 +100,28 @@ class ChatService {
     this.store = new ConversationStore(this.chatDir);
     this.store.importJsonFiles();
     this.jsonCheckpoints = new Map();
-    this.eventSubscribers = new Map();
-    this.eventBroadcasts = new Map();
+    this.sseHub = new ConversationSseHub(this);
+    this.eventSubscribers = this.sseHub.subscribers;
+    this.eventBroadcasts = this.sseHub.broadcasts;
+    this.mediaArtifacts = new MediaArtifacts(this);
+    this.usageService = new UsageService(this, { quotaExhaustedMessage: QUOTA_EXHAUSTED_MESSAGE });
+    this.providerRegistry = new ProviderRegistry(this);
     this.workspace = new UserWorkspace(this, { start: options.startWorkspace !== false });
     this.recover();
   }
+
+  _sseHub() {
+    if (!this.sseHub) {
+      this.sseHub = new ConversationSseHub(this);
+      if (this.eventSubscribers) this.sseHub.subscribers = this.eventSubscribers;
+      if (this.eventBroadcasts) this.sseHub.broadcasts = this.eventBroadcasts;
+    }
+    return this.sseHub;
+  }
+
+  _media() { return this.mediaArtifacts ||= new MediaArtifacts(this); }
+  _usage() { return this.usageService ||= new UsageService(this, { quotaExhaustedMessage: QUOTA_EXHAUSTED_MESSAGE }); }
+  _providers() { return this.providerRegistry ||= new ProviderRegistry(this); }
 
   get active() { return this.activeTurns.size === 1 ? this.activeTurns.values().next().value : null; }
   set active(value) {
@@ -152,96 +150,19 @@ class ChatService {
   }
 
   clientFor(profile, model = this.defaultModel, conversation = null) {
-    const deepseek = DEEPSEEK_MODELS.has(model);
-    const stellar = stellarbit.models(this.providerRuntime?.owner).some(m=>m.id===model);
-    const remote = this.activeRemoteRuntimeFor(conversation);
-    const configOverrides = ["features.default_mode_request_user_input=true"];
-    if (!this.serverAdministrator) configOverrides.push(
-      'sandbox_mode="workspace-write"',
-      'approval_policy="never"',
-      'sandbox_workspace_write.network_access=false',
-      `sandbox_workspace_write.writable_roots=${JSON.stringify([this.userWorkspaceDir, this.projectsDir, this.dataDir])}`,
-    );
-    if (remote?.runtime?.codexConfigOverrides?.length) {
-      configOverrides.push(...remote.runtime.codexConfigOverrides);
-    }
-    if (deepseek) configOverrides.push(
-      'model_provider="witt-deepseek"',
-      'model_providers.witt-deepseek.name="DeepSeek through Witt"',
-      'model_providers.witt-deepseek.base_url="http://127.0.0.1:33111/v1"',
-      'model_providers.witt-deepseek.wire_api="responses"',
-      "model_providers.witt-deepseek.request_max_retries=1",
-      "model_providers.witt-deepseek.stream_max_retries=2",
-      "model_providers.witt-deepseek.stream_idle_timeout_ms=300000",
-    );
-    if(stellar) configOverrides.push(
-      'model_provider="witt-stellarbit"',
-      'model_providers.witt-stellarbit.name="Stellarbit"',
-      'model_providers.witt-stellarbit.base_url="http://127.0.0.1:33112/v1"',
-      'model_providers.witt-stellarbit.wire_api="responses"',
-      'model_providers.witt-stellarbit.request_max_retries=0',
-      'model_providers.witt-stellarbit.stream_max_retries=0',
-    );
-    const clientScope = remote ? `${this.clientScope}:rw:${remote.binding.workspace_id}` : this.clientScope;
-    const client = profile.provider && this.providerRuntime && !stellar ? this.providerRuntime.client(profile) : sharedAppServer({
-      codexBin: this.codexBin,
-      cwd: remote ? remote.runtime.cwd : profile.workDir,
-      home: "/var/lib/witt",
-      codexHome: stellar ? this.codexProfiles.default.codexHome : profile.codexHome,
-      configOverrides,
-      clientScope,
-    });
-    if (!this.boundClients.has(client)) {
-      this.boundClients.add(client);
-      client.on("notification", (method, params) => {
-        const active = this.activeForEvent(client, params);
-        if (!active || active.client !== client) return;
-        this.handleNotification(active.conversationId, active.messageId, method, params);
-      });
-      client.on("request", (request) => {
-        const active = this.activeForEvent(client, request.params);
-        if (!active || active.client !== client) {
-          try { client.respond(request.id, { decision: "decline" }); } catch {}
-          return;
-        }
-        this.handleServerRequest(active.conversationId, active.messageId, request);
-      });
-      client.on("closed", ({ stderr }) => {
-        for (const active of [...this.activeTurns.values()]) {
-          if (active.client === client && !active.finished) {
-            this.failActive(stderr.trim().slice(-1200) || "Codex 服务意外停止", active.conversationId);
-          }
-        }
-      });
-      client.on("notification", (method) => {
-        if (method === "skills/changed") this.capabilityCache.clear();
-      });
-    }
-    return client;
+    return this._providers().clientFor(profile, model, conversation);
   }
 
   defaultModelFor(profileId) {
-    const profile=this.codexProfiles[profileId];
-    return profile?.provider && this.providerRuntime ? this.providerRuntime.defaultModel(profile.provider) : this.defaultModel;
+    return this._providers().defaultModelFor(profileId);
   }
 
   reasoningFor(model, profileId, effort) {
-    const profile=this.codexProfiles[profileId];
-    if (stellarbit.models(this.providerRuntime?.owner).some(m=>m.id===model)) return "medium";
-    return profile?.provider && this.providerRuntime ? this.providerRuntime.reasoning(model,profile,effort)
-      : ALLOWED_REASONING.has(effort) ? effort : "medium";
+    return this._providers().reasoningFor(model, profileId, effort);
   }
 
   modelAllowed(model, profileId = this.defaultCodexProfile) {
-    const profile=this.codexProfiles[profileId];
-    if (stellarbit.models(this.providerRuntime?.owner).some(m=>m.id===model) && (!profile?.provider || profile.provider === "antigravity")) return true;
-    if(profile?.provider) return Boolean(this.providerRuntime && this.providerRuntime.allowed(model,profile));
-    if (DEEPSEEK_MODELS.has(model)) return this.deepseekEnabled &&
-      (this.allowedModels === null || this.allowedModels.has(model));
-    const dynamic = this.availableModels.get(profileId);
-    const policyAllows = this.allowedModels === null || this.allowedModels.has(model);
-    const catalogAllows = !dynamic || dynamic.has(model) || ALL_MODELS.has(model);
-    return policyAllows && catalogAllows;
+    return this._providers().modelAllowed(model, profileId);
   }
 
   conversationPath(id) {
@@ -278,86 +199,19 @@ class ChatService {
   }
 
   scheduleConversationEvent(conversationId) {
-    if (!this.eventSubscribers.get(conversationId)?.size ||
-        this.eventBroadcasts.has(conversationId)) return;
-    const timer = setTimeout(() => {
-      this.eventBroadcasts.delete(conversationId);
-      const conversation = this.readConversation(conversationId);
-      if (!conversation || conversation.archived) return;
-      this.broadcastConversationEvent(
-        conversationId, "delta", this.publicConversationDelta(conversation));
-    }, 180);
-    timer.unref();
-    this.eventBroadcasts.set(conversationId, timer);
+    return this._sseHub().scheduleConversationEvent(conversationId);
   }
 
   writeConversationEvent(res, event, payload) {
-    if (res.destroyed || res.writableEnded) return false;
-    if (res.writableLength > 1024 * 1024) {
-      res.destroy();
-      return false;
-    }
-    try {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
-      return true;
-    } catch {
-      return false;
-    }
+    return this._sseHub().writeConversationEvent(res, event, payload);
   }
 
   broadcastConversationEvent(conversationId, event, payload) {
-    const subscribers = this.eventSubscribers.get(conversationId);
-    if (!subscribers) return;
-    for (const subscriber of [...subscribers]) {
-      if (!this.writeConversationEvent(subscriber.res, event, payload)) {
-        subscriber.close();
-      }
-    }
+    return this._sseHub().broadcastConversationEvent(conversationId, event, payload);
   }
 
   subscribeConversation(req, res, conversationId, limit = null) {
-    const conversation = limit === "latest" ? this.store.loadLatest(conversationId)
-      : limit === null ? this.readConversation(conversationId) : this.store.loadPage(conversationId, { limit });
-    if (!conversation || conversation.archived) {
-      this.sendJson(res, 404, { error: "对话不存在" });
-      return;
-    }
-    res.writeHead(200, {
-      "Cache-Control": "no-store, no-transform",
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Connection": "keep-alive",
-      "X-Accel-Buffering": "no",
-      "X-Content-Type-Options": "nosniff",
-    });
-    res.flushHeaders?.();
-    res.write("retry: 1500\n\n");
-
-    const subscribers = this.eventSubscribers.get(conversationId) || new Set();
-    this.eventSubscribers.set(conversationId, subscribers);
-    let closed = false;
-    const subscriber = {
-      res,
-      close: () => {
-        if (closed) return;
-        closed = true;
-        clearInterval(subscriber.heartbeat);
-        subscribers.delete(subscriber);
-        if (!subscribers.size) this.eventSubscribers.delete(conversationId);
-        if (!res.writableEnded) res.end();
-      },
-    };
-    subscriber.heartbeat = setInterval(() => {
-      if (res.destroyed || res.writableEnded) subscriber.close();
-      else res.write(": keep-alive\n\n");
-    }, 25_000);
-    subscriber.heartbeat.unref();
-    subscribers.add(subscriber);
-    req.on("aborted", subscriber.close);
-    req.on("close", subscriber.close);
-    res.on("close", subscriber.close);
-    this.writeConversationEvent(res, "snapshot", {
-      conversation: this.publicConversation(conversation),
-    });
+    return this._sseHub().subscribeConversation(req, res, conversationId, limit);
   }
 
   writeJsonCheckpoint(conversation) {
@@ -419,101 +273,15 @@ class ChatService {
   }
 
   issueArtifactPreviewToken(messageId, artifact) {
-    if (!artifact?.id || !artifact?.sourcePath || !TEXT_ARTIFACT_PATTERN.test(artifact.name || '') ||
-        Number(artifact.size || 0) > MAX_INLINE_PREVIEW_BYTES) return "";
-    const now = Date.now();
-    for (const [token, entry] of artifactPreviewTokens) {
-      if (entry.expiresAt <= now) artifactPreviewTokens.delete(token);
-      else if (entry.service === this && entry.messageId === messageId &&
-          entry.artifactId === artifact.id) return token;
-    }
-    const token = crypto.randomBytes(24).toString("base64url");
-    artifactPreviewTokens.set(token, {
-      service: this,
-      messageId,
-      artifactId: artifact.id,
-      expiresAt: now + ARTIFACT_PREVIEW_TTL_MS,
-    });
-    return token;
+    return this._media().issueArtifactPreviewToken(messageId, artifact);
   }
 
   parsePreviewMarkers(value) {
-    const paths = [];
-    const visible = [];
-    for (const line of String(value || "").split("\n")) {
-      const match = line.trim().match(/^\[\[preview:(\/.+)\]\]$/);
-      if (match) {
-        paths.push(match[1].trim());
-      } else if (!/^\s*\[\[preview:/.test(line)) {
-        visible.push(line);
-      }
-    }
-    return { text: visible.join("\n").trim(), paths };
+    return this._media().parsePreviewMarkers(value);
   }
 
   publishPreviewSnapshot(assistant, requestedPath) {
-    const active = [...this.activeTurns.values()].find((turn) => turn.messageId === assistant.id);
-    const verified = this.deliveryArtifact(requestedPath);
-    const extension = path.extname(String(verified?.name || "")).toLowerCase();
-    if (!verified || !TEXT_ARTIFACT_PATTERN.test(artifact.name || '') ||
-        verified.size > MAX_INLINE_PREVIEW_BYTES) return false;
-    let source;
-    try {
-      source = fs.readFileSync(verified.sourcePath, "utf8");
-    } catch {
-      return false;
-    }
-    if (!/<html(?:\s|>)/i.test(source) || !/<\/html>\s*$/i.test(source) ||
-        !/<body(?:\s|>)/i.test(source) || !/<\/body>/i.test(source)) return false;
-    const artifactKey = crypto.createHash("sha256")
-      .update(verified.sourcePath).digest("hex").slice(0, 24);
-    const contentHash = crypto.createHash("sha256").update(source).digest("hex");
-    let versions = Array.isArray(assistant.previewVersions)
-      ? assistant.previewVersions.slice() : [];
-    if (!versions.length && active?.conversationId) {
-      const conversation = this.readConversation(active.conversationId);
-      const previous = conversation?.messages?.slice().reverse().find((message) =>
-        message.id !== assistant.id && message.livePreview?.artifactKey === artifactKey);
-      if (previous) versions = (previous.previewVersions || []).slice(-20);
-    }
-    const latest = versions.at(-1);
-    if (latest?.contentHash === contentHash || assistant.livePreview?.contentHash === contentHash) {
-      return false;
-    }
-    const revision = Math.max(0, Number(latest?.revision || 0)) + 1;
-    const id = crypto.randomUUID();
-    const sourcePath = path.join(this.previewDir, `${id}.html`);
-    const temporary = `${sourcePath}.${process.pid}.tmp`;
-    try {
-      fs.writeFileSync(temporary, source, { mode: 0o600 });
-      fs.renameSync(temporary, sourcePath);
-    } catch {
-      try { fs.rmSync(temporary, { force: true }); } catch {}
-      return false;
-    }
-    const snapshot = {
-      id,
-      name: verified.name,
-      size: Buffer.byteLength(source),
-      mimeType: "text/html",
-      sourcePath,
-      sourceFile: verified.sourcePath,
-      artifactKey,
-      contentHash,
-      revision,
-      live: true,
-      createdAt: new Date().toISOString(),
-    };
-    versions.push(snapshot);
-    while (versions.length > 20) {
-      versions.shift();
-    }
-    assistant.previewVersions = versions;
-    assistant.livePreview = snapshot;
-    if (active?.messageId === assistant.id) {
-      active.previewSourcePath = verified.sourcePath;
-    }
-    return true;
+    return this._media().publishPreviewSnapshot(assistant, requestedPath);
   }
 
   publicConversation(conversation, includeMessages = true) {
@@ -612,208 +380,27 @@ class ChatService {
     };
   }
 
-  imageType(buffer) {
-    if (!Buffer.isBuffer(buffer) || buffer.length < 12) return null;
-    if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
-      return { extension: ".png", mimeType: "image/png" };
-    }
-    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
-      return { extension: ".jpg", mimeType: "image/jpeg" };
-    }
-    const signature = buffer.subarray(0, 6).toString("ascii");
-    if (signature === "GIF87a" || signature === "GIF89a") {
-      return { extension: ".gif", mimeType: "image/gif" };
-    }
-    if (buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
-        buffer.subarray(8, 12).toString("ascii") === "WEBP") {
-      return { extension: ".webp", mimeType: "image/webp" };
-    }
-    return null;
-  }
-
-  safeImageSource(requestedPath) {
-    try {
-      const sourcePath = fs.realpathSync(String(requestedPath || ""));
-      const lower = sourcePath.toLowerCase();
-      const generatedImage = /^\/home\/ubuntu\/\.codex(?:-xuanyu)?\/generated_images\/[a-f0-9-]{36}\/[a-z0-9-]+\.(?:png|jpg|jpeg|webp|gif)$/i.test(sourcePath);
-      if ((/(^|\/)(\.ssh|\.gnupg|\.aws|\.codex)(\/|$)/.test(lower) && !generatedImage) ||
-          /(^|\/)(\.env($|\.)|[^/]*(token|credential|secret|private[_-]?key)[^/]*)$/.test(lower)) {
-        return null;
-      }
-      const stats = fs.statSync(sourcePath);
-      if (!stats.isFile() || stats.size < 12 || stats.size > MAX_INLINE_IMAGE_BYTES) return null;
-      const handle = fs.openSync(sourcePath, "r");
-      const header = Buffer.alloc(16);
-      fs.readSync(handle, header, 0, header.length, 0);
-      fs.closeSync(handle);
-      const type = this.imageType(header);
-      return type ? { sourcePath, stats, type } : null;
-    } catch {
-      return null;
-    }
-  }
-
+  imageType(buffer) { return this._media().imageType(buffer); }
+  safeImageSource(requestedPath) { return this._media().safeImageSource(requestedPath); }
   storeImageBuffer(buffer, name, source = "execution", artifactId = null) {
-    if (!Buffer.isBuffer(buffer) || buffer.length < 12 || buffer.length > MAX_INLINE_IMAGE_BYTES) {
-      return null;
-    }
-    const type = this.imageType(buffer);
-    if (!type) return null;
-    const id = crypto.randomUUID();
-    const fileName = `${id}${type.extension}`;
-    const destination = path.join(this.imageDir, fileName);
-    fs.writeFileSync(destination, buffer, { mode: 0o600, flag: "wx" });
-    const image = {
-      id,
-      name: String(name || `Witt 图片${type.extension}`).slice(0, 180),
-      size: buffer.length,
-      mimeType: type.mimeType,
-      source,
-      artifactId,
-      createdAt: new Date().toISOString(),
-      fileName,
-      sourcePath: destination,
-    };
-    fs.writeFileSync(
-      path.join(this.imageDir, `${id}.json`),
-      `${JSON.stringify({
-        id: image.id,
-        name: image.name,
-        size: image.size,
-        mimeType: image.mimeType,
-        fileName: image.fileName,
-      })}\n`,
-      { mode: 0o600, flag: "wx" },
-    );
-    return image;
+    return this._media().storeImageBuffer(buffer, name, source, artifactId);
   }
-
   storeImagePath(requestedPath, source = "execution", artifactId = null) {
-    const verified = this.safeImageSource(requestedPath);
-    if (!verified) return null;
-    const buffer = fs.readFileSync(verified.sourcePath);
-    return this.storeImageBuffer(
-      buffer, path.basename(verified.sourcePath), source, artifactId);
+    return this._media().storeImagePath(requestedPath, source, artifactId);
   }
-
   storeImageData(value, name = "Witt 生成图片", source = "execution") {
-    const raw = String(value || "");
-    const dataUrl = raw.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([a-zA-Z0-9+/=\s]+)$/);
-    const encoded = dataUrl ? dataUrl[2] : raw;
-    if (!encoded || encoded.length > Math.ceil(MAX_INLINE_IMAGE_BYTES * 4 / 3) + 16) return null;
-    try {
-      return this.storeImageBuffer(Buffer.from(encoded.replace(/\s+/g, ""), "base64"), name, source);
-    } catch {
-      return null;
-    }
+    return this._media().storeImageData(value, name, source);
   }
-
-  attachImage(message, image) {
-    if (!image) return null;
-    message.images = Array.isArray(message.images) ? message.images : [];
-    const duplicate = message.images.find((candidate) =>
-      (image.artifactId && candidate.artifactId === image.artifactId) ||
-      (candidate.size === image.size && candidate.name === image.name &&
-        candidate.source === image.source));
-    if (duplicate) return duplicate;
-    message.images.push(image);
-    return image;
-  }
-
-  captureToolImages(message, item) {
-    const contents = item.type === "dynamicToolCall"
-      ? item.contentItems
-      : item.result?.content;
-    if (!Array.isArray(contents)) return [];
-    const images = [];
-    for (const [index, content] of contents.entries()) {
-      if (!content || typeof content !== "object") continue;
-      let image = null;
-      if (content.type === "image" && content.data) {
-        image = this.storeImageData(content.data, `工具图片 ${index + 1}`);
-      } else if ((content.type === "inputImage" || content.type === "input_image") &&
-          (content.imageUrl || content.image_url)) {
-        image = this.storeImageData(
-          content.imageUrl || content.image_url, `工具图片 ${index + 1}`);
-      }
-      if (image) images.push(this.attachImage(message, image));
-    }
-    return images.filter(Boolean);
-  }
-
-  captureGeneratedImage(message, item) {
-    const savedPath = item.savedPath || item.saved_path;
-    const stored = savedPath
-      ? this.storeImagePath(savedPath, "execution")
-      : this.storeImageData(item.result, "Witt 生成图片", "execution");
-    return this.attachImage(message, stored);
-  }
-
+  attachImage(message, image) { return this._media().attachImage(message, image); }
+  captureToolImages(message, item) { return this._media().captureToolImages(message, item); }
+  captureGeneratedImage(message, item) { return this._media().captureGeneratedImage(message, item); }
   generatedImageFiles(threadId, codexHome = "/var/lib/witt/.codex") {
-    if (!ID_PATTERN.test(String(threadId || ""))) return new Set();
-    const directory = path.join(codexHome, "generated_images", threadId);
-    try {
-      return new Set(fs.readdirSync(directory)
-        .map((name) => path.join(directory, name))
-        .filter((file) => fs.statSync(file).isFile() && this.safeImageSource(file)));
-    } catch {
-      return new Set();
-    }
+    return this._media().generatedImageFiles(threadId, codexHome);
   }
-
-  captureNewGeneratedImages(message, threadId, before = new Set(),
-      codexHome = "/var/lib/witt/.codex") {
-    const images = [];
-    for (const sourcePath of this.generatedImageFiles(threadId, codexHome)) {
-      if (before.has(sourcePath)) continue;
-      const existingIds = new Set((message.images || []).map((image) => image.id));
-      const image = this.attachImage(message,
-        this.storeImagePath(sourcePath, "execution"));
-      if (image && !existingIds.has(image.id)) images.push(image);
-    }
-    return images;
+  captureNewGeneratedImages(message, threadId, before = new Set(), codexHome = "/var/lib/witt/.codex") {
+    return this._media().captureNewGeneratedImages(message, threadId, before, codexHome);
   }
-
-  handlePublicImage(req, res, url) {
-    const match = url.pathname.match(/^\/chat-images\/([a-f0-9-]{36})$/);
-    if (!match) return false;
-    if (req.method !== "GET") {
-      this.sendJson(res, 405, { error: "不支持此请求方法" });
-      return true;
-    }
-    try {
-      const metadataPath = path.join(this.imageDir, `${match[1]}.json`);
-      const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
-      if (metadata.id !== match[1] || !IMAGE_ID_PATTERN.test(metadata.id) ||
-          !/^[a-f0-9-]{36}\.(?:png|jpg|webp|gif)$/.test(metadata.fileName)) {
-        throw new Error("invalid image metadata");
-      }
-      const imagePath = path.join(this.imageDir, metadata.fileName);
-      const resolved = fs.realpathSync(imagePath);
-      if (!resolved.startsWith(`${path.resolve(this.imageDir)}${path.sep}`)) {
-        throw new Error("invalid image path");
-      }
-      const stats = fs.statSync(resolved);
-      if (!stats.isFile() || stats.size !== metadata.size || stats.size > MAX_INLINE_IMAGE_BYTES) {
-        throw new Error("invalid image file");
-      }
-      const verified = this.safeImageSource(resolved);
-      if (!verified || verified.type.mimeType !== metadata.mimeType) {
-        throw new Error("invalid image type");
-      }
-      res.writeHead(200, {
-        "Cache-Control": "private, max-age=3600",
-        "Content-Length": stats.size,
-        "Content-Type": metadata.mimeType,
-        "Content-Security-Policy": "default-src 'none'",
-        "X-Content-Type-Options": "nosniff",
-      });
-      fs.createReadStream(resolved).pipe(res);
-    } catch {
-      this.sendJson(res, 404, { error: "图片不存在" });
-    }
-    return true;
-  }
+  handlePublicImage(req, res, url) { return this._media().handlePublicImage(req, res, url); }
 
   normalizeWorkDir(value) {
     const requested = String(value || "").trim();
@@ -935,125 +522,7 @@ class ChatService {
   }
 
   async readCapabilities(res, requestedProfile = null, respond = this.sendJson) {
-    // Older native clients cannot pass a profile. Return all authorized profiles
-    // so the web UI can select locally without mixing account capabilities.
-    if (requestedProfile === null) {
-      const capabilitiesByProfile = {};
-      await Promise.all([...this.allowedCodexProfiles].map(async (id) => {
-        await this.readCapabilities(res, id, (_res, status, payload) => {
-          capabilitiesByProfile[id] = status === 200 ? payload
-            : { codexProfile: id, models: [], skills: [], mcpServers: [],
-                features: [], error: payload.error };
-        });
-      }));
-      const primary = capabilitiesByProfile[this.defaultCodexProfile] || { models: [] };
-      respond(res, 200, { ...primary, capabilitiesByProfile });
-      return;
-    }
-    const profileId = String(requestedProfile);
-    if (!this.allowedCodexProfiles.has(profileId) || !this.codexProfiles[profileId]) {
-      respond(res, 403, { error: "当前用户不能使用这个 Codex 账号" });
-      return;
-    }
-    const profile = this.codexProfiles[profileId];
-    if(profile.provider){
-      if(!this.providerRuntime){respond(res,503,{error:"账号路由尚未就绪"});return;}
-      try{const payload=await this.providerRuntime.capabilities(profile);
-        if(profile.provider === "antigravity") payload.models.push(...stellarbit.models(this.providerRuntime.owner));
-        respond(res,200,payload);}catch{respond(res,503,{error:"无法读取这个账号的模型列表，请检查登录状态"});}
-      return;
-    }
-    const cached = this.capabilityCache.get(profile.id);
-    if (cached && Date.now() - cached.cachedAt < 5 * 60 * 1000) {
-      respond(res, 200, cached.payload);
-      return;
-    }
-    try {
-      const client = this.clientFor(profile);
-      await client.start();
-      const settled = await Promise.allSettled([
-        client.request("model/list", { limit: 100, includeHidden: false }),
-        client.request("skills/list", { cwds: [profile.workDir], forceReload: false }),
-        client.request("mcpServerStatus/list", { limit: 100, detail: "toolsAndAuthOnly" }),
-        client.request("collaborationMode/list", {}),
-        client.request("experimentalFeature/list", { limit: 100 }),
-      ]);
-      if (settled[0].status === "rejected") throw new Error("无法读取这个账号的模型列表，请稍后重试");
-      const value = (index) => settled[index].status === "fulfilled"
-        ? settled[index].value : {};
-      const models = (value(0).data || []).filter((model) => !model.hidden &&
-        (this.allowedModels === null || this.allowedModels.has(String(model.id || model.model || ""))))
-        .map((model) => ({
-        id: String(model.id || model.model || ""),
-        displayName: String(model.displayName || model.id || model.model || ""),
-        isDefault: Boolean(model.isDefault),
-        inputModalities: Array.isArray(model.inputModalities)
-          ? model.inputModalities.map(String) : ["text", "image"],
-        defaultReasoningEffort: String(model.defaultReasoningEffort || "medium"),
-        reasoningEfforts: (model.supportedReasoningEfforts || []).map((effort) => ({
-          id: String(effort.reasoningEffort || ""),
-          description: String(effort.description || ""),
-        })).filter((effort) => effort.id),
-        supportsPersonality: Boolean(model.supportsPersonality),
-        upgrade: model.upgrade ? String(model.upgrade) : null,
-      })).filter((model) => model.id);
-      if (this.deepseekEnabled &&
-          (this.allowedModels === null || [...DEEPSEEK_MODELS].some((id) => this.allowedModels.has(id)))) {
-        const deepseekModels = [
-          {
-            id: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro", isDefault: false,
-            inputModalities: ["text"], defaultReasoningEffort: "high",
-            reasoningEfforts: [
-              { id: "high", description: "DeepSeek 深度思考" },
-              { id: "xhigh", description: "DeepSeek 最大思考" },
-            ],
-            supportsPersonality: false, upgrade: null, provider: "deepseek",
-          },
-          {
-            id: "deepseek-v4-flash", displayName: "DeepSeek V4 Flash", isDefault: false,
-            inputModalities: ["text"], defaultReasoningEffort: "high",
-            reasoningEfforts: [
-              { id: "high", description: "DeepSeek 深度思考" },
-              { id: "xhigh", description: "DeepSeek 最大思考" },
-            ],
-            supportsPersonality: false, upgrade: null, provider: "deepseek",
-          },
-        ].filter((model) => this.allowedModels === null || this.allowedModels.has(model.id));
-        models.push(...deepseekModels);
-      }
-      models.push(...stellarbit.models(this.providerRuntime?.owner));
-      this.availableModels.set(profile.id, new Set(models.map((model) => model.id)));
-      const skillGroups = value(1).data || [];
-      const skills = skillGroups.flatMap((group) => group.skills || []).map((skill) => ({
-        name: String(skill.name || ""),
-        description: String(skill.description || skill.interface?.shortDescription || ""),
-        enabled: skill.enabled !== false,
-      })).filter((skill) => skill.name);
-      const mcpServers = (value(2).data || []).map((server) => ({
-        name: String(server.name || server.serverName || ""),
-        status: String(server.status || "unknown"),
-        authStatus: String(server.authStatus || server.auth?.status || "unknown"),
-        toolCount: Array.isArray(server.tools) ? server.tools.length : 0,
-      })).filter((server) => server.name);
-      const collaborationModes = (value(3).data || value(3).collaborationModes || [])
-        .map((mode) => ({ id: String(mode.id || mode.name || ""),
-          label: String(mode.label || mode.displayName || mode.id || mode.name || "") }))
-        .filter((mode) => mode.id);
-      const features = (value(4).data || []).map((feature) => ({
-        name: String(feature.name || ""), stage: String(feature.stage || ""),
-        enabled: Boolean(feature.enabled), displayName: String(feature.displayName || ""),
-      })).filter((feature) => feature.name);
-      const payload = {
-        codexProfile: profile.id,
-        models, skills, mcpServers, collaborationModes, features,
-        support: { fork: true, compact: true, review: true, plans: true },
-        checkedAt: new Date().toISOString(),
-      };
-      this.capabilityCache.set(profile.id, { cachedAt: Date.now(), payload });
-      respond(res, 200, payload);
-    } catch (error) {
-      respond(res, 503, { error: error.message || "无法读取 App Server 能力" });
-    }
+    return this._providers().readCapabilities(res, requestedProfile, respond);
   }
 
   async resumeOnClient(conversation) {
@@ -1750,157 +1219,15 @@ class ChatService {
   }
 
   async readAccountUsage(res, conversationId = null) {
-    const providerConversation=conversationId && this.readConversation(conversationId);
-    if(providerConversation && this.profileFor(providerConversation).provider){
-      const profile=this.profileFor(providerConversation);
-      if(!this.profileAllowed(providerConversation)){this.sendJson(res,403,{error:"这个账号不可用"});return;}
-      try{this.sendJson(res,200,await this.providerRuntime.usage(profile));}
-      catch{this.sendJson(res,200,{provider:profile.provider,codexProfile:profile.id,quota:{available:false,groups:[],message:"暂时无法读取该账号额度，请稍后刷新"},rateLimits:null});}
-      return;
-    }
-    if (this.readConversation(conversationId)) this.lastUsageConversationId = conversationId;
-    if (this.quotaExhausted) {
-      this.sendJson(res, 200, this.withConversationUsage({
-        summary: {
-          lifetimeTokens: 0, peakDailyTokens: 0, longestRunningTurnSec: 0,
-          currentStreakDays: 0, longestStreakDays: 0,
-        },
-        dailyUsageBuckets: [],
-        rateLimits: {
-          planType: "",
-          primary: { usedPercent: 100, windowDurationMins: 0, resetsAt: 0 },
-          secondary: null,
-          resetCredits: 0,
-        },
-      }, conversationId));
-      return;
-    }
-    const conversation = this.readConversation(conversationId);
-    const storedProfile = this.profileFor(conversation);
-    const profile = this.allowedCodexProfiles.has(storedProfile.id)
-      ? storedProfile : this.codexProfiles[this.defaultCodexProfile];
-    const usageCache = this.usageCache.get(profile.id);
-    if (usageCache && Date.now() - usageCache.cachedAt < 5 * 60 * 1000) {
-      this.sendJson(res, 200, this.withConversationUsage(usageCache.payload, conversationId));
-      return;
-    }
-    const client = new AppServerClient({
-      codexBin: this.codexBin,
-      cwd: profile.workDir,
-      home: "/var/lib/witt",
-      codexHome: profile.codexHome,
-    });
-    try {
-      await client.start();
-      const usage = await client.request("account/usage/read", {});
-      const summary = usage?.summary || {};
-      const rate = await client.request("account/rateLimits/read", {});
-      const limits = rate?.rateLimitsByLimitId?.codex || rate?.rateLimits || {};
-      const window = (value) => value ? {
-        usedPercent: Math.max(0, Math.min(100, Number(value.usedPercent || 0))),
-        windowDurationMins: Number(value.windowDurationMins || 0),
-        resetsAt: Number(value.resetsAt || 0),
-      } : null;
-      const payload = {
-        codexProfile: profile.id,
-        summary: {
-          lifetimeTokens: Number(summary.lifetimeTokens || 0),
-          peakDailyTokens: Number(summary.peakDailyTokens || 0),
-          longestRunningTurnSec: Number(summary.longestRunningTurnSec || 0),
-          currentStreakDays: Number(summary.currentStreakDays || 0),
-          longestStreakDays: Number(summary.longestStreakDays || 0),
-        },
-        dailyUsageBuckets: Array.isArray(usage?.dailyUsageBuckets)
-          ? usage.dailyUsageBuckets
-            .filter((bucket) => /^\d{4}-\d{2}-\d{2}$/.test(String(bucket?.startDate || "")))
-            .map((bucket) => ({
-              startDate: String(bucket.startDate),
-              tokens: Math.max(0, Number(bucket.tokens || 0)),
-            }))
-          : [],
-        rateLimits: {
-          planType: String(limits.planType || ""),
-          primary: window(limits.primary),
-          secondary: window(limits.secondary),
-          resetCredits: Math.max(0, Number(rate?.rateLimitResetCredits?.availableCount || 0)),
-        },
-      };
-      this.usageCache.set(profile.id, { cachedAt: Date.now(), payload });
-      this.sendJson(res, 200, this.withConversationUsage(payload, conversationId));
-    } catch (error) {
-      this.sendJson(res, 502, {
-        error: `暂时无法读取 Token 用量：${String(error.message || error).slice(0, 160)}`,
-      });
-    } finally {
-      client.close();
-    }
+    return this._usage().readAccountUsage(res, conversationId);
   }
 
   withConversationUsage(payload, conversationId) {
-    const conversation = this.readConversation(conversationId);
-    return {
-      ...payload,
-      context: this.quotaExhausted ? { usedTokens: 1, contextWindow: 1 } :
-        (conversation?.contextUsage?.source === "last-input" ? conversation.contextUsage : null),
-    };
+    return this._usage().withConversationUsage(payload, conversationId);
   }
 
   async consumeRateLimitReset(res, conversationId = null) {
-    const providerConversation=conversationId && this.readConversation(conversationId);
-    if(providerConversation && this.profileFor(providerConversation).provider){this.sendJson(res,400,{error:"这个账号不支持 Codex 额度重置"});return;}
-
-    if (this.quotaExhausted) {
-      this.sendJson(res, 429, { error: QUOTA_EXHAUSTED_MESSAGE });
-      return;
-    }
-    const conversation = this.readConversation(conversationId || this.lastUsageConversationId);
-    const storedProfile = this.profileFor(conversation);
-    const profile = this.allowedCodexProfiles.has(storedProfile.id)
-      ? storedProfile : this.codexProfiles[this.defaultCodexProfile];
-    const client = new AppServerClient({
-      codexBin: this.codexBin,
-      cwd: profile.workDir,
-      home: "/var/lib/witt",
-      codexHome: profile.codexHome,
-    });
-    try {
-      await client.start();
-      const latestLimits = await client.request("account/rateLimits/read", {});
-      const resetCredits = latestLimits?.rateLimitResetCredits;
-      const availableCount = Math.max(0, Number(resetCredits?.availableCount || 0));
-      if (!availableCount) {
-        this.usageCache.delete(profile.id);
-        this.sendJson(res, 409, {
-          error: "该账号当前没有可用的重置额度，额度信息已刷新",
-          code: "RATE_LIMIT_RESET_UNAVAILABLE",
-        });
-        return;
-      }
-      const availableCredit = Array.isArray(resetCredits?.credits)
-        ? resetCredits.credits.find((credit) => credit?.status === "available" && credit?.id)
-        : null;
-      const params = { idempotencyKey: crypto.randomUUID() };
-      if (availableCredit) params.creditId = String(availableCredit.id);
-      const result = await client.request("account/rateLimitResetCredit/consume", params);
-      this.usageCache.delete(profile.id);
-      this.sendJson(res, 200, {
-        outcome: String(result?.outcome || "noCredit"),
-        codexProfile: profile.id,
-      });
-    } catch (error) {
-      this.usageCache.delete(profile.id);
-      const detail = String(error.message || error);
-      if (/\b429\b|Too Many Requests/i.test(detail)) {
-        this.sendJson(res, 409, {
-          error: "重置额度状态已变化或兑换暂时受限，额度信息已刷新，请稍后再试",
-          code: "RATE_LIMIT_RESET_REJECTED",
-        });
-      } else {
-        this.sendJson(res, 502, { error: `无法使用重置额度：${detail.slice(0, 160)}` });
-      }
-    } finally {
-      client.close();
-    }
+    return this._usage().consumeRateLimitReset(res, conversationId);
   }
 
   interruptConversation(res, conversationId, deviceId = "legacy") {
@@ -3102,219 +2429,22 @@ class ChatService {
     setImmediate(() => this.runNext());
   }
 
-  extractDeliveries(response) {
-    const lines = String(response || "").split("\n");
-    const artifacts = [];
-    const seenPaths = new Set();
-    const visible = [];
-    for (const line of lines) {
-      const match = line.trim().match(/^\[\[deliver:(\/.+)\]\]$/);
-      if (!match) {
-        visible.push(line);
-        continue;
-      }
-      const artifact = this.deliveryArtifact(match[1].trim());
-      if (artifact && !seenPaths.has(artifact.sourcePath)) {
-        seenPaths.add(artifact.sourcePath);
-        // Preserve delivered bytes when a later task overwrites a file with the same name.
-        const directory=path.join(this.dataDir,'.witt-file-versions',artifact.id);
-        const snapshot=path.join(directory,artifact.name);
-        try {
-          fs.mkdirSync(directory,{recursive:true,mode:0o700});
-          fs.copyFileSync(artifact.sourcePath,snapshot,fs.constants.COPYFILE_FICLONE);
-          fs.chmodSync(snapshot,0o400);
-          artifact.sourcePath=snapshot;
-          artifact.versioned=true;
-        } catch { artifact.versioned=false; }
-        artifacts.push(artifact);
-      }
-    }
-    return { text: visible.join("\n").trim(), artifacts };
-  }
-
-  deliveryArtifact(requestedPath) {
-    try {
-      const sourcePath = fs.realpathSync(requestedPath);
-      if (!this.deliveryRoots.some((root) =>
-        sourcePath === root || sourcePath.startsWith(`${root}${path.sep}`))) return null;
-      const lower = sourcePath.toLowerCase();
-      if (/(^|\/)(\.ssh|\.gnupg|\.aws|\.codex)(\/|$)/.test(lower) ||
-          /(^|\/)(\.env($|\.)|[^/]*(token|credential|secret|private[_-]?key)[^/]*)$/.test(lower) ||
-          /\.(pem|key|p12|pfx)$/i.test(lower)) return null;
-      const stat = fs.statSync(sourcePath);
-      if (!stat.isFile() || stat.size > MAX_ARTIFACT_BYTES) return null;
-      return {
-        id: crypto.randomUUID(),
-        name: path.basename(sourcePath),
-        size: stat.size,
-        mimeType: this.mimeType(sourcePath),
-        sourcePath,
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  mimeType(filePath) {
-    const extension = path.extname(filePath).toLowerCase();
-    return ({
-      ".apk": "application/vnd.android.package-archive",
-      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      ".xlsb": "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
-      ".zip": "application/zip",
-      ".pdf": "application/pdf",
-      ".csv": "text/csv",
-      ".txt": "text/plain",
-      ".json": "application/json",
-      ".html": "text/html",
-      ".htm": "text/html",
-      ".png": "image/png",
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".webp": "image/webp",
-      ".gif": "image/gif",
-    })[extension] || (TEXT_ARTIFACT_PATTERN.test(filePath) ? "text/plain" : "application/octet-stream");
-  }
-
+  extractDeliveries(response) { return this._media().extractDeliveries(response); }
+  deliveryArtifact(requestedPath) { return this._media().deliveryArtifact(requestedPath); }
+  mimeType(filePath) { return this._media().mimeType(filePath); }
   downloadArtifact(res, conversationId, messageId, artifactId) {
-    const conversation = this.readConversation(conversationId);
-    const message = conversation?.messages.find((item) => item.id === messageId);
-    const artifact = message?.artifacts?.find((item) => item.id === artifactId);
-    if (!artifact?.sourcePath) {
-      this.sendJson(res, 404, { error: "交付文件不存在" });
-      return;
-    }
-    const verified = this.deliveryArtifact(artifact.sourcePath);
-    if (!verified) {
-      this.sendJson(res, 410, { error: "交付文件已移动或不可下载" });
-      return;
-    }
-    const encoded = encodeURIComponent(artifact.name).replace(/['()]/g, escape);
-    res.writeHead(200, {
-      "Cache-Control": "no-store",
-      "Content-Type": artifact.mimeType || verified.mimeType,
-      "Content-Length": verified.size,
-      "Content-Disposition": `attachment; filename*=UTF-8''${encoded}`,
-      "X-Content-Type-Options": "nosniff",
-    });
-    const stream = fs.createReadStream(verified.sourcePath);
-    stream.on("error", () => res.destroy());
-    stream.pipe(res);
+    return this._media().downloadArtifact(res, conversationId, messageId, artifactId);
   }
-
   previewArtifact(res, conversationId, messageId, artifactId) {
-    if (this.previewArtifactByIds(res, conversationId, messageId, artifactId)) return;
-    this.sendJson(res, 404, { error: "该交付文件不支持预览" });
+    return this._media().previewArtifact(res, conversationId, messageId, artifactId);
   }
-
   previewArtifactByIds(res, conversationId, messageId, artifactId) {
-    const conversation = this.readConversation(conversationId);
-    const message = conversation?.messages.find((item) => item.id === messageId);
-    const artifact = message?.artifacts?.find((item) => item.id === artifactId);
-    if (!artifact) return false;
-    this.sendArtifactPreview(res, artifact);
-    return true;
+    return this._media().previewArtifactByIds(res, conversationId, messageId, artifactId);
   }
-
-  previewArtifactForToken(res, entry) {
-    const ownerId = this.store.findConversationIdByMessageId(entry.messageId);
-    const owner = ownerId ? this.readConversation(ownerId) : null;
-    for (const conversation of owner ? [owner] : []) {
-      const message = conversation.messages.find((item) => item.id === entry.messageId);
-      const candidates = [
-        ...(message?.artifacts || []),
-        ...(message?.previewVersions || []),
-        ...(message?.livePreview ? [message.livePreview] : []),
-      ];
-      const artifact = candidates.find((item) => item.id === entry.artifactId);
-      if (!artifact) continue;
-      this.sendArtifactPreview(res, artifact);
-      return true;
-    }
-    artifactPreviewTokens.delete([...artifactPreviewTokens.entries()]
-      .find(([, candidate]) => candidate === entry)?.[0]);
-    return false;
-  }
-
-  artifactForToken(entry) {
-    const ownerId = this.store.findConversationIdByMessageId(entry.messageId);
-    const owner = ownerId ? this.readConversation(ownerId) : null;
-    for (const conversation of owner ? [owner] : []) {
-      const message = conversation.messages.find((item) => item.id === entry.messageId);
-      const candidates = [
-        ...(message?.artifacts || []),
-        ...(message?.previewVersions || []),
-        ...(message?.livePreview ? [message.livePreview] : []),
-      ];
-      const artifact = candidates.find((item) => item.id === entry.artifactId);
-      if (artifact) return artifact;
-    }
-    return null;
-  }
-
-  sourceArtifactForToken(res, entry) {
-    const artifact = this.artifactForToken(entry);
-    if (!artifact) return false;
-    const verified = this.deliveryArtifact(artifact.sourcePath);
-    if (!verified || !TEXT_ARTIFACT_PATTERN.test(artifact.name || '') ||
-        verified.size > MAX_INLINE_PREVIEW_BYTES) return false;
-    let source;
-    try { source = fs.readFileSync(verified.sourcePath, "utf8"); } catch { return false; }
-    res.writeHead(200, {
-      "Cache-Control": "no-store",
-      "Content-Type": "text/plain; charset=utf-8",
-      "Content-Length": Buffer.byteLength(source),
-      "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'",
-      "X-Content-Type-Options": "nosniff",
-    });
-    res.end(source);
-    return true;
-  }
-
-  sendArtifactPreview(res, artifact) {
-    const extension = path.extname(String(artifact?.name || "")).toLowerCase();
-    if (!artifact?.sourcePath || !TEXT_ARTIFACT_PATTERN.test(artifact.name || '')) {
-      this.sendJson(res, 404, { error: "该交付文件不支持预览" });
-      return;
-    }
-    const verified = this.deliveryArtifact(artifact.sourcePath);
-    if (!verified) {
-      this.sendJson(res, 410, { error: "交付文件已移动或不可预览" });
-      return;
-    }
-    if (verified.size > MAX_INLINE_PREVIEW_BYTES) {
-      this.sendJson(res, 413, { error: "交互预览文件不能超过 5 MB" });
-      return;
-    }
-    let source;
-    try {
-      source = fs.readFileSync(verified.sourcePath, "utf8");
-    } catch {
-      this.sendJson(res, 410, { error: "交付文件已移动或不可预览" });
-      return;
-    }
-    if (!['.html', '.htm'].includes(extension)) {
-      const escapeText = (value) => String(value).replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-      source = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeText(artifact.name)}</title><style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;padding:28px 24px;color:#302e2a;background:#faf9f6}pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:2;font:14px/1.85 ui-monospace,SFMono-Regular,Consolas,monospace}@media(max-width:480px){body{padding:20px 16px}pre{font-size:13px}}@media(prefers-color-scheme:dark){body{color:#e5e2dc;background:#232220}}</style></head><body><pre>${escapeText(source)}</pre></body></html>`;
-    }
-    const bridge = `<script>(()=>{const post=(value)=>parent.postMessage(value,"*");const send=()=>{const d=document.documentElement,b=document.body;post({type:"witt-artifact-ready",height:Math.max(d.scrollHeight,d.offsetHeight,b?b.scrollHeight:0,b?b.offsetHeight:0)})};addEventListener("error",e=>post({type:"witt-artifact-error",message:e.message||"页面运行错误",line:e.lineno||0}));addEventListener("unhandledrejection",e=>post({type:"witt-artifact-error",message:String(e.reason?.message||e.reason||"页面运行错误")}));addEventListener("load",send);addEventListener("resize",send);if(typeof ResizeObserver!=="undefined")new ResizeObserver(send).observe(document.documentElement);setTimeout(send,0);setTimeout(send,250)})()<\/script>`;
-    source = /<\/body\s*>/i.test(source)
-      ? source.replace(/<\/body\s*>/i, `${bridge}</body>`)
-      : `${source}${bridge}`;
-    const payload = Buffer.from(source, "utf8");
-    const encoded = encodeURIComponent(artifact.name).replace(/['()]/g, escape);
-    res.writeHead(200, {
-      "Cache-Control": "no-store",
-      "Content-Type": "text/html; charset=utf-8",
-      "Content-Length": payload.length,
-      "Content-Disposition": `inline; filename*=UTF-8''${encoded}`,
-      "Content-Security-Policy": "sandbox allow-scripts; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data: blob:; connect-src 'none'; child-src 'none'; object-src 'none'",
-      "Referrer-Policy": "no-referrer",
-      "X-Content-Type-Options": "nosniff",
-    });
-    res.end(payload);
-  }
+  previewArtifactForToken(res, entry) { return this._media().previewArtifactForToken(res, entry); }
+  artifactForToken(entry) { return this._media().artifactForToken(entry); }
+  sourceArtifactForToken(res, entry) { return this._media().sourceArtifactForToken(res, entry); }
+  sendArtifactPreview(res, artifact) { return this._media().sendArtifactPreview(res, artifact); }
 
   streamDetails(res, conversationId, messageId, entryId) {
     const conversation = this.readConversation(conversationId);
