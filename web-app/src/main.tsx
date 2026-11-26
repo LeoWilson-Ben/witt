@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 import { CodexModelPopover } from "./components/CodexModelPopover";
 import { MigrationModal } from "./components/MigrationModal";
 import { ToastHost } from "./components/ToastHost";
+import { isAndroidWebView } from "./bridge/witt-bridge";
 import { appStore } from "./stores/app-store";
 import type { WittLegacyModelHandlers } from "./types/witt";
 
@@ -47,7 +48,22 @@ function App() {
   );
 }
 
+
+function cleanBrowserRootUrl() {
+  if (isAndroidWebView()) return;
+  const p = window.location.pathname;
+  if ((p === "/vault/index.html" || p === "/vault/" || p === "/vault") &&
+      !window.location.hash.startsWith("#migrate=")) {
+    try {
+      window.history.replaceState(null, "", "/" + window.location.search + window.location.hash);
+    } catch {
+      // Ignore history restrictions.
+    }
+  }
+}
+
 function mount() {
+  cleanBrowserRootUrl();
   document.body.classList.add("witt-v3-ready");
   let root = document.getElementById("witt-v3-root");
   if (!root) {

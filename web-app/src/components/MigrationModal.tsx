@@ -55,7 +55,7 @@ export function MigrationModal() {
     const code = parseMigrationHash(window.location.hash);
     if (code) {
       try {
-        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        window.history.replaceState(null, "", "/" + window.location.search);
       } catch {
         // Ignore history restriction.
       }
