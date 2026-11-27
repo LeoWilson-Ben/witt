@@ -25,6 +25,7 @@ class DeviceGateway {
       let pathname;
       try { pathname = new URL(req.url, "http://localhost").pathname; }
       catch { socket.destroy(); return; }
+      if (pathname === "/browser/ws") return;
       if (pathname !== "/device/ws") { socket.destroy(); return; }
       const deviceId = req.headers["x-witt-device-id"];
       const authorization = String(req.headers.authorization || "");

@@ -1,0 +1,14 @@
+[Unit]
+Description=Witt authenticated collaborative browser gateway
+After=network.target witt-neko.service
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/srv/witt
+EnvironmentFile=/etc/witt/witt.env
+ExecStart=/opt/witt-tools/node-v22.16.0-linux-x64/bin/node /srv/witt/backend/browser-gateway.js
+Restart=on-failure
+RestartSec=3
+UMask=0077
+[Install]
+WantedBy=multi-user.target

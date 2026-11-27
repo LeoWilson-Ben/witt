@@ -1,0 +1,12 @@
+[Unit]
+Description=Witt collaborative WebRTC browser
+After=docker.service network-online.target
+Requires=docker.service
+[Service]
+ExecStart=/usr/bin/docker start -a witt-neko
+ExecStop=/usr/bin/docker stop -t 15 witt-neko
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=25
+[Install]
+WantedBy=multi-user.target

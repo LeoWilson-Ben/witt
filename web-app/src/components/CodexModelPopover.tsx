@@ -207,6 +207,7 @@ export function CodexModelPopover({ handlers }: { handlers: WittLegacyModelHandl
       aria-hidden={!open}
       aria-label="模型与推理强度"
       data-reasoning-level={activeEffort}
+      onPointerDown={(ev) => ev.stopPropagation()}
     >
       <div
         class="codex-slider-view"

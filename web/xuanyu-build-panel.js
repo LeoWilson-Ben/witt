@@ -54,6 +54,9 @@
 
   function serverStateLabel(st) {
     const map = {
+      ready: "Codemagic · 就绪",
+      queued: "Codemagic · 排队中",
+      unconfigured: "Codemagic · 等待账号授权",
       stopped: "已自动关机",
       stopping: "关机中…",
       pending: "开机中…",
@@ -212,8 +215,8 @@
 
           <div class="xb-meta-list">
             <div class="xb-meta-item">
-              <span>美国服务器</span>
-              <b data-xb-el="android-srv">已自动关机</b>
+              <span>构建平台</span>
+              <b data-xb-el="android-srv">Codemagic · 就绪</b>
             </div>
             <div class="xb-meta-item">
               <span>最新提交</span>
@@ -358,7 +361,7 @@
     }
 
     const aSrvEl = $('[data-xb-el="android-srv"]', body);
-    if (aSrvEl) aSrvEl.textContent = serverStateLabel(srv.state);
+    if (aSrvEl) aSrvEl.textContent = srv.provider === "codemagic" && srv.state === "running" ? "Codemagic · 构建中" : serverStateLabel(srv.state);
 
     const aCommitEl = $('[data-xb-el="android-commit"]', body);
     if (aCommitEl) {
@@ -650,7 +653,7 @@
         try {
           const targetCommit = btn.dataset.commit || overviewData?.android?.latestCommit;
           const res = await api("/api/build/trigger", "POST", { commit: targetCommit });
-          toast(res.message || "已启动美国构建机开始编译");
+          toast(res.message || "已提交 Codemagic 免费构建");
           await refreshOverview(false);
         } catch (err) {
           toast(err.message);

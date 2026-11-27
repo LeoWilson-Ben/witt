@@ -119,7 +119,7 @@ class ProviderRegistry {
   modelAllowed(model, profileId = this.service.defaultCodexProfile) {
     const profile = this.service.codexProfiles[profileId];
     if (stellarbit.models(this.service.providerRuntime?.owner).some((m) => m.id === model) &&
-        (!profile?.provider || profile.provider === "antigravity")) return true;
+        (!profile?.provider || profile.provider === "antigravity" || profile.provider === "antigravity2")) return true;
     if (profile?.provider) {
       return Boolean(this.service.providerRuntime && this.service.providerRuntime.allowed(model, profile));
     }
@@ -164,7 +164,7 @@ class ProviderRegistry {
       }
       try {
         const payload = await this.service.providerRuntime.capabilities(profile);
-        if (profile.provider === "antigravity") {
+        if (profile.provider === "antigravity" || profile.provider === "antigravity2") {
           payload.models.push(...stellarbit.models(this.service.providerRuntime.owner));
         }
         respond(res, 200, payload);

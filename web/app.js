@@ -36,6 +36,7 @@
     busy: false,
     transmitting: false,
     pausing: false,
+    activeTool: null,
     lastSubmittedText: "",
     supports21: false,
     nativeInitialized: false,
@@ -2921,12 +2922,94 @@
     refreshActionButton();
   }
 
+  const GEMINI_TOOL_MODES = {
+    canvas: {
+      id: "canvas",
+      label: "Canvas 画布",
+      shortLabel: "Canvas",
+      promptPrefix: "[Canvas 交互画布模式] 请制作一个自包含的单文件交互网页（.html），不要使用外部 CDN 或网络请求，完成后按规范提供实时预览并交付。",
+    },
+    research: {
+      id: "research",
+      label: "Deep Research",
+      shortLabel: "深度研究",
+      promptPrefix: "[Deep Research 深度研究模式] 请先进行充分的多角度联网检索与交叉验证，再输出结构清晰、论据扎实的深度研究报告，并附关键参考来源。",
+    },
+    image: {
+      id: "image",
+      label: "生成图片",
+      shortLabel: "生图",
+      promptPrefix: "[生成图片模式] 请根据以下要求创作高质量图片，并将生成的图片文件直接交付给我。",
+    },
+    search: {
+      id: "search",
+      label: "联网搜索",
+      shortLabel: "搜索",
+      promptPrefix: "[联网搜索模式] 请先联网检索最新、权威的公开信息后再作答，并附上参考链接。",
+    },
+  };
+
+  function renderActiveTool() {
+    const tool = state.activeTool ? GEMINI_TOOL_MODES[state.activeTool] : null;
+    const strip = $("#activeToolStrip");
+    const btn = $("#toolsButton");
+    const labelEl = $("#toolsButtonLabel");
+    if (strip) {
+      if (tool) {
+        strip.hidden = false;
+        strip.innerHTML = `<span class="active-tool-chip" data-tool="${tool.id}"><span class="active-tool-dot" aria-hidden="true"></span><strong>${escapeHtml(tool.label)}</strong><button type="button" id="clearActiveTool" aria-label="取消当前工具">×</button></span>`;
+      } else {
+        strip.hidden = true;
+        strip.innerHTML = "";
+      }
+    }
+    if (btn) btn.classList.toggle("is-active", Boolean(tool));
+    if (labelEl) labelEl.textContent = tool ? tool.shortLabel : "工具";
+    document.querySelectorAll("#toolsMenu [data-tool-mode]").forEach((item) => {
+      item.classList.toggle("selected", item.dataset.toolMode === state.activeTool);
+    });
+  }
+
+  function setActiveTool(modeId) {
+    state.activeTool = modeId && GEMINI_TOOL_MODES[modeId]
+      ? (state.activeTool === modeId ? null : modeId)
+      : null;
+    renderActiveTool();
+    setToolsMenu(false);
+    $("#messageInput")?.focus();
+  }
+
+  function setToolsMenu(open) {
+    const menu = $("#toolsMenu");
+    if (!menu) return;
+    const expanded = Boolean(open);
+    if (expanded) {
+      setAttachmentMenu(false);
+      setQuickModelMenu(false);
+    }
+    menu.classList.toggle("open", expanded);
+    menu.setAttribute("aria-hidden", String(!expanded));
+    $("#toolsButton")?.setAttribute("aria-expanded", String(expanded));
+    const anyOpen = expanded || $("#attachmentMenu")?.classList.contains("open");
+    $(".composer-wrap")?.classList.toggle("menu-open", Boolean(anyOpen));
+  }
+
   function setAttachmentMenu(open) {
     const menu = $("#attachmentMenu");
     const expanded = Boolean(open);
+    if (expanded) {
+      const toolsMenu = $("#toolsMenu");
+      if (toolsMenu?.classList.contains("open")) {
+        toolsMenu.classList.remove("open");
+        toolsMenu.setAttribute("aria-hidden", "true");
+        $("#toolsButton")?.setAttribute("aria-expanded", "false");
+      }
+      setQuickModelMenu(false);
+    }
     menu.classList.toggle("open", expanded);
     menu.setAttribute("aria-hidden", String(!expanded));
-    $(".composer-wrap").classList.toggle("menu-open", expanded);
+    const anyOpen = expanded || $("#toolsMenu")?.classList.contains("open");
+    $(".composer-wrap").classList.toggle("menu-open", Boolean(anyOpen));
     $("#attachButton").setAttribute("aria-expanded", String(expanded));
   }
 
@@ -2938,6 +3021,9 @@
       state.artifactKey = "";
       state.artifactAutoOpened = "";
       state.artifactDismissed = "";
+      state.activeTool = null;
+      renderActiveTool();
+      setToolsMenu(false);
     }
     state.activeId = id;
     latestPinned = true;
@@ -3033,19 +3119,24 @@
   }
 
   function sendMessage(prefill) {
-    const text = typeof prefill === "string" ? prefill.trim() : $("#messageInput").value.trim();
+    const rawText = typeof prefill === "string" ? prefill.trim() : $("#messageInput").value.trim();
     const files = [...state.attachments.values()];
-    if (!text && !files.length) return;
+    if (!rawText && !files.length) return;
     if (state.transmitting) {
       toast("上一条消息正在送达，请稍候");
       return;
     }
+    const activeTool = state.activeTool ? GEMINI_TOOL_MODES[state.activeTool] : null;
+    const outboundText = activeTool
+      ? (rawText ? `${activeTool.promptPrefix}\n\n${rawText}` : activeTool.promptPrefix)
+      : rawText;
+    const displayText = activeTool && rawText ? `[${activeTool.label}] ${rawText}` : (rawText || (activeTool ? `[${activeTool.label}]` : ""));
     state.transmitting = true;
-    state.lastSubmittedText = text;
+    state.lastSubmittedText = outboundText;
     state.optimisticMessage = {
       id: `local-${Date.now()}`,
       role: "user",
-      text,
+      text: displayText,
       attachments: files.map((file) => ({ ...file })),
       createdAt: new Date().toISOString(),
       status: "sending",
@@ -3064,7 +3155,7 @@
     renderMessages();
     ensureConversation(() => {
       if (files.length) {
-        state.pendingSend = { text, waiting: new Set(files.map((file) => file.id)), uploadedIds: [] };
+        state.pendingSend = { text: outboundText, waiting: new Set(files.map((file) => file.id)), uploadedIds: [] };
         files.forEach((file) => {
           file.state = "uploading";
           file.label = "准备上传";
@@ -3072,7 +3163,7 @@
         });
         renderAttachments();
       } else {
-        bridge()?.sendChatMessage?.(state.activeId, text, "[]");
+        bridge()?.sendChatMessage?.(state.activeId, outboundText, "[]");
       }
     });
   }
@@ -3083,6 +3174,8 @@
     state.attachments.clear();
     state.pendingSend = null;
     state.optimisticMessage = null;
+    state.activeTool = null;
+    renderActiveTool();
     renderAttachments();
   }
 
@@ -4005,6 +4098,42 @@
     setAttachmentMenu(false);
     bridge()?.pickFiles?.();
   });
+  $("#attachFolderButton")?.addEventListener("click", () => {
+    setAttachmentMenu(false);
+    if (bridge()?.pickFolder) {
+      bridge().pickFolder();
+    } else {
+      toast("当前客户端暂不支持选文件夹，已切换为多文件选择");
+      bridge()?.pickFiles?.();
+    }
+  });
+  $("#attachCaptureButton")?.addEventListener("click", () => {
+    setAttachmentMenu(false);
+    if (bridge()?.captureMedia) {
+      bridge().captureMedia();
+    } else {
+      bridge()?.pickFiles?.();
+    }
+  });
+  $("#toolsButton")?.addEventListener("click", () => {
+    setToolsMenu(!$("#toolsMenu")?.classList.contains("open"));
+  });
+  $("#toolsMenu")?.addEventListener("click", (event) => {
+    const modeBtn = event.target.closest("[data-tool-mode]");
+    if (modeBtn) {
+      setActiveTool(modeBtn.dataset.toolMode);
+      return;
+    }
+    if (event.target.closest("#toolScheduleShortcut")) {
+      setToolsMenu(false);
+      $("#featureSchedules")?.click();
+    }
+  });
+  $("#activeToolStrip")?.addEventListener("click", (event) => {
+    if (event.target.closest("#clearActiveTool")) {
+      setActiveTool(null);
+    }
+  });
   $("#activateInviteButton").addEventListener("click", () => {
     const code = $("#inviteCode").value.trim();
     if (!code) { $("#authGateHint").textContent = "请先输入邀请码。"; return; }
@@ -4275,11 +4404,11 @@
     if (!reasoning) return;
     state.draftReasoning = reasoning;
     applySettings({ closeSheet: false });
-    setQuickModelMenu(false);
   });
   document.addEventListener("pointerdown", (event) => {
     if (!event.target.closest(".composer-wrap")) {
       setAttachmentMenu(false);
+      setToolsMenu(false);
       setQuickModelMenu(false);
     }
     if (!event.target.closest(".compact-nav")) setChatMoreMenu(false);

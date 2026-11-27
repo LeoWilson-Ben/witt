@@ -1,0 +1,22 @@
+server:
+  bind: 127.0.0.1:8095
+  path_prefix: /vault-api/browser/room
+  proxy: true
+member:
+  provider: noauth
+session:
+  merciful_reconnect: true
+  implicit_hosting: false
+  inactive_cursors: true
+  cookie:
+    enabled: false
+webrtc:
+  icelite: true
+  udpmux: 52100
+  tcpmux: 52100
+  nat1to1: [136.110.95.193]
+desktop:
+  screen: 1280x800@30
+capture:
+  video:
+    codec: vp8

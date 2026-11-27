@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const {StringDecoder}=require('node:string_decoder');
 const {ClaudeAccountService}=require('./claude-account-service');
 const TTL=15*60_000;
-const {readQuota}=require('./antigravity-quota');
+const {readQuota,summarizeQuota}=require('./antigravity-quota');
 function cleanTerminal(text){return text.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g,'').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'').replace(/\r/g,'');}
 function authorizationUrl(text){
  for(const value of text.match(/https:\/\/[^\s\x1b<>"']+/g)||[]){try{
@@ -16,7 +16,7 @@ function authorizationUrl(text){
  return '';
 }
 class AntigravityAccountService extends ClaudeAccountService{
- constructor(options={}){super({...options,bin:options.bin||'/usr/local/bin/agy',root:options.root||'/home/ubuntu/.antigravity-witt'});this.helper=options.helper||path.join(__dirname,'antigravity-pty.py');this.modelCache=new Map();this.modelChecks=new Map();
+ constructor(options={}){super({...options,bin:options.bin||'/usr/local/bin/agy',root:options.root||'/home/ubuntu/.antigravity-witt'});this.profileId=options.id||'antigravity';this.profileLabel=options.label||'Antigravity CLI';this.routePrefix=options.routePrefix||'/antigravity';this.helper=options.helper||path.join(__dirname,'antigravity-pty.py');this.modelCache=new Map();this.modelChecks=new Map();
   // Use the connected server account for every authenticated Witt member.
   this.sharedOwner=options.sharedOwner||null;
   if(!this.sharedOwner)try{for(const owner of fs.readdirSync(this.root).sort()){
@@ -66,7 +66,24 @@ class AntigravityAccountService extends ClaudeAccountService{
   try{if((await this.availableModels(owner,true)).length)this.authenticated(owner,login);}finally{login.checking=false;}
  }
  quota(owner){return readQuota(this,owner);}
- async card(principal){const c=await super.card(principal);return {...c,id:'antigravity',provider:'antigravity',label:'Antigravity CLI',loginUrl:c.loginUrl.replace('/claude/','/antigravity/')};}
+ async card(principal){
+  const c=await super.card(principal);
+  let quotaSummary=null,readError='';
+  if(c.authenticated){
+   const owner=this.owner(principal);
+   const cached=this.quotaCache?.get(owner)?.value||null;
+   let q=cached;
+   if(!q){
+    q=await Promise.race([
+     this.quota(owner).catch(()=>null),
+     new Promise(r=>setTimeout(()=>r(null),3500)),
+    ]);
+   }
+   quotaSummary=summarizeQuota(q);
+   if(quotaSummary?.errorCode==='region_ineligible')readError='账号归属地区暂不支持 Antigravity，请更换账号';
+  }
+  return {...c,id:this.profileId,provider:this.profileId,label:this.profileLabel,quotaSummary,readError,loginUrl:c.loginUrl.replace('/claude/',`${this.routePrefix}/`)};
+ }
  async start(owner){
   const previous=this.logins.get(owner);if(previous&&!previous.finished)return this.status(owner);if((await this.account(owner,true)).authenticated)return this.status(owner);
   const env=this.env(owner),child=this.spawn('/usr/bin/python3',[this.helper,this.bin,'--log-file','/dev/null'],{cwd:env.HOME,env,stdio:['pipe','pipe','pipe']});
@@ -94,13 +111,32 @@ class AntigravityAccountService extends ClaudeAccountService{
  async status(owner){const login=this.logins.get(owner);if(login&&!login.finished)return {status:login.state,authenticated:false,verificationUrl:login.verificationUrl,expiresAt:login.expiresAt};const account=await this.account(owner,true);return {status:account.authenticated?'authenticated':login?.state||'signedOut',...account};}
  complete(owner,code){const login=this.logins.get(owner);if(!login||login.finished||!login.verificationUrl||login.codeSubmitted)throw Error('请重新发起登录');if(typeof code!=='string'||!/^[-A-Za-z0-9_/.~]{8,4096}$/.test(code.trim()))throw Error('授权码无效');login.codeSubmitted=true;login.state='verifying';login.child.stdin.write(code.trim()+'\r');return {status:'verifying'};}
  cancel(owner){const login=this.logins.get(owner);if(login)clearInterval(login.verifyTimer);return super.cancel(owner);}
+ logout(owner){
+  this.cancel(owner);
+  const env=this.env(owner);
+  for(const target of ['witt-account.json','witt-models.json','.gemini','.config']){
+   try{fs.rmSync(path.join(env.HOME,target),{recursive:true,force:true});}catch{}
+  }
+  this.modelCache.clear();this.modelChecks.clear();
+  this.quotaCache?.clear();this.quotaPending?.clear();
+  if(this.sharedOwner===owner||this.sharedOwner)this.sharedOwner=null;
+  return {status:'signedOut',authenticated:false,email:'',planType:''};
+ }
  handle(req,res,url){
-  if(url.pathname==='/antigravity/login'&&req.method==='GET'){
+  if(url.pathname===`${this.routePrefix}/login`&&req.method==='GET'){
    const html=fs.readFileSync(path.join(__dirname,'antigravity-login.html'),'utf8'),script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1]||'',hash=crypto.createHash('sha256').update(script).digest('base64');
    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':`default-src 'none'; script-src 'sha256-${hash}'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`});res.end(html);return true;
   }
-  if(!/^\/antigravity\/login\/(status|start|complete|cancel)$/.test(url.pathname))return false;
-  const mapped=new URL(url);mapped.pathname=url.pathname.replace('/antigravity/','/claude/');return super.handle(req,res,mapped);
+  if(url.pathname===`${this.routePrefix}/login/logout`&&req.method==='POST'){
+   const token=(req.headers.authorization||'').match(/^Bearer\s+([A-Za-z0-9_-]{43})$/)?.[1];
+   const ticket=token&&this.tickets.get(token);
+   if(!ticket||ticket.expiresAt<=Date.now()){this.sendJson(res,401,{error:'登录会话已过期，请从维特重新打开'});return true;}
+   try{this.sendJson(res,200,this.logout(ticket.owner));}catch(e){this.sendJson(res,400,{error:e.message||'退出失败'});}
+   return true;
+  }
+  const actionMatch=url.pathname.startsWith(`${this.routePrefix}/login/`)&&/^(status|start|complete|cancel)$/.test(url.pathname.slice(`${this.routePrefix}/login/`.length));
+  if(!actionMatch)return false;
+  const mapped=new URL(url);mapped.pathname=url.pathname.replace(`${this.routePrefix}/`,'/claude/');return super.handle(req,res,mapped);
  }
 }
 module.exports={AntigravityAccountService,authorizationUrl,cleanTerminal};

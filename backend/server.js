@@ -18,6 +18,7 @@ const { createFilesService } = require("./routes/files-routes");
 const { createTasksService } = require("./routes/tasks-routes");
 const { createLicreRouter } = require("./routes/licre-routes");
 const { createCodexRouter } = require("./routes/codex-routes");
+const { createBrowserRouter } = require("./routes/browser-routes");
 const { AuthService } = require("./auth-service");
 const {
   ChatService, servePublicArtifactPreview, servePublicArtifactSource,
@@ -28,6 +29,9 @@ const { AntigravityAccountService } = require("./antigravity-account-service");
 const { ProviderRuntime } = require("./provider-runtime");
 const { claimStandby } = require("./failover");
 const { WindowsNodeService } = require("./windows-node-service");
+
+const { createInputCompletionRouter } = require("./routes/input-completion-routes");
+const inputCompletionRouter = createInputCompletionRouter({ sendJson, readJsonBody });
 
 const config = loadConfig();
 const {
@@ -126,13 +130,26 @@ const claudeAccountService = new ClaudeAccountService({
   isAuthorized: isProviderAuthorized,
 });
 const antigravityAccountService = new AntigravityAccountService({
+  id: "antigravity",
+  label: "Gemini 1",
+  routePrefix: "/antigravity",
+  root: "/home/ubuntu/.antigravity-witt",
+  sendJson,
+  readJsonBody,
+  isAuthorized: isProviderAuthorized,
+});
+const antigravity2AccountService = new AntigravityAccountService({
+  id: "antigravity2",
+  label: "Gemini 2",
+  routePrefix: "/antigravity2",
+  root: "/home/ubuntu/.antigravity-witt-2",
   sendJson,
   readJsonBody,
   isAuthorized: isProviderAuthorized,
 });
 const providerRuntimeFor = (owner) => new ProviderRuntime({
   owner,
-  services: { claude: claudeAccountService, antigravity: antigravityAccountService },
+  services: { claude: claudeAccountService, antigravity: antigravityAccountService, antigravity2: antigravity2AccountService },
 });
 chatService.providerRuntime = providerRuntimeFor("legacy");
 const codexAccountService = new CodexAccountService({
@@ -144,6 +161,7 @@ const handleCodexAndFailover = createCodexRouter({
   codexAccountService,
   claudeAccountService,
   antigravityAccountService,
+  antigravity2AccountService,
   claimStandby,
   sendJson,
 });
@@ -208,6 +226,7 @@ const server = http.createServer((req, res) => {
   }
   if (claudeAccountService.handle(req, res, url)) return;
   if (antigravityAccountService.handle(req, res, url)) return;
+  if (antigravity2AccountService.handle(req, res, url)) return;
   const legacyAuthorized = sessionContext.authorized(req);
   const imageRequest = /^\/chat-images\/[a-f0-9-]{36}$/.test(url.pathname);
   const principal = sessionContext.principalFor(req);
@@ -224,7 +243,9 @@ const server = http.createServer((req, res) => {
     sendJson(res, 401, { error: "未授权" });
     return;
   }
+  if (inputCompletionRouter.handle(req, res, url, principal)) return;
   if (remoteAssist.routes.handleOperator(req, res, url, principal)) return;
+  if (browserRouter.handle(req, res, url, principal)) return;
   if (req.method === "GET" && ["/chat/conversations", "/files"].includes(url.pathname)) {
     res.once("finish", () => {
       if (res.statusCode !== 200) return;
@@ -245,6 +266,10 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "POST" && url.pathname === "/files") {
     filesService.upload(req, res, sessionContext.filesFor(principal));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/chat/files-base64") {
+    filesService.uploadBase64(req, res, readJsonBody, sessionContext.filesFor(principal));
     return;
   }
   if (!principal.legacy && url.pathname.startsWith("/tasks")) {
@@ -270,7 +295,14 @@ const server = http.createServer((req, res) => {
   }
   sendJson(res, 404, { error: "接口不存在" });
 });
+const browserRouter = createBrowserRouter({
+  sendJson,
+  readJsonBody,
+  principalFor: sessionContext.principalFor,
+});
+
 deviceGateway.attach(server);
+browserRouter.attachUpgrade(server);
 server.listen(port, host, () => {
   console.log(`Witt API listening on http://${host}:${port}`);
   tasksService.recoverTasks();

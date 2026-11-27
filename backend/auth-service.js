@@ -446,7 +446,7 @@ class AuthService {
     }
     if (!principal?.admin) return false;
     if (req.method === "GET" && url.pathname === "/admin/invites") { this.sendJson(res, 200, { invites: this.read().invites.map((item) => this.publicInvite(item)) }); return true; }
-    if (req.method === "GET" && url.pathname === "/admin/devices") { this.sendJson(res, 200, { devices: this.read().devices.map((item) => this.publicDevice(item)) }); return true; }
+    if (req.method === "GET" && url.pathname === "/admin/devices") { this.sendJson(res, 200, { devices: this.read().devices.filter((item) => !item.disabled).map((item) => this.publicDevice(item)) }); return true; }
     if (req.method === "POST" && url.pathname === "/admin/invites") {
       if (principal.canInvite === false) { this.sendJson(res, 403, { error: "此账号没有邀请用户的权限" }); return true; }
       this.readJsonBody(req, 8 * 1024, (error, body) => { try { if (error) throw error; if (String(body?.label || "").startsWith("WITT-RECOVERY:")) {

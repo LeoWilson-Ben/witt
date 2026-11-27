@@ -2,6 +2,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {spawn}=require('node:child_process');const {EventEmitter}=require('node:events');const readline=require('node:readline');
 const EFFORTS=['low','medium','high','xhigh','max'];
+const isAntigravityProvider=(p)=>p==='antigravity'||p==='antigravity2';
 const labels={low:'快速',medium:'均衡',high:'深入',xhigh:'极致',max:'巅峰'};
 const efforts=ids=>ids.map(id=>({id,label:labels[id],description:labels[id]}));
 // Classify private CLI diagnostics without returning their raw content.
@@ -32,14 +33,14 @@ class ProviderRuntime{
  defaultModel(provider){return this.models(provider).find(m=>m.isDefault)?.id||this.models(provider)[0]?.id||'';}
  allowed(model,profile){return this.models(profile.provider).some(m=>m.id===model);}
  reasoning(model,profile,requested){const item=this.models(profile.provider).find(m=>m.id===model);return item?.reasoningEfforts.some(e=>e.id===requested)?requested:item?.defaultReasoningEffort||'medium';}
- async capabilities(profile){try{if(profile.provider==='antigravity'&&(await this.service('antigravity').account(this.owner)).authenticated)await this.service('antigravity').availableModels(this.owner);
+ async capabilities(profile){try{if(isAntigravityProvider(profile.provider)&&(await this.service(profile.provider).account(this.owner)).authenticated)await this.service(profile.provider).availableModels(this.owner);
   }catch{/* Retain the last discovered models when account refresh is unavailable. */}
   return {codexProfile:profile.id,provider:profile.provider,models:this.models(profile.provider),skills:[],mcpServers:[],features:[],collaborationModes:[],support:{fork:false,compact:false,review:false,plans:true},checkedAt:new Date().toISOString()};}
- async usage(profile){return {provider:profile.provider,codexProfile:profile.id,rateLimits:null,quota:profile.provider==='antigravity'?await this.service('antigravity').quota(this.owner):{available:false,groups:[],message:'此账号暂未提供可读取的额度数据'}};}
+ async usage(profile){return {provider:profile.provider,codexProfile:profile.id,rateLimits:null,quota:isAntigravityProvider(profile.provider)?await this.service(profile.provider).quota(this.owner):{available:false,groups:[],message:'此账号暂未提供可读取的额度数据'}};}
  client(profile){let client=this.clients.get(profile.id);if(!client){client=new CliAgentClient(this,profile);this.clients.set(profile.id,client);}return client;}
 }
 class CliAgentClient extends EventEmitter{
- constructor(runtime,profile){super();this.runtime=runtime;this.profile=profile;this.provider=profile.provider;this.closed=false;this.sessions=new Map();this.runs=new Map();this.setMaxListeners(0);}
+ constructor(runtime,profile){super();this.runtime=runtime;this.profile=profile;this.provider=profile.provider;this.closed=false;this.sessions=new Map();this.runs=new Map();this.pendingRequests=new Map();this.setMaxListeners(0);}
  async start(){}
  sessionDir(){const dir=path.join(this.runtime.home(this.provider),'witt-sessions');fs.mkdirSync(dir,{recursive:true,mode:0o700});return dir;}
  loadSession(id){if(!/^[a-f0-9-]{36}$/.test(id||''))throw Error('会话编号无效');let s=this.sessions.get(id);if(!s){try{s=JSON.parse(fs.readFileSync(path.join(this.sessionDir(),id+'.json'),'utf8'));}catch{throw Error('这个账号的会话上下文不可用，请新建对话');}this.sessions.set(id,s);}return s;}
@@ -57,14 +58,14 @@ class CliAgentClient extends EventEmitter{
   if(method==='turn/start'){
    if(!(await this.runtime.service(this.provider).account(this.runtime.owner)).authenticated)throw Error('请先登录对应账号');
    if(!this.runtime.allowed(args.model,this.profile))throw Error('该账号的模型不可用，请刷新模型列表');
-   const id=crypto.randomUUID(),s=this.loadSession(args.threadId),run={id,threadId:s.id,session:s,args,stopped:false,settled:false,pending:[],part:0,expectedResults:0,completedResults:0,stdinOpen:false,stepTexts:new Map(),lastMessageItemId:null,lastMessageText:''};this.runs.set(id,run);
+   const id=crypto.randomUUID(),s=this.loadSession(args.threadId),run={id,threadId:s.id,session:s,args,stopped:false,settled:false,pending:[],part:0,expectedResults:0,completedResults:0,stdinOpen:false,stepTexts:new Map(),askedSteps:new Set(),awaitingAskQuestion:false,lastMessageItemId:null,lastMessageText:''};this.runs.set(id,run);
    setImmediate(()=>this.launch(run,args.input));return {turn:{id}};
   }
   if(method==='turn/interrupt'){const run=this.runs.get(args.turnId)||[...this.runs.values()].find(r=>r.threadId===args.threadId);if(run){run.stopped=true;run.stdinOpen=false;this.kill(run);this.finish(run,'interrupted','');}return {};}
   if(method==='turn/steer'){
    const run=[...this.runs.values()].find(r=>r.threadId===args.threadId&&!r.settled&&!r.stopped);
    if(!run)throw Error('no active turn');
-   if(this.provider==='antigravity'){
+   if(isAntigravityProvider(this.provider)){
     if(!run.stdinOpen||!run.child?.stdin?.writable)throw Error('no active turn');
     const content=this.inputText(args.input);
     if(!content)return {};
@@ -98,7 +99,7 @@ class CliAgentClient extends EventEmitter{
    if(s.nativeSession)args.push('--conversation',s.nativeSession);
    if((run.args.sandbox||s.sandbox)==='read-only')args.push('--mode','plan');else if((run.args.sandbox||s.sandbox)==='danger-full-access')args.push('--dangerously-skip-permissions');else args.push('--mode','accept-edits','--sandbox');
   }
-  const text=this.provider==='antigravity'&&!s.nativeSession&&s.instructions?s.instructions+'\n\n'+prompt:prompt;
+  const text=isAntigravityProvider(this.provider)&&!s.nativeSession&&s.instructions?s.instructions+'\n\n'+prompt:prompt;
   const child=this.runtime.spawn(service.bin,args,{cwd:s.cwd,env,detached:true,stdio:['pipe','pipe','pipe']});run.child=child;run.part++;run.itemId=`${run.id}-message-${run.part}`;run.text='';run.result=null;run.failed=false;run.failureMessage='';run.diagnostics='';
   if(run.part===1)this.notify(run,'turn/started',{turn:{id:run.id}});
   const lines=readline.createInterface({input:child.stdout,crlfDelay:Infinity});
@@ -113,7 +114,7 @@ class CliAgentClient extends EventEmitter{
    if(code===0&&!run.failed&&finalText)this.finish(run,'completed',finalText,run.lastMessageItemId||run.itemId);
    else this.finish(run,'failed',run.failureMessage||'执行未完成，请检查该账号的登录状态、模型访问权限或额度');
   });
-  if(this.provider==='antigravity'){
+  if(isAntigravityProvider(this.provider)){
    run.expectedResults=1;run.completedResults=0;run.stdinOpen=true;
    child.stdin.write(JSON.stringify({event:'user',message:{content:text}})+'\n');
   }else child.stdin.end(text);
@@ -131,6 +132,31 @@ class CliAgentClient extends EventEmitter{
    },
   });
  }
+ normalizeAskQuestions(rawQuestions){
+  let list=rawQuestions;
+  if(typeof list==='string'){try{list=JSON.parse(list);}catch{list=[];}}
+  if(!Array.isArray(list))return [];
+  return list.slice(0,3).map((q,idx)=>({
+   id:String(q?.id||`q-${idx+1}`),
+   header:String(q?.header||'').trim(),
+   question:String(q?.question||'请选择如何继续'),
+   isOther:q?.isOther!==false&&q?.allowOther!==false,
+   isMultiSelect:Boolean(q?.isMultiSelect||q?.is_multi_select),
+   options:(Array.isArray(q?.options)?q.options:[]).slice(0,6).map(opt=>typeof opt==='string'?{label:opt,description:''}:{label:String(opt?.label||''),description:String(opt?.description||'')}).filter(o=>o.label),
+  }));
+ }
+ extractAskDirective(text){
+  const source=String(text||'');
+  const match=source.match(/\[\[ask:([\s\S]*?)\]\]/);
+  if(!match)return null;
+  let parsed=null;
+  try{parsed=JSON.parse(match[1].trim());}catch{return null;}
+  const rawQuestions=Array.isArray(parsed)?parsed:(Array.isArray(parsed?.questions)?parsed.questions:[]);
+  const questions=this.normalizeAskQuestions(rawQuestions);
+  if(!questions.length)return null;
+  const cleanText=source.replace(match[0],'').trim();
+  return {questions,cleanText};
+ }
  mapAntigravityTool(run,step){
   const done=step.state==='DONE';
   const method=done?'item/completed':'item/started';
@@ -142,6 +168,27 @@ class CliAgentClient extends EventEmitter{
   const errText=info.error?(typeof info.error==='string'?info.error:String(info.error.message||info.error.type||'执行失败')):'';
   const durationMs=typeof step.duration_seconds==='number'&&Number.isFinite(step.duration_seconds)?Math.round(step.duration_seconds*1000):null;
 
+  if(name==='ask_question'){
+   let rawQuestions=params.questions;
+   if(typeof rawQuestions==='string'){try{rawQuestions=JSON.parse(rawQuestions);}catch{rawQuestions=[];}}
+   if(!Array.isArray(rawQuestions))rawQuestions=[];
+   if(rawQuestions.length&&!run.askedSteps.has(step.step_index)){
+    run.askedSteps.add(step.step_index);
+    run.awaitingAskQuestion=true;
+    const reqId=`agy-ask-${run.id}-${step.step_index}`;
+    const questions=rawQuestions.slice(0,3).map((q,idx)=>({
+     id:`q-${idx+1}`,
+     header:String(q?.header||'').trim(),
+     question:String(q?.question||'请选择如何继续'),
+     isOther:true,
+     isMultiSelect:Boolean(q?.is_multi_select||q?.isMultiSelect),
+     options:(Array.isArray(q?.options)?q.options:[]).slice(0,6).map(opt=>typeof opt==='string'?{label:opt,description:''}:{label:String(opt?.label||''),description:String(opt?.description||'')}).filter(o=>o.label),
+    }));
+    this.pendingRequests.set(reqId,{run,questions});
+    this.emit('request',{id:reqId,method:'item/tool/requestUserInput',params:{threadId:run.threadId,turnId:run.id,questions}});
+   }
+   return;
+  }
   if(name==='update_steps'){
    const rawSteps=Array.isArray(params.steps)?params.steps:[];
    const statusMap={done:'completed',completed:'completed',in_progress:'in_progress',pending:'pending',failed:'failed',skipped:'completed'};
@@ -209,7 +256,7 @@ class CliAgentClient extends EventEmitter{
    if(event.event==='step_update'){
     const step=event.step_update||{};
     if(step.usage)this.emitUsage(run,step.usage);
-    if(step.step_type==='agent_response'){
+    if(step.step_type==='agent_response'&&!run.awaitingAskQuestion){
      const itemId=`${run.id}-step-${step.step_index??run.part}`;
      if(step.text_delta){
       const nextText=(run.stepTexts.get(itemId)||'')+String(step.text_delta);
@@ -219,9 +266,12 @@ class CliAgentClient extends EventEmitter{
      }
      if(step.state==='DONE'){
       const stepText=run.stepTexts.get(itemId)||'';
+      const cleanedStep=stepText.replace(/\[\[ask:[\s\S]*?\]\]/g,'').trim();
       if(stepText.trim()){
        run.lastMessageItemId=itemId;run.lastMessageText=stepText;
-       this.notify(run,'item/completed',{item:{id:itemId,type:'agentMessage',text:stepText,phase:'commentary'}});
+       if(cleanedStep){
+        this.notify(run,'item/completed',{item:{id:itemId,type:'agentMessage',text:cleanedStep,phase:'commentary'}});
+       }
       }
      }
     }
@@ -245,6 +295,17 @@ class CliAgentClient extends EventEmitter{
     }
     const finalText=typeof res.response==='string'&&res.response.trim()?res.response:(run.lastMessageText||run.text);
     run.result=finalText;
+    if(run.awaitingAskQuestion){
+     return;
+    }
+    const askDirective=this.extractAskDirective(finalText);
+    if(askDirective&&run.stdinOpen&&run.child?.stdin?.writable){
+     run.awaitingAskQuestion=true;
+     const reqId=`agy-ask-tag-${run.id}-${run.completedResults}`;
+     this.pendingRequests.set(reqId,{run,questions:askDirective.questions});
+     this.emit('request',{id:reqId,method:'item/tool/requestUserInput',params:{threadId:run.threadId,turnId:run.id,questions:askDirective.questions}});
+     return;
+    }
     if(run.completedResults>=run.expectedResults){
      run.stdinOpen=false;try{run.child?.stdin?.end();}catch{}
      this.finish(run,'completed',finalText,run.lastMessageItemId||`${run.id}-final`);
@@ -260,6 +321,24 @@ class CliAgentClient extends EventEmitter{
  }
  kill(run){if(!run.child)return;try{process.kill(-run.child.pid,'SIGTERM');}catch{run.child.kill();}const timer=setTimeout(()=>{try{process.kill(-run.child.pid,'SIGKILL');}catch{}},1500);timer.unref?.();}
  close(){for(const run of this.runs.values()){run.stopped=true;run.stdinOpen=false;this.kill(run);}this.runs.clear();this.closed=true;}
- respond(){}
+ respond(id,result){
+  const pending=this.pendingRequests.get(id);
+  if(!pending)return;
+  this.pendingRequests.delete(id);
+  const {run,questions}=pending;
+  if(!run||run.stopped||run.settled||!run.stdinOpen||!run.child?.stdin?.writable)return;
+  const answers=result?.answers&&typeof result.answers==='object'?result.answers:{};
+  const lines=questions.map((q,idx)=>{
+   const list=Array.isArray(answers[q.id]?.answers)?answers[q.id].answers:[];
+   const value=list.filter(Boolean).join('、');
+   return questions.length>1?`${idx+1}. ${q.question}：${value||'未填写'}`:(value||'未填写');
+  });
+  const content=lines.join('\n').trim();
+  if(!content)return;
+  run.awaitingAskQuestion=false;
+  run.expectedResults=Math.max(run.expectedResults,run.completedResults)+1;
+  const replyText=`用户已提交上述选择/回答：\n${content}`;
+  try{run.child.stdin.write(JSON.stringify({event:'user',message:{content:replyText}})+'\n');}catch{}
+ }
 }
 module.exports={ProviderRuntime,CliAgentClient,cliFailureMessage};

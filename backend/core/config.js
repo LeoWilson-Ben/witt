@@ -13,8 +13,14 @@ function loadCodexProfiles(codexWorkDir, extraHomes = null) {
     },
     antigravity: {
       id: "antigravity",
-      label: "Antigravity CLI",
+      label: "Gemini 1",
       provider: "antigravity",
+      workDir: codexWorkDir,
+    },
+    antigravity2: {
+      id: "antigravity2",
+      label: "Gemini 2",
+      provider: "antigravity2",
       workDir: codexWorkDir,
     },
   };

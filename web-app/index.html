@@ -79,7 +79,7 @@
 @media (prefers-reduced-motion: reduce) { .task-status-strip, .workspace-overview, .history-load { animation: none; transition: none; } }
   </style>
   <link rel="stylesheet" href="/vault/witt-interface-20261008.min.css?v=20261125-1">
-  <link rel="stylesheet" href="/vault/witt-overlays.min.css?v=20261126-1">
+  <link rel="stylesheet" href="/vault/witt-overlays.min.css?v=20261127-17">
 </head>
 <body>
   <svg width="0" height="0" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden;pointer-events:none">
@@ -131,6 +131,8 @@
         <button type="button" class="compact-nav-button header-account-orb" id="headerAccountSwitch" data-header-provider="gpt" data-provider="gpt" aria-label="切换 GPT 账号" aria-haspopup="dialog" aria-controls="codexAccountSheet" title="GPT 账号"><span class="header-account-logo" aria-hidden="true"></span></button>
         <button type="button" class="compact-nav-button header-account-orb" id="headerClaudeSwitch" data-header-provider="claude" data-provider="claude" aria-label="切换 Claude 账号" aria-haspopup="dialog" aria-controls="codexAccountSheet" title="Claude 账号"><span class="header-account-logo" aria-hidden="true"></span></button>
         <button type="button" class="compact-nav-button header-account-orb" id="headerGeminiSwitch" data-header-provider="gemini" data-provider="gemini" aria-label="切换 Gemini 账号" aria-haspopup="dialog" aria-controls="codexAccountSheet" title="Gemini 账号"><span class="header-account-logo" aria-hidden="true"></span></button>
+        <button type="button" class="compact-nav-button header-account-orb header-browser-orb" id="headerBrowserSwitch" data-provider="chrome" aria-label="打开服务器 Google 浏览器" aria-haspopup="dialog" aria-controls="serverBrowserModal" title="服务器 Google 浏览器"><span class="header-account-logo" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.1" fill="#4285F4"/><path fill="#EA4335" d="M12 2.5A9.5 9.5 0 0 1 20.66 8H12a4 4 0 0 0-3.46 2L5.1 4.05A9.48 9.48 0 0 1 12 2.5Z"/><path fill="#34A853" d="M5.1 4.05 9.2 11.15A4 4 0 0 0 12 16c.35 0 .69-.05 1.02-.14L9.56 21.18A9.5 9.5 0 0 1 5.1 4.05Z"/><path fill="#FBBC05" d="M20.66 8A9.5 9.5 0 0 1 9.56 21.18l3.46-5.32A4 4 0 0 0 12 8h8.66Z"/></svg></span></button>
+        <button type="button" class="compact-nav-button header-server-pill" id="headerServerStatus" hidden aria-label="查看服务器状态" title="多节点服务器状态" data-status="unknown"><i class="header-server-dot" aria-hidden="true"></i><span id="headerServerStatusText">3 节点</span></button>
         <div class="capacity-capsule" id="capacityCapsule" role="group" aria-label="额度与上下文" hidden inert aria-hidden="true" style="display:none!important">
           <button type="button" class="capacity-metric capacity-quota" id="headerQuotaButton" aria-label="额度尚未读取，查看用量" data-known="false">
             <i class="capacity-fill" aria-hidden="true"></i><span class="capacity-label">额度余</span><strong id="headerQuotaValue">—</strong>
@@ -164,36 +166,15 @@
     <div id="remoteSpaceBanner" hidden></div>
 
     <main class="chat-stage" id="chatStage">
-      <section class="welcome" id="welcome" aria-labelledby="entryTitle">
-        <div class="entry-sculpture" aria-hidden="true">
-          <svg viewBox="0 0 216 164" fill="none">
-            <defs>
-              <linearGradient id="wittFoldA" x1="56" y1="35" x2="102" y2="128" gradientUnits="userSpaceOnUse"><stop stop-color="#f2dcff"/><stop offset=".5" stop-color="#ad82e8"/><stop offset="1" stop-color="#8156bd"/></linearGradient>
-              <linearGradient id="wittFoldB" x1="102" y1="50" x2="140" y2="127" gradientUnits="userSpaceOnUse"><stop stop-color="#fff2df"/><stop offset=".6" stop-color="#f2b9bd"/><stop offset="1" stop-color="#d68ca9"/></linearGradient>
-              <linearGradient id="wittFoldC" x1="170" y1="42" x2="119" y2="122" gradientUnits="userSpaceOnUse"><stop stop-color="#b5e3df"/><stop offset=".48" stop-color="#80b8cf"/><stop offset="1" stop-color="#5173b1"/></linearGradient>
-              <radialGradient id="wittShadow"><stop stop-color="#6686bf" stop-opacity=".22"/><stop offset="1" stop-color="#6686bf" stop-opacity="0"/></radialGradient>
-            </defs>
-            <ellipse cx="108" cy="139" rx="72" ry="17" fill="url(#wittShadow)"/>
-            <ellipse class="entry-orbit" cx="108" cy="85" rx="100" ry="57" transform="rotate(-18 108 85)" stroke="#bccbdf" stroke-opacity=".55" stroke-dasharray="2 6"/>
-            <path d="M45 43 72 38 98 111 79 130Z" fill="url(#wittFoldA)"/>
-            <path d="m79 130 24-82 24-3-29 66Z" fill="#7957b8"/>
-            <path d="m103 48 24-3 27 72-21 13Z" fill="url(#wittFoldB)"/>
-            <path d="m133 130 26-87 24-6-29 80Z" fill="url(#wittFoldC)"/>
-            <path d="m45 43 27-5m31 10 24-3m32-2 24-6" stroke="white" stroke-opacity=".85" stroke-width="1.4"/>
-            <path d="m72 38 26 73m29-66 27 72" stroke="#f5f9ff" stroke-opacity=".5"/>
-            <circle cx="22" cy="99" r="3" fill="#90b8d9"/><circle cx="192" cy="63" r="4" fill="#9acdc7"/>
-            <path d="M159 17v10m-5-5h10" stroke="#98aecf" stroke-width="1.5" stroke-linecap="round"/>
+      <section class="welcome" id="welcome" hidden aria-labelledby="entryTitle">
+        <div class="gemini-home-kicker">
+          <svg class="gemini-home-spark" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="url(#witt-gemini-official)" d="M12 2c.6 5.4 4.6 9.4 10 10-5.4.6-9.4 4.6-10 10-.6-5.4-4.6-9.4-10-10 5.4-.6 9.4-4.6 10-10Z"/>
           </svg>
+          <span>你好</span>
         </div>
-        <div class="entry-hello">你的私人工作空间</div>
-        <h1 id="entryTitle">Hello, I&#39;m Witt.</h1>
-        <p>今天，想把什么变成现实？<br>从一个想法开始，我们一起把它完成。</p>
-        <div class="suggestions" aria-label="选择一个起点">
-          <button type="button" data-prompt="我想做一个新作品，先和我一起梳理想法，再把它实现。"><span><svg viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></svg></span><b>做点新东西</b><small>把灵感写成代码，做成作品</small><i aria-hidden="true">↗</i></button>
-          <button type="button" data-prompt="帮我读懂接下来添加的文件，提炼重点，并整理成清晰的结论。"><span><svg viewBox="0 0 24 24"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8Z M14 3v5h5M8 12h8m-8 4h5"/></svg></span><b>读懂一份文件</b><small>理清内容，找到有用的答案</small><i aria-hidden="true">↗</i></button>
-          <button type="button" data-prompt="帮我排查一个问题。先根据我提供的现象定位原因，再给出解决办法。"><span><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5M7.5 10.5h6m-3-3v6"/></svg></span><b>解决一个问题</b><small>一起排查，让事情顺利运转</small><i aria-hidden="true">↗</i></button>
-        </div>
-        <small class="entry-footnote">也可以直接输入，或添加文件开始</small>
+        <h1 id="entryTitle">需要我为你做些什么？</h1>
+        <p hidden></p>
       </section>
       <section class="task-status-strip" id="taskStatusStrip" aria-live="polite" hidden></section>
       <button class="history-load" id="loadOlderMessages" type="button" hidden>加载更早消息</button>
@@ -211,10 +192,15 @@
       <div class="project-shortcuts-strip" id="projectShortcutsStrip" hidden></div>
       <div class="attachment-strip" id="attachmentStrip"></div>
       <div class="composer liquid-glass" id="composer">
-        <textarea id="messageInput" rows="1" maxlength="48000" placeholder="回复 Witt"></textarea>
+        <textarea id="messageInput" rows="1" maxlength="48000" placeholder="问问 Witt"></textarea>
         <div class="composer-toolbar">
           <button class="attach-button" id="attachButton" aria-label="添加内容" aria-expanded="false">
             <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <button type="button" class="tools-button" id="toolsButton" aria-label="工具" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M13 5v4M4 17h4M12 17h8M8 15v4M4 12h7M15 12h5M11 10v4"/></svg>
+            <span id="toolsButtonLabel">工具</span>
+            <span class="tools-button-clear" id="clearActiveTool" role="button" tabindex="0" aria-label="取消当前工具" hidden>×</span>
           </button>
           <button class="composer-model" id="modelButton" aria-label="模型与智能程度">
             <span class="model-spark">✦</span><b id="modelLabel">Astra</b><i></i><span id="reasoningLabel">均衡</span>
@@ -232,8 +218,18 @@
         </div>
       </div>
       <div class="attachment-menu" id="attachmentMenu" aria-hidden="true">
-        <button id="attachFileButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M8 12.5 13.7 6a3.1 3.1 0 1 1 4.6 4.2l-7.4 8.2A4.5 4.5 0 0 1 4.2 12l7.1-7.8"/></svg></span><span><b>图片与文件</b><small>上传照片、文档、表格、压缩包等</small></span></button>
-        <button id="projectButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17v-11Z"/></svg></span><span><b id="projectLabel">选择项目</b><small id="projectButtonHint">归入或新建你的私人项目</small></span></button>
+        <button type="button" id="attachFileButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M8 12.5 13.7 6a3.1 3.1 0 1 1 4.6 4.2l-7.4 8.2A4.5 4.5 0 0 1 4.2 12l7.1-7.8"/></svg></span><span><b>上传文件</b><small>图片、文档、表格、代码与压缩包</small></span></button>
+        <button type="button" id="attachFolderButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h5.8l2-2h9.2v13h-17v-11Z"/><path d="M9.5 13.5 12 11l2.5 2.5M12 11v5"/></svg></span><span><b>导入代码文件夹</b><small>批量上传本地目录，自动过滤依赖</small></span></button>
+        <button type="button" id="attachCaptureButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h2l1.4-2h4.2l1.4 2h2A2.5 2.5 0 0 1 20 8.5v9A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5v-9Z"/><circle cx="12" cy="12.5" r="3.2"/></svg></span><span><b>拍照 / 截屏</b><small>移动端调起相机，桌面端截取屏幕</small></span></button>
+        <button type="button" id="projectButton"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17v-11Z"/></svg></span><span><b id="projectLabel">选择项目</b><small id="projectButtonHint">归入私人项目或复用项目资料</small></span></button>
+      </div>
+      <div class="attachment-menu tools-menu" id="toolsMenu" aria-hidden="true" aria-label="工具菜单">
+        <button type="button" data-tool-mode="canvas"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15M13 10l2.5 2-2.5 2"/></svg></span><span><b>Canvas 画布</b><small>创建可实时预览的交互网页与动画</small></span><i class="tool-check" aria-hidden="true">✓</i></button>
+        <button type="button" data-tool-mode="research"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5M8.5 11h5M11 8.5v5"/></svg></span><span><b>Deep Research</b><small>多轮联网深度调研并输出结构报告</small></span><i class="tool-check" aria-hidden="true">✓</i></button>
+        <button type="button" data-tool-mode="image"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="9.5" r="1.5"/><path d="m20.5 15.5-4.8-4.5-6.2 6-2.5-2.2-3.5 3.2"/></svg></span><span><b>生成图片</b><small>按描述创作高质量配图并直接交付</small></span><i class="tool-check" aria-hidden="true">✓</i></button>
+        <button type="button" data-tool-mode="search"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.8 12h16.4M12 3.5c2.6 2.3 4 5.2 4 8.5s-1.4 6.2-4 8.5c-2.6-2.3-4-5.2-4-8.5s1.4-6.2 4-8.5Z"/></svg></span><span><b>联网搜索</b><small>优先检索实时公开信息并附来源</small></span><i class="tool-check" aria-hidden="true">✓</i></button>
+        <div class="tools-menu-divider" role="separator"></div>
+        <button type="button" id="toolScheduleShortcut"><span class="attachment-menu-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v4.8l3.2 1.9"/></svg></span><span><b>定时任务</b><small>打开自动巡检与定时执行计划</small></span></button>
       </div>
       <section class="quick-model-menu codex-popover-minimal" id="quickModelMenu" aria-hidden="true" aria-label="模型与推理强度">
         <!-- 视图 1: 主滑块面板 (对标 Codex 官方界面，移除无后端支持的闪电) -->
@@ -369,6 +365,13 @@
         </div>
         <div class="conversation-list" id="conversationList"></div>
       </section>
+      <section class="sidebar-server-cluster" id="sidebarServerCluster" hidden aria-label="服务器状态">
+        <button type="button" class="sidebar-server-head" id="sidebarServerOpen" aria-label="打开服务器详情">
+          <span class="sidebar-server-title"><i class="sidebar-server-dot" id="sidebarServerDot" aria-hidden="true"></i>服务器状态</span>
+          <small id="sidebarServerSummary">检测中…</small>
+        </button>
+        <div class="sidebar-server-rows" id="sidebarServerRows"></div>
+      </section>
       <div class="drawer-dock">
       <button class="drawer-new" id="drawerNewChat">
         <svg viewBox="0 0 24 24"><path d="M5 19h4l10-10a2.8 2.8 0 0 0-4-4L5 15v4Z M13.5 6.5l4 4"/></svg>
@@ -423,7 +426,7 @@
             <button class="feature-entry" id="featureProjects"><span>我的项目</span><small>说明、参考文件与常用指令</small></button>
             <button class="feature-entry" id="featureSchedules"><span>定时任务</span><small>自动巡检与计划执行</small></button>
             <button class="feature-entry" id="remoteAssistEntry"><span>远程协助 CLI</span><small>终端授权与远程协作</small></button>
-            <button class="workspace-entry" id="workspaceOverviewButton" type="button" hidden><span>系统服务状态</span><small>本机运行监控</small><span>›</span></button>
+            <button class="workspace-entry" id="workspaceOverviewButton" type="button" hidden style="display:none!important"><span>服务器状态</span><small>多节点实时监控</small><span>›</span></button>
           </div>
         </section>
 
@@ -742,24 +745,37 @@
   </aside>
   <aside id="featureSheet" hidden><button class="upgrade-backdrop" id="featureBackdrop" aria-label="关闭"></button><section id="featurePanel" role="dialog" aria-modal="true" aria-labelledby="featureTitle"><header><h2 id="featureTitle">工作区</h2><button id="featureClose" aria-label="关闭">×</button></header><div id="featureContent"></div></section></aside>
   <div class="toast" id="toast"></div>
+  <div class="global-drop-overlay" id="globalDropOverlay" aria-hidden="true">
+    <div class="global-drop-frame">
+      <div class="global-drop-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5"/><path d="M4 16.5v1.5A2.5 2.5 0 0 0 6.5 20.5h11a2.5 2.5 0 0 0 2.5-2.5v-1.5"/></svg>
+      </div>
+      <strong>松开以添加文件</strong>
+      <small>支持图片、代码、文档与文件夹，拖入维特界面任意位置即可</small>
+    </div>
+  </div>
+
   <script src="/vault/optional-modules.js?v=20261008-1"></script>
   <aside class="workspace-overview" id="workspaceOverview" aria-hidden="true">
-    <button class="workspace-backdrop" id="workspaceBackdrop" aria-label="关闭连接状态"></button>
+    <button class="workspace-backdrop" id="workspaceBackdrop" aria-label="关闭服务器状态"></button>
     <section class="workspace-panel" role="dialog" aria-modal="true" aria-labelledby="workspaceTitle">
-      <header><div><small>WORKSPACE</small><h2 id="workspaceTitle">连接状态</h2></div><button id="closeWorkspace" aria-label="关闭">×</button></header>
-      <p>自动发现本机服务，新增服务也会出现在这里。按需或定时服务未运行不一定异常。</p>
+      <header><div><small>SERVERS</small><h2 id="workspaceTitle">服务器状态</h2></div><button id="closeWorkspace" aria-label="关闭">×</button></header>
+      <p>实时监控东京、台湾、上海三台服务器连通性与延迟，打开面板时每 15 秒自动刷新。</p>
       <div id="workspaceOverviewContent"></div>
       <button class="workspace-refresh" id="refreshWorkspace">刷新状态</button>
     </section>
   </aside>
-  <script src="/vault/browser-bridge.js?v=20261125-settings-1"></script>
-  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102&groupDialog=20261102-1&codeCopy=20261102-1&imageKeyboard=20261102-1&composerIme=20261103-1&accountRecovery=20261103-1&serviceStatus=20261103-1&headerCapsule=20261106-1&deviceNotes=20261114-1&headerSpacing=20261114-1&antigravityLogin=20261114-1&invitePermission=20261114-1&geminiCreate=20261114-1&accountOrb=20261114-three-orbs-1&accountQuota=20261114-1&quotaLayout=20261114-2&historyModelBadge=20261116-3&modelSource=20261116-2&mdFormat=20261118-4&codexPicker=20261126-1&antigravitySettings=20261125-1&bootSilk=20261125-1&enterSend=20261125-1&messageTop=20261125-1&userProjects=20261125-2&quotaDisplay=20261125-3&officialIcons=20261125-1&upgrades=20261125-5"></script>
+  <script src="/vault/browser-bridge.js?v=20261127-drop-2"></script>
+  <script src="/vault/app-workspace-20260916-r3.js?v=3.2.5-gpt61&claude=20261007&accountModels=20261007&processLines=20261007&commandMotion=2&openAccess=20261007&singleLaunch=1&sidebar=20261008&upgrades=3&sendCompat=20261008-1&workspaceOverview=20261009-1&messageFiles=20261026-3&history=20261028-4&providers=20261028-2&simplify=20261102-1&actions=20261102-2&groupLabel=20261102&groupDialog=20261102-1&codeCopy=20261102-1&imageKeyboard=20261102-1&composerIme=20261103-1&accountRecovery=20261103-1&serviceStatus=20261103-1&headerCapsule=20261106-1&deviceNotes=20261114-1&headerSpacing=20261114-1&antigravityLogin=20261114-1&invitePermission=20261114-1&geminiCreate=20261114-1&accountOrb=20261114-three-orbs-1&accountQuota=20261114-1&quotaLayout=20261114-2&historyModelBadge=20261116-3&modelSource=20261116-2&mdFormat=20261118-4&codexPicker=20261126-1&antigravitySettings=20261125-1&bootSilk=20261125-1&historyReady=20261126-1&enterSend=20261125-1&messageTop=20261125-1&userProjects=20261125-2&quotaDisplay=20261127-1&officialIcons=20261125-1&upgrades=20261125-5&geminiTools=20261126-5&serverCluster=20261126-2&geminiCode=20261126-1&askModal=20261126-2&geminiSeat2=20261127-2&dropPaste=20261127-5"></script>
   <script src="/vault/sidebar-layout.js?v=20261125-sidebar-1"></script>
   <script src="/vault/ui-upgrades.js?v=20261008-2&simplify=20261102-1&actions=20261102-2&groupDialog=20261102-1&keyboard=20261102-1&focusReturn=20261102-1&renameValidation=20261102-1&imeEscape=20261102-1&longPressCancel=20261102-1&taskFocus=20261102-1&taskPending=20261102-1&userProjects=20261125-1"></script>
   <script src="/vault/witt-features.js?v=20261008-1&simplify=20261102-1&userProjects=20261125-3"></script>
   <script src="/vault/remote-assist-panel.js?v=20261125-3"></script>
+  <script src="/vault/server-browser-panel.js?v=20261126-1"></script>
   <script src="/vault/xuanyu-build-panel.js?v=20261118-7"></script>
   <div id="witt-v3-root"></div>
   <script type="module" src="/src/main.tsx"></script>
+  <script src="/vault/input-autocomplete.js?v=20261126-local-3"></script>
+  <script src="/vault/antigravity-bg.js?v=20261127-1"></script>
 </body>
 </html>

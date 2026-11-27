@@ -215,12 +215,14 @@
       run(`chat/conversations/${id}`, { method: "PATCH", json: parse(json) },
         "onConversationMetadataUpdated", "onConversationMetadataError", "同步失败");
     },
-    sendChatMessage(id, text, attachmentIdsJson) {
-      this.sendChatMessageWithRequestId(id, text, attachmentIdsJson, "");
+    sendChatMessage(id, text, attachmentIdsJson, toolMode = "") {
+      this.sendChatMessageWithRequestId(id, text, attachmentIdsJson, "", toolMode);
     },
-    sendChatMessageWithRequestId(id, text, attachmentIdsJson, clientRequestId) {
+    sendChatMessageWithRequestId(id, text, attachmentIdsJson, clientRequestId, toolMode = "") {
       request(`chat/conversations/${id}/messages`, { method: "POST", json: {
-        text, attachmentIds: parse(attachmentIdsJson), ...(clientRequestId ? { clientRequestId } : {}),
+        text, attachmentIds: parse(attachmentIdsJson),
+        ...(clientRequestId ? { clientRequestId } : {}),
+        ...(toolMode ? { toolMode } : {}),
       } }).then((responseText) => {
         const data = parse(responseText);
         if (clientRequestId) data.clientRequestId = clientRequestId;
@@ -284,11 +286,15 @@
 
     addPickedFiles(fileList) {
       const selected = [...(fileList || [])]
-        .filter((file) => file && file.size > 0 && file.size <= 500 * 1024 * 1024)
+        .filter((file) => file && file.size >= 0 && file.size <= 500 * 1024 * 1024)
         .map((file) => {
           const id = crypto.randomUUID();
+          const relName = file.webkitRelativePath ? file.webkitRelativePath.replace(/^\/+/, "") : (file.name || `file-${Date.now()}`);
           files.set(id, file);
-          return { id, name: file.name || `file-${Date.now()}`, size: file.size, type: file.type || "application/octet-stream" };
+          const isImg = /^image\//i.test(file.type || "") || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(relName);
+          let previewUrl = "";
+          if (isImg) { try { previewUrl = URL.createObjectURL(file); } catch {} }
+          return { id, name: relName, size: file.size, type: file.type || "application/octet-stream", ...(previewUrl ? { previewUrl } : {}) };
         });
       if (selected.length) callback("onFilesPicked", payload(selected));
       return selected.length;
@@ -301,6 +307,72 @@
         this.addPickedFiles(input.files);
       };
       input.click();
+    },
+    pickFolder() {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.multiple = true;
+      input.setAttribute("webkitdirectory", "");
+      input.setAttribute("directory", "");
+      const ignored = /(^|\/)(\.git|node_modules|dist|build|\.next|\.nuxt|__pycache__|\.venv|venv|target|\.gradle|\.idea|\.vscode|\.DS_Store)(\/|$)/i;
+      input.onchange = () => {
+        const raw = [...(input.files || [])];
+        const filtered = raw.filter((file) => {
+          const rel = file.webkitRelativePath || file.name || "";
+          return file.size > 0 && !ignored.test(rel);
+        });
+        const maxFiles = 40;
+        const picked = filtered.slice(0, maxFiles);
+        const added = this.addPickedFiles(picked);
+        if (!added) {
+          callback("onChatError", "未找到可上传的有效文件（空文件或依赖目录已自动忽略）");
+        } else if (filtered.length > maxFiles) {
+          callback("onChatError", `目录文件较多，已选取前 ${maxFiles} 个文件`);
+        }
+      };
+      input.click();
+    },
+    async captureMedia() {
+      const isTouch = window.matchMedia?.("(pointer: coarse)")?.matches;
+      const canScreenCapture = !isTouch && typeof navigator.mediaDevices?.getDisplayMedia === "function";
+      if (!canScreenCapture) {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = "image/*";
+        input.setAttribute("capture", "environment");
+        input.onchange = () => {
+          this.addPickedFiles(input.files);
+        };
+        input.click();
+        return;
+      }
+      let stream = null;
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: { cursor: "always" }, audio: false });
+        const video = document.createElement("video");
+        video.srcObject = stream;
+        video.muted = true;
+        await video.play();
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const width = video.videoWidth || 1280;
+        const height = video.videoHeight || 720;
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d")?.drawImage(video, 0, 0, width, height);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+        if (blob) {
+          const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+          const file = new File([blob], `screenshot-${stamp}.png`, { type: "image/png" });
+          this.addPickedFiles([file]);
+        }
+      } catch (error) {
+        if (error?.name !== "AbortError" && error?.name !== "NotAllowedError") {
+          callback("onChatError", error?.message || "截屏失败，请重试");
+        }
+      } finally {
+        stream?.getTracks?.().forEach((track) => track.stop());
+      }
     },
     uploadFile(id) {
       const file = files.get(id);

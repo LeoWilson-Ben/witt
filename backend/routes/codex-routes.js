@@ -4,6 +4,7 @@ function createCodexRouter({
   codexAccountService,
   claudeAccountService,
   antigravityAccountService,
+  antigravity2AccountService,
   claimStandby,
   sendJson,
 }) {
@@ -25,6 +26,9 @@ function createCodexRouter({
         ...(principal.admin ? [claudeAccountService.card(principal)] : []),
         ...((principal.admin || principal.codexProfiles?.includes("antigravity"))
           ? [antigravityAccountService.card(principal)]
+          : []),
+        ...(antigravity2AccountService && (principal.admin || principal.codexProfiles?.includes("antigravity2"))
+          ? [antigravity2AccountService.card(principal)]
           : []),
       ]).then((results) => results.filter((r) => r.status === "fulfilled").map((r) => r.value));
       extraAccounts.then((accounts) => codexAccountService.list(

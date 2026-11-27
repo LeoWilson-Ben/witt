@@ -434,7 +434,7 @@ class ChatService {
   profileFor(conversation) {
     const requested = String(conversation?.codexProfile || "default");
     const profile=this.codexProfiles[requested] || this.codexProfiles.default;
-    if (String(conversation?.model || "").startsWith("stellarbit:") && profile.provider === "antigravity") return {...profile,codexHome:this.codexProfiles.default.codexHome};
+    if (String(conversation?.model || "").startsWith("stellarbit:") && (profile.provider === "antigravity" || profile.provider === "antigravity2")) return {...profile,codexHome:this.codexProfiles.default.codexHome};
     return profile.provider && this.providerRuntime ? {...profile,codexHome:this.providerRuntime.home(profile.provider)} : profile;
   }
 
@@ -1113,6 +1113,8 @@ class ChatService {
         return;
       }
       const text = String(body?.text || "").trim();
+      const rawToolMode = String(body?.toolMode || "").trim();
+      const toolMode = ["canvas", "research", "research_run", "image", "search"].includes(rawToolMode) ? rawToolMode : "";
       const attachmentIds = Array.isArray(body?.attachmentIds)
         ? [...new Set(body.attachmentIds.map(String))].slice(0, 8)
         : [];
@@ -1122,7 +1124,7 @@ class ChatService {
         return;
       }
       const requestFingerprint = crypto.createHash("sha256")
-        .update(JSON.stringify({ text, attachmentIds })).digest("hex");
+        .update(JSON.stringify({ text, attachmentIds, toolMode })).digest("hex");
       if (clientRequestId) {
         const duplicate = conversation.messages.find((message) => message.role === "user" &&
           message.senderDeviceId === deviceId && message.clientRequestId === clientRequestId);
@@ -1154,6 +1156,7 @@ class ChatService {
         id: crypto.randomUUID(),
         role: "user",
         text,
+        ...(toolMode ? { toolMode } : {}),
         senderDeviceId: deviceId,
         ...(clientRequestId ? { clientRequestId, requestFingerprint } : {}),
         attachments: attachments.map(({ path: ignored, ...attachment }) => attachment),
@@ -1196,6 +1199,7 @@ class ChatService {
         id: crypto.randomUUID(),
         role: "assistant",
         text: "",
+        ...(toolMode ? { toolMode } : {}),
         attachments: [],
         createdAt: now,
         status: "queued",
@@ -1595,10 +1599,11 @@ class ChatService {
       const questions = (Array.isArray(params.questions) ? params.questions : [])
         .slice(0, 3).map((question, index) => ({
           id: String(question?.id || `question-${index + 1}`).slice(0, 120),
-          header: compact(question?.header || `问题 ${index + 1}`, 120),
+          header: compact(question?.header || "", 120),
           question: compact(question?.question || "请选择如何继续", 500),
           allowOther: Array.isArray(question?.options) && question.options.length > 0,
           isSecret: Boolean(question?.isSecret),
+          isMultiSelect: Boolean(question?.isMultiSelect || question?.is_multi_select),
           options: Array.isArray(question?.options)
             ? question.options.slice(0, 12).map((option) => ({
               label: compact(option?.label, 120),
@@ -1650,7 +1655,7 @@ class ChatService {
       title: requestedPermissions.network?.enabled ? "允许临时访问网络？" : "允许临时扩展权限？",
       reason: compact(params.reason, 500),
       cwd: compact(params.cwd, 800),
-      permissionSummary: compact(permissionParts.join("\n") || "Codex 请求额外操作权限", 1800),
+      permissionSummary: compact(permissionParts.join("\n") || "需要额外操作权限", 1800),
     };
   }
 
@@ -1757,8 +1762,8 @@ class ChatService {
         if (pending.method === "item/tool/requestUserInput") {
           const answers = payload?.answers;
           const questions = Array.isArray(pending.params?.questions) ? pending.params.questions : [];
-          const valid = answers && typeof answers === "object" && questions.every((question) => {
-            const value = answers[String(question?.id || "answer")]?.answers;
+          const valid = answers && typeof answers === "object" && questions.every((question, index) => {
+            const value = (answers[String(question?.id || `question-${index + 1}`)] || answers[String(question?.id || "answer")])?.answers;
             return Array.isArray(value) && value.length > 0 && value.every((item) =>
               typeof item === "string" && item.length <= 2000);
           });
@@ -1864,7 +1869,25 @@ class ChatService {
       "用户明确要求制作或展示前端动画、交互网页、网页演示，或要求像 Claude Artifact 一样直接预览时，视为明确要求交付：请创建一个自包含的单文件 .html，且仅在这种情况下在最终回复末尾输出对应 [[deliver:/绝对/文件路径]]。不要使用外部 CDN、远程图片、网络请求或额外本地资源；Witt 会在独立 Artifact 工作区运行页面，桌面端位于聊天右侧、手机端使用单栏工作区。页面只实现作品内容，不要自行重复宿主的标题栏、版本、预览/源码、复制、下载或返回控件。",
       "制作交互网页时使用 Claude Artifact 式增量预览协议：始终维护同一个自包含 .html 文件；完成第一个可独立运行且结构闭合的版本后，在 commentary 中单独输出 [[preview:/绝对/文件路径]]。此控制行不会展示给用户。之后每次完成一轮可独立运行的界面更新，再输出同一控制行。只有在 HTML、BODY 均完整闭合且当前版本可运行时才能发布；不要发布正在写入的半成品。",
       "Artifact 页面必须响应式适配手机宽度和横竖屏，避免固定桌面画布。聊天中直接展示内容本体，不要在 HTML 内再绘制外层设备框、预览卡标题栏、下载按钮或放大按钮。",
+      "需要用户做单选、多选或填空确认后再继续时，在回复末尾单独输出一行 [[ask:{\"questions\":[{\"question\":\"问题\",\"options\":[\"选项A\",\"选项B\"],\"isMultiSelect\":false}]}]]（省略 options 表示纯填空），前端会自动弹出交互弹窗并在用户提交后继续执行。",
     ].join("\n");
+  }
+
+  toolModeInstruction(toolMode) {
+    switch (toolMode) {
+      case "canvas":
+        return "[系统工具模式：Canvas 交互画布] 请直接制作一个自包含的单文件交互网页（.html），禁止使用外部 CDN、远程图片或网络请求；页面需响应式适配桌面与手机横竖屏，完成后按增量预览协议输出 [[preview:/绝对/文件路径]] 并在最终回复末尾输出 [[deliver:/绝对/文件路径]]。";
+      case "research":
+        return "[系统工具模式：Deep Research 深度研究 · 第一阶段：研究计划] 请先不要直接输出完整长报告。请先快速梳理一份结构清晰的「研究计划」（包含：研究目标、3–5 个核心检索维度与关键子问题、预计报告大纲），然后提示用户点击下方「开始深度研究」按钮确认，或直接提出修改意见。";
+      case "research_run":
+        return "[系统工具模式：Deep Research 深度研究 · 第二阶段：执行深度调研] 用户已确认研究计划。请严格围绕上一轮确认的研究计划，开展多轮联网检索与信息交叉核验，最后输出结构完整、数据详实、逻辑严谨且附带关键参考来源链接的深度研究报告。";
+      case "image":
+        return "[系统工具模式：生成图片] 请调用内置生图能力（image-generator）根据用户描述创作高质量图片，保存到工作目录后在最终回复末尾输出 [[deliver:/绝对/文件路径]] 将图片直接交付给用户。";
+      case "search":
+        return "[系统工具模式：联网搜索] 请先联网检索最新、权威的公开信息后再作答，并在回答中附上参考来源链接。";
+      default:
+        return "";
+    }
   }
 
   buildPrompt(conversation, user, attachments) {
@@ -1875,7 +1898,9 @@ class ChatService {
           ...attachments.map((file) => `- ${file.name}：${file.path}（${file.mimeType}）`),
         ].join("\n")
       : "";
-    const userText = user.text || "请查看我附上的文件。";
+    const toolNote = this.toolModeInstruction(user.toolMode);
+    const rawUserText = user.text || "请查看我附上的文件。";
+    const userText = toolNote ? `${toolNote}\n\n${rawUserText}` : rawUserText;
     if (conversation.replayHistoryOnNextTurn) {
       const history = conversation.messages
         .filter((message) => message.id !== user.id &&

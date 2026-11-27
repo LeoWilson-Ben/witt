@@ -6,7 +6,8 @@
     },
   });
   const bridge = () => window.WittNative ? nativeBridge : (window.DropVaultAndroid || null);
-  const CODEX_PROFILE_IDS = ["default", "xuanyu", "account3", "account4", "account5", "claude", "antigravity"];
+  const CODEX_PROFILE_IDS = ["default", "xuanyu", "account3", "account4", "account5", "claude", "antigravity", "antigravity2"];
+  const isAntigravityProfile = (id) => id === "antigravity" || id === "antigravity2";
   const previousModel = localStorage.getItem("wit_model_preference") || localStorage.getItem("wit_model");
   const shouldUpgradeDefaultModel = !localStorage.getItem("wit_gpt6_model_migrated") &&
     (!previousModel || previousModel === "gpt-5.6-sol");
@@ -61,6 +62,7 @@
     busy: false,
     transmitting: false,
     pausing: false,
+    activeTool: null,
     lastSubmittedText: "",
     supports21: false,
     nativeInitialized: false,
@@ -196,18 +198,72 @@
   }
 
   let workspaceOverviewTimer = null;
+  let serverClusterPollTimer = null;
   let workspaceOverviewLoading = false;
   let workspaceServices = [];
   let workspaceServiceFilter = "all";
+  function renderServerClusterWidgets(clusterRows) {
+    const rows = Array.isArray(clusterRows) ? clusterRows : [];
+    const headerBtn = $("#headerServerStatus");
+    const headerText = $("#headerServerStatusText");
+    const sidebarBox = $("#sidebarServerCluster");
+    const sidebarRows = $("#sidebarServerRows");
+    const sidebarSummary = $("#sidebarServerSummary");
+    const sidebarDot = $("#sidebarServerDot");
+    const visible = Boolean(state.workspaceFeatures && state.admin);
+    if (headerBtn) headerBtn.hidden = !visible;
+    if (sidebarBox) sidebarBox.hidden = !visible;
+    if (!visible || !rows.length) return;
+    const online = rows.filter(s => s.status === "online").length;
+    const overall = online === rows.length ? "online"
+      : rows.some(s => s.status === "online" || s.status === "degraded") ? "degraded" : "offline";
+    if (headerBtn) {
+      headerBtn.dataset.status = overall;
+      headerBtn.title = rows.map(s => `${s.region || s.name}: ${s.isLocal ? "本机" : (Number.isFinite(s.latencyMs) ? s.latencyMs + "ms" : "超时")}`).join(" · ");
+    }
+    if (headerText) headerText.textContent = `${online}/${rows.length}`;
+    if (sidebarDot) sidebarDot.dataset.status = overall;
+    if (sidebarSummary) sidebarSummary.textContent = `${online}/${rows.length} 在线`;
+    if (sidebarRows) {
+      const shortNames = { "tokyo-witt": "东京", "tw-vpn": "台湾", "shanghai-aliyun": "上海" };
+      sidebarRows.innerHTML = rows.map(s => {
+        const label = shortNames[s.id] || s.region || s.name;
+        const latency = s.isLocal ? "本机" : (Number.isFinite(s.latencyMs) ? `${s.latencyMs}ms` : "离线");
+        return `<button type="button" class="sidebar-server-row" data-status="${escapeHtml(s.status || "unknown")}" title="${escapeHtml((s.name || label) + " · " + (s.ip || ""))}"><span class="sidebar-server-name"><i aria-hidden="true"></i>${escapeHtml(s.flag || "")} ${escapeHtml(label)}</span><small>${escapeHtml(latency)}</small></button>`;
+      }).join("");
+    }
+  }
+  function syncServerClusterVisibility() {
+    const visible = Boolean(state.workspaceFeatures && state.admin);
+    const headerBtn = $("#headerServerStatus");
+    const sidebarBox = $("#sidebarServerCluster");
+    if (headerBtn) headerBtn.hidden = !visible;
+    if (sidebarBox) sidebarBox.hidden = !visible;
+    if (!visible) {
+      clearInterval(serverClusterPollTimer);
+      serverClusterPollTimer = null;
+      return;
+    }
+    if (!serverClusterPollTimer) {
+      requestWorkspaceOverview();
+      serverClusterPollTimer = setInterval(() => {
+        if (state.appVisible && !document.hidden && !$("#workspaceOverview")?.classList.contains("open")) {
+          requestWorkspaceOverview();
+        }
+      }, 30000);
+    }
+  }
   function requestWorkspaceOverview() {
     if (!state.workspaceFeatures) {
-      $("#workspaceOverviewContent").textContent = "请更新客户端后查看服务状态";
+      $("#workspaceOverviewContent").textContent = "请更新客户端后查看服务器状态";
       return;
     }
     if (workspaceOverviewLoading) return;
     workspaceOverviewLoading = true;
     $("#refreshWorkspace").disabled = true;
-    if (!$("#workspaceServiceList")) $("#workspaceOverviewContent").textContent = "正在发现服务…";
+    if (!$("#workspaceOverviewContent").querySelector(".server-cluster-section")) {
+      $("#workspaceOverviewContent").textContent = "正在检测服务器状态…";
+    }
     if (state.workspaceOperations && typeof window.WittFeatures?.request === "function") {
       const endpoint = window.WittNative ? "chat/projects?view=service-status" : "chat/workspace-overview";
       window.WittFeatures.request(endpoint)
@@ -598,20 +654,22 @@
     return html;
   }
 
+  const CODE_COPY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+  const CODE_CHECK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+
   async function copyCodeBlock(button) {
     const node = button.closest(".chat-code-block")?.querySelector("code");
     const code = node?.textContent || "";
     if (!code) return;
     try {
       await navigator.clipboard.writeText(code);
-      button.textContent = "已复制";
+      button.innerHTML = `${CODE_CHECK_ICON}<span>已复制</span>`;
       button.classList.add("copied");
       setTimeout(() => {
-        button.textContent = "复制";
+        button.innerHTML = `${CODE_COPY_ICON}<span>复制代码</span>`;
         button.classList.remove("copied");
-      }, 1500);
+      }, 1600);
     } catch {
-      // Keep code accessible when clipboard permission or the API is unavailable.
       const selection = window.getSelection();
       if (selection && node.isConnected) {
         const range = document.createRange();
@@ -625,20 +683,121 @@
     }
   }
 
+  function highlightCodeHtml(code, lang) {
+    const text = String(code || "");
+    if (!text || lang === "text" || lang === "txt" || lang === "plain") {
+      return escapeHtml(text);
+    }
+    const isShell = ["bash", "sh", "shell", "zsh"].includes(lang);
+    const isPy = ["python", "py"].includes(lang);
+    const isYaml = ["yaml", "yml"].includes(lang);
+    const isJson = lang === "json";
+    const isSql = lang === "sql";
+    const isMarkup = ["html", "xml", "svg"].includes(lang);
+    const isCss = ["css", "scss", "less"].includes(lang);
+
+    const kwSet = new Set(
+      isPy
+        ? ["import","from","as","def","class","return","async","await","if","elif","else","for","while","in","not","and","or","is","try","except","finally","with","pass","break","continue","yield","lambda","raise","global","nonlocal","del","assert"]
+        : isShell
+        ? ["if","then","else","elif","fi","for","do","done","while","case","esac","in","function","return","export","local","readonly","set","unset","exit","echo","cd","sudo","curl","grep","awk","sed"]
+        : isSql
+        ? ["select","from","where","insert","into","values","update","set","delete","create","table","index","drop","alter","join","left","right","inner","outer","on","group","by","order","limit","offset","as","and","or","not","in","is","distinct","union","having","case","when","then","else","end"]
+        : ["import","export","from","default","as","async","await","function","return","const","let","var","if","else","for","while","do","switch","case","break","continue","try","catch","finally","throw","new","class","extends","implements","interface","type","enum","public","private","protected","static","readonly","typeof","instanceof","in","of","void","yield","package","struct","func","go","defer","chan","select","fn","pub","mod","use","impl","trait","match","mut","ref","where"]
+    );
+    const litSet = new Set(["true","false","null","undefined","NaN","Infinity","None","True","False","nil","self","this","super"]);
+
+    let pattern;
+    if (isJson) {
+      pattern = /("(?:\\.|[^"\\])*")(\s*:)|("(?:\\.|[^"\\])*")|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
+    } else if (isYaml) {
+      pattern = /(#[^\n]*)|^([ \t-]*[A-Za-z0-9_.-]+)(\s*:)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\b(true|false|null|yes|no)\b|(\b\d+(?:\.\d+)?\b)/gm;
+    } else if (isMarkup) {
+      pattern = /(<!--[\s\S]*?-->)|(<\/?[A-Za-z][A-Za-z0-9:-]*)|(\s[A-Za-z_:][A-Za-z0-9_.:-]*)(?==)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g;
+    } else if (isCss) {
+      pattern = /(\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(@[a-z-]+)|([a-z-]+)(\s*:)|(#[0-9a-fA-F]{3,8}\b|\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|ms|s|deg)?\b)/g;
+    } else {
+      const commentPart = (isPy || isShell) ? "#[^\\n]*" : "\\/\\*[\\s\\S]*?\\*\\/|\\/\\/[^\\n]*";
+      pattern = new RegExp(
+        `(${commentPart})|(\`(?:\\\\.|[^\`\\\\])*\`|"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*')|\\b(0x[0-9a-fA-F]+|\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)\\b|\\b([A-Za-z_$][A-Za-z0-9_$]*)\\b(?=\\s*\\()|\\b([A-Z][A-Za-z0-9_$]*)\\b|\\b([A-Za-z_$][A-Za-z0-9_$]*)\\b`,
+        "g"
+      );
+    }
+
+    let out = "";
+    let last = 0;
+    let m;
+    while ((m = pattern.exec(text)) !== null) {
+      if (m.index > last) out += escapeHtml(text.slice(last, m.index));
+      const full = m[0];
+      if (isJson) {
+        if (m[1]) out += `<span class="tok-prop">${escapeHtml(m[1])}</span>${escapeHtml(m[2])}`;
+        else if (m[3]) out += `<span class="tok-str">${escapeHtml(m[3])}</span>`;
+        else if (m[4]) out += `<span class="tok-lit">${escapeHtml(m[4])}</span>`;
+        else if (m[5]) out += `<span class="tok-num">${escapeHtml(m[5])}</span>`;
+        else out += escapeHtml(full);
+      } else if (isYaml) {
+        if (m[1]) out += `<span class="tok-com">${escapeHtml(m[1])}</span>`;
+        else if (m[2]) out += `<span class="tok-prop">${escapeHtml(m[2])}</span>${escapeHtml(m[3])}`;
+        else if (m[4]) out += `<span class="tok-str">${escapeHtml(m[4])}</span>`;
+        else if (m[5]) out += `<span class="tok-lit">${escapeHtml(m[5])}</span>`;
+        else if (m[6]) out += `<span class="tok-num">${escapeHtml(m[6])}</span>`;
+        else out += escapeHtml(full);
+      } else if (isMarkup) {
+        if (m[1]) out += `<span class="tok-com">${escapeHtml(m[1])}</span>`;
+        else if (m[2]) out += `<span class="tok-kw">${escapeHtml(m[2])}</span>`;
+        else if (m[3]) out += `<span class="tok-prop">${escapeHtml(m[3])}</span>`;
+        else if (m[4]) out += `<span class="tok-str">${escapeHtml(m[4])}</span>`;
+        else out += escapeHtml(full);
+      } else if (isCss) {
+        if (m[1]) out += `<span class="tok-com">${escapeHtml(m[1])}</span>`;
+        else if (m[2]) out += `<span class="tok-str">${escapeHtml(m[2])}</span>`;
+        else if (m[3]) out += `<span class="tok-kw">${escapeHtml(m[3])}</span>`;
+        else if (m[4]) out += `<span class="tok-prop">${escapeHtml(m[4])}</span>${escapeHtml(m[5])}`;
+        else if (m[6]) out += `<span class="tok-num">${escapeHtml(m[6])}</span>`;
+        else out += escapeHtml(full);
+      } else {
+        if (m[1]) out += `<span class="tok-com">${escapeHtml(m[1])}</span>`;
+        else if (m[2]) out += `<span class="tok-str">${escapeHtml(m[2])}</span>`;
+        else if (m[3]) out += `<span class="tok-num">${escapeHtml(m[3])}</span>`;
+        else if (m[4]) {
+          const w = m[4];
+          const cls = kwSet.has(isSql ? w.toLowerCase() : w) ? "tok-kw" : "tok-fn";
+          out += `<span class="${cls}">${escapeHtml(w)}</span>`;
+        } else if (m[5]) {
+          const w = m[5];
+          const cls = litSet.has(w) ? "tok-lit" : kwSet.has(isSql ? w.toLowerCase() : w) ? "tok-kw" : "tok-type";
+          out += `<span class="${cls}">${escapeHtml(w)}</span>`;
+        } else if (m[6]) {
+          const w = m[6];
+          if (kwSet.has(isSql ? w.toLowerCase() : w)) out += `<span class="tok-kw">${escapeHtml(w)}</span>`;
+          else if (litSet.has(w)) out += `<span class="tok-lit">${escapeHtml(w)}</span>`;
+          else out += escapeHtml(w);
+        } else {
+          out += escapeHtml(full);
+        }
+      }
+      last = pattern.lastIndex;
+    }
+    if (last < text.length) out += escapeHtml(text.slice(last));
+    return out;
+  }
+
   function codeBlockHtml(source, language = "") {
     const labels = {
       js: "JavaScript", javascript: "JavaScript", ts: "TypeScript", typescript: "TypeScript",
-      jsx: "JSX", tsx: "TSX", html: "HTML", css: "CSS", json: "JSON", bash: "Bash",
-      sh: "Shell", shell: "Shell", python: "Python", py: "Python", java: "Java",
+      jsx: "JSX", tsx: "TSX", html: "HTML", css: "CSS", scss: "SCSS", json: "JSON",
+      bash: "Bash", sh: "Shell", shell: "Shell", zsh: "Zsh", python: "Python", py: "Python",
+      go: "Go", rust: "Rust", rs: "Rust", c: "C", cpp: "C++", java: "Java",
       kotlin: "Kotlin", dart: "Dart", sql: "SQL", yaml: "YAML", yml: "YAML",
-      markdown: "Markdown", md: "Markdown", text: "TEXT",
+      markdown: "Markdown", md: "Markdown", text: "Text",
     };
     const rawLanguage = String(language || "").trim().split(/\s+/)[0].toLowerCase();
-    const label = labels[rawLanguage] || (rawLanguage ? rawLanguage.toUpperCase() : "CODE");
+    const label = labels[rawLanguage] || (rawLanguage ? rawLanguage.toUpperCase() : "Code");
     const code = String(source || "").replace(/^\n|\n$/g, "");
-    return `<section class="chat-code-block">
-      <header><span>${escapeHtml(label)}</span><button type="button" data-copy-code aria-label="复制代码">复制</button></header>
-      <pre><code>${escapeHtml(code)}</code></pre>
+    return `<section class="chat-code-block" data-lang="${escapeHtml(rawLanguage || "plain")}">
+      <header><span>${escapeHtml(label)}</span><button type="button" data-copy-code aria-label="复制代码">${CODE_COPY_ICON}<span>复制代码</span></button></header>
+      <pre><code>${highlightCodeHtml(code, rawLanguage)}</code></pre>
     </section>`;
   }
 
@@ -925,13 +1084,25 @@
   }
 
   function composerModelDisplayName(modelId) {
-    const label = modelDisplayName(modelId).replace(/^claude:/i, "").trim();
-    if (!label || /[A-Z\u4e00-\u9fff]/.test(label)) return label;
-    return label
-      .replace(/^gpt-(\d+(?:\.\d+)?)(?:-(.+))?$/i, (_, ver, rest) =>
-        `GPT-${ver}${rest ? " " + rest.split("-").map((w) => w ? w[0].toUpperCase() + w.slice(1) : "").join(" ") : ""}`)
-      .replace(/^(gemini|claude|deepseek)-(.+)$/i, (_, brand, rest) =>
-        `${brand[0].toUpperCase()}${brand.slice(1).toLowerCase()} ${rest.split("-").map((w) => w ? w[0].toUpperCase() + w.slice(1) : "").join(" ")}`);
+    let label = modelDisplayName(modelId)
+      .replace(/^claude:/i, "")
+      .replace(/\s*\((?:Low|Medium|High|XHigh|Minimal|Thinking|Preview|Experimental|Exp|Fast|Standard)\)\s*/gi, " ")
+      .replace(/\s+(?:preview|experimental|latest)$/i, "")
+      .trim();
+    if (!label) return "";
+    if (!/[A-Z\u4e00-\u9fff]/.test(label)) {
+      label = label
+        .replace(/^gpt-(\d+(?:\.\d+)?)(?:-(.+))?$/i, (_, ver, rest) =>
+          rest ? `${ver} ${rest.split("-").map((w) => w ? w[0].toUpperCase() + w.slice(1) : "").join(" ")}` : `GPT-${ver}`)
+        .replace(/^(?:gemini|claude|deepseek)-(.+)$/i, (_, rest) =>
+          rest.split("-").map((w) => w ? w[0].toUpperCase() + w.slice(1) : "").join(" "));
+    } else {
+      label = label
+        .replace(/^Gemini\s+/i, "")
+        .replace(/^Claude\s+/i, "")
+        .replace(/^GPT-(\d+(?:\.\d+)?)\s+(.+)$/i, "$1 $2");
+    }
+    return label.replace(/\s+/g, " ").trim();
   }
 
   function modelSource(model) {
@@ -1417,7 +1588,7 @@
 
   let headerAccountsCheckedAt = 0, pendingHeaderProvider = null, headerAccountsTimer = null;
   function chooseHeaderProvider(provider, accounts) {
-    const kind = account => account.provider === "claude" ? "claude" : account.provider === "antigravity" ? "gemini" : "gpt";
+    const kind = account => account.provider === "claude" ? "claude" : isAntigravityProfile(account.provider) ? "gemini" : "gpt";
     const usable = accounts.filter(account => kind(account) === provider && account.authenticated &&
       (state.admin || state.allowedCodexProfiles.includes(account.id)));
     if (usable.length === 1) { closeCodexAccounts(); switchHarnessProfile(usable[0].id); return; }
@@ -1445,8 +1616,10 @@
     document.querySelectorAll("[data-header-provider]").forEach(button => {
       const provider = button.dataset.headerProvider;
       const permitted = state.admin || (provider === "gpt"
-        ? state.allowedCodexProfiles.some(id => !["claude", "antigravity"].includes(id))
-        : state.allowedCodexProfiles.includes(provider === "gemini" ? "antigravity" : "claude"));
+        ? state.allowedCodexProfiles.some(id => !["claude", "antigravity", "antigravity2"].includes(id))
+        : provider === "gemini"
+          ? state.allowedCodexProfiles.some(id => isAntigravityProfile(id))
+          : state.allowedCodexProfiles.includes("claude"));
       button.querySelector(".header-account-logo").innerHTML = providerIcons[provider === "gpt" ? "openai" : provider] || "✦";
       button.dataset.active = String(current === provider);
       button.setAttribute("aria-busy", String(pendingHeaderProvider === provider));
@@ -1464,7 +1637,7 @@
     const providerLabel = provider === "gemini" ? "Gemini" : provider === "claude" ? "Claude" : "GPT";
     const windows = [];
     let pro = false;
-    if (state.codexProfile === "antigravity") {
+    if (isAntigravityProfile(state.codexProfile)) {
       const groups = state.usage?.quota?.groups || [];
       const thirdParty = /^gemini:(claude|gpt)-/.test(state.model || "");
       const group = (state.model || "").includes("argon")
@@ -1489,8 +1662,12 @@
         if (used !== null) windows.push({ remaining: 100 - used, window: windowId, label });
       }
     }
-    const limiting = windows.reduce((a, b) => !a || b.remaining < a.remaining ? b : a, null);
-    const remaining = limiting?.remaining ?? null;
+    const preferred = windows.find((w) => w.window === "5h")
+      || windows.find((w) => w.window === "weekly")
+      || windows[0]
+      || null;
+    const limiting = preferred;
+    const remaining = preferred?.remaining ?? null;
     const tone = remaining === null ? "unknown" : remaining <= 5 ? "danger" : remaining <= 20 ? "warning" : "normal";
     return { provider, providerLabel, windows, limiting, remaining, tone, pro };
   }
@@ -1567,9 +1744,18 @@
         const label = summary.remaining <= 0
           ? `${summary.providerLabel} 当前窗口额度已用尽`
           : `${summary.providerLabel} 额度仅剩 ${summary.remaining}%（${summary.limiting.label}）`;
+        const backupSeat = summary.provider === "gemini"
+          ? (state.codexAccounts || []).find((a) =>
+              a.id !== state.codexProfile && isAntigravityProfile(a.id) && a.authenticated &&
+              a.quotaSummary?.errorCode !== "region_ineligible")
+          : null;
+        const switchBtn = backupSeat
+          ? `<button type="button" class="composer-quota-switch" data-quota-switch="${escapeHtml(backupSeat.id)}">切到 ${escapeHtml(backupSeat.label || backupSeat.id)}</button>`
+          : "";
         alertWrap.innerHTML = `<div class="composer-quota-banner" data-tone="${summary.tone}" role="status">
           <span class="codex-quota-dot" aria-hidden="true"></span>
           <span class="composer-quota-banner-text">${escapeHtml(label)}</span>
+          ${switchBtn}
           <button type="button" class="composer-quota-action" data-quota-open>查看额度</button>
           <button type="button" class="composer-quota-dismiss" data-quota-dismiss="${escapeHtml(alertKey)}" aria-label="暂时收起提示">×</button>
         </div>`;
@@ -1592,7 +1778,7 @@
     }
     paint(quota, $("#headerQuotaValue"), summary.remaining, summary.tone,
       summary.remaining === null ? "额度尚未读取或此账号暂不提供额度，点击查看用量" :
-        `额度剩余 ${summary.remaining}%，取当前限制窗口中较低的剩余额度。${summary.windows.map(w => `${w.label}剩余 ${w.remaining}%`).join("，")}。点击查看详情`);
+        `额度剩余 ${summary.remaining}%，优先显示 5 小时额度，无 5 小时窗口时显示周额度。${summary.windows.map(w => `${w.label}剩余 ${w.remaining}%`).join("，")}。点击查看详情`);
     const usage = headerContextUsage();
     paint(context, $("#headerContextValue"), usage?.percent ?? null, usage?.percent >= 95 ? "danger" : usage?.percent >= 80 ? "warning" : "normal",
       usage ? `上下文已用 ${usage.percent}%，${formatTokens(usage.used)} / ${formatTokens(usage.windowSize)} tokens，点击查看详情` : "尚未收到当前对话的上下文统计，点击查看详情");
@@ -1635,12 +1821,12 @@
       button.setAttribute("aria-label", `查看 ${summary.providerLabel} 额度：${summary.windows.map((w) => `${w.label}剩余 ${w.remaining}%`).join("，")}`);
       return;
     }
-    if (["antigravity", "claude"].includes(state.codexProfile)) {
+    if (["antigravity", "antigravity2", "claude"].includes(state.codexProfile)) {
       button.hidden = false;
       button.classList.remove("pro-quota");
       fiveHourLabel.hidden = false;
       weeklyLabel.hidden = true;
-      fiveHourLabel.textContent = state.codexProfile === "antigravity" ? "查看 Gemini 额度" : "查看 Claude 用量";
+      fiveHourLabel.textContent = isAntigravityProfile(state.codexProfile) ? "查看 Gemini 额度" : "查看 Claude 用量";
       button.setAttribute("aria-label", "查看当前账号额度");
       return;
     }
@@ -1656,7 +1842,7 @@
       const saved = JSON.parse(localStorage.getItem(usageCacheKey(profileId)) || "null");
       if (!saved || typeof saved !== "object") return null;
       const expectedProvider = profileProvider(profileId);
-      const savedProvider = saved.provider === "antigravity" ? "gemini" : saved.provider === "claude" ? "claude" : "gpt";
+      const savedProvider = isAntigravityProfile(saved.provider) ? "gemini" : saved.provider === "claude" ? "claude" : "gpt";
       if (savedProvider !== expectedProvider) return null;
       return saved;
     } catch {
@@ -1684,6 +1870,8 @@
     updateHeaderCapsule();
     bridge().requestUsage(state.activeId || "");
   }
+
+  let initialConversationReady = false;
 
   function dismissBoot() {
     const boot = $("#bootScreen");
@@ -1740,6 +1928,7 @@
   function updateModelControls() {
     selectAccountCapabilities();
     $("#modelLabel").textContent = composerModelDisplayName(state.model);
+    $("#modelButton")?.setAttribute("title", modelDisplayName(state.model));
     $("#modelButton").dataset.modelSource = modelSource({id:state.model || ""}).id;
     $(".model-spark").innerHTML = modelBrandIcon(state.model || (profileProvider(state.codexProfile) === "gemini" ? "gemini:" : profileProvider(state.codexProfile) === "claude" ? "claude:" : "gpt-6.1-sol"));
     $("#reasoningLabel").textContent = reasoningNames[state.reasoning] || "均衡";
@@ -1871,7 +2060,7 @@
     }
     if (payload.provider) {
       const quota = payload.quota || {};
-      const label = payload.provider === "antigravity" ? "反重力" : "Claude";
+      const label = isAntigravityProfile(payload.provider) ? "Gemini" : "Claude";
       const groups = quota.available ? (quota.groups || []) : [];
       const reset = value => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString("zh-CN", {month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "官方暂未提供";
       const family = /argon/i.test(state.model || "") ? "argon" : /^gemini:(claude|gpt)-/.test(state.model || "") ? "third-party" : "gemini";
@@ -2509,12 +2698,12 @@
     "claude": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z\"/></svg>",
     "gemini": "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"url(#witt-gemini-official)\" d=\"M12 0C12 6.627 17.373 12 24 12C17.373 12 12 17.373 12 24C12 17.373 6.627 12 0 12C6.627 12 12 6.627 12 0Z\"/></svg>",
   };
-  const profileProvider = (id) => id === "claude" ? "claude" : id === "antigravity" ? "gemini" : "gpt";
+  const profileProvider = (id) => id === "claude" ? "claude" : isAntigravityProfile(id) ? "gemini" : "gpt";
   function renderCodexAccounts(accounts = []) {
     state.codexAccounts = accounts;
     renderHeaderAccountSwitch();
-    const category = account => account.provider === "claude" ? "claude" : account.provider === "antigravity" ? "gemini" : "gpt";
-    const groups = state.admin ? ["gpt","claude","gemini"] : ["gpt", ...(state.allowedCodexProfiles.includes("antigravity") ? ["gemini"] : [])];
+    const category = account => account.provider === "claude" ? "claude" : isAntigravityProfile(account.provider) ? "gemini" : "gpt";
+    const groups = state.admin ? ["gpt","claude","gemini"] : ["gpt", ...(state.allowedCodexProfiles.some(id => isAntigravityProfile(id)) ? ["gemini"] : [])];
     if(!groups.includes(state.accountCategory)) state.accountCategory="gpt";
     const names={gpt:"GPT",claude:"Claude",gemini:"Gemini"};
     const icon = name => providerIcons[name === "gpt" ? "openai" : name];
@@ -2530,13 +2719,26 @@
       const kind=category(account),signedIn=Boolean(account.authenticated);
       const detail=account.readError || (signedIn ? `${account.account?.email||"已登录"}${account.account?.planType ? ` · ${account.account.planType}` : ""}`
         : kind === "gemini" ? "通过官方 Antigravity CLI 登录" : kind === "claude" ? "通过官方 Claude Code 登录" : "尚未登录");
-      const canLogin=account.id!=="default" && kind!=="gpt" && (state.admin || (account.provider==="antigravity" && state.allowedCodexProfiles.includes("antigravity")));
+      const canLogin=account.id!=="default" && kind!=="gpt" && (state.admin || (isAntigravityProfile(account.provider) && state.allowedCodexProfiles.includes(account.id)));
       const loginAttr=kind === "gpt" ? `data-login-codex="${escapeHtml(account.id)}"` : `data-login-provider="${escapeHtml(account.provider)}"`;
-      const actions=`${canLogin ? `<button class="${signedIn ? "relogin":"login"}" ${loginAttr}>${signedIn ? (kind === "gpt" ? "重新登录":"管理登录") : "登录账号"}</button>` : ""}
+      const qs = account.quotaSummary;
+      let quotaStrip = "";
+      if (kind === "gemini" && signedIn && qs) {
+        if (qs.errorCode === "region_ineligible") {
+          quotaStrip = `<div class="account-quota-strip"><span class="account-quota-pill danger">地区暂不支持 · 请更换账号</span></div>`;
+        } else if (qs.available) {
+          const pills = [];
+          const toneOf = (v) => v <= 10 ? "danger" : v <= 25 ? "warn" : "ok";
+          if (typeof qs.fiveHour === "number") pills.push(`<span class="account-quota-pill ${toneOf(qs.fiveHour)}">5h 余 ${qs.fiveHour}%</span>`);
+          if (typeof qs.weekly === "number") pills.push(`<span class="account-quota-pill ${toneOf(qs.weekly)}">周 余 ${qs.weekly}%</span>`);
+          if (pills.length) quotaStrip = `<div class="account-quota-strip">${pills.join("")}</div>`;
+        }
+      }
+      const actions=`${canLogin ? `<button class="${signedIn ? "relogin":"login"}" ${loginAttr}>${signedIn ? (kind === "gpt" ? "重新登录" : kind === "gemini" ? "更换账号" : "管理登录") : "登录账号"}</button>` : ""}
         ${signedIn ? `<button class="new-chat" data-new-codex-chat="${escapeHtml(account.id)}">使用此账号</button>` : ""}`;
       return `<article class="codex-account-card provider-account-card ${account.id === "default" ? "primary":"additional"}" data-account-provider="${kind}">
         <span class="codex-account-avatar provider-icon ${kind}">${icon(kind)}</span>
-        <div class="codex-account-identity"><strong>${escapeHtml(account.label||account.id)}</strong><small>${escapeHtml(detail)}</small></div>
+        <div class="codex-account-identity"><strong>${escapeHtml(account.label||account.id)}</strong><small>${escapeHtml(detail)}</small>${quotaStrip}</div>
         <div class="codex-account-actions">${actions}</div></article>`;
     }).join("");
     $("#codexAccountList").innerHTML=`<div class="account-provider-tabs" role="tablist" aria-label="账号类型">${groups.map(kind=>`<button type="button" role="tab" aria-selected="${state.accountCategory===kind}" aria-controls="accountProviderPanel" data-account-category="${kind}" class="${state.accountCategory===kind ? "selected":""}"><span class="provider-icon ${kind}">${icon(kind)}</span><b>${names[kind]}</b><small>${accounts.filter(a=>category(a)===kind && (kind!=="gpt" || a.authenticated || a.id==="default")).length}</small></button>`).join("")}</div>
@@ -2627,7 +2829,7 @@
 
   let providerCapabilitiesRequestedAt = 0;
   function refreshProviderCapabilities() {
-    if (!["claude", "antigravity"].includes(state.codexProfile) || Date.now() - providerCapabilitiesRequestedAt < 30000) return;
+    if (!["claude", "antigravity", "antigravity2"].includes(state.codexProfile) || Date.now() - providerCapabilitiesRequestedAt < 30000) return;
     providerCapabilitiesRequestedAt = Date.now();
     bridge()?.requestCapabilities?.();
   }
@@ -2817,7 +3019,7 @@
     if (provider === "claude" || profile === "claude") {
       return { id: "claude", label: "Claude" };
     }
-    if (provider === "antigravity" || profile === "antigravity") {
+    if (provider === "antigravity" || provider === "antigravity2" || profile === "antigravity" || profile === "antigravity2") {
       return { id: "gemini", label: "Gemini" };
     }
     if (provider === "deepseek") {
@@ -2928,8 +3130,67 @@
     scheduleSummaryRefresh();
   }
 
+  function fileVisualMeta(file) {
+    const name = String(file?.name || "");
+    const ext = extension(name);
+    const lower = ext.toLowerCase();
+    const mime = String(file?.type || file?.mimeType || "").toLowerCase();
+    const isImage = mime.startsWith("image/") || ["png","jpg","jpeg","webp","gif","bmp","svg","avif"].includes(lower);
+    if (isImage) {
+      return {
+        kind: "image",
+        ext: ext || "IMG",
+        icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m21 16-5-5-6 6-3-3-4 4"/></svg>',
+      };
+    }
+    if (lower === "pdf" || mime === "application/pdf") {
+      return {
+        kind: "pdf",
+        ext: "PDF",
+        icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5M9 14h6M9 17h4"/></svg>',
+      };
+    }
+    if (["js","mjs","cjs","ts","tsx","jsx","py","go","rs","java","kt","c","cpp","h","css","scss","html","htm","json","yaml","yml","toml","xml","sh","bash","zsh","sql","md"].includes(lower)) {
+      return {
+        kind: "code",
+        ext: ext || "CODE",
+        icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 9-4 3 4 3M16 9l4 3-4 3M13.5 6l-3 12"/></svg>',
+      };
+    }
+    if (["csv","xls","xlsx","numbers"].includes(lower)) {
+      return {
+        kind: "sheet",
+        ext: ext || "CSV",
+        icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/></svg>',
+      };
+    }
+    if (["zip","tar","gz","tgz","rar","7z","apk","dmg","ipa"].includes(lower)) {
+      return {
+        kind: "archive",
+        ext: ext || "ZIP",
+        icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="M1 4h22v4H1zM10 12h4"/></svg>',
+      };
+    }
+    if (mime.startsWith("audio/") || mime.startsWith("video/") || ["mp3","wav","m4a","ogg","mp4","mov","webm","mkv"].includes(lower)) {
+      return {
+        kind: "media",
+        ext: ext || "MEDIA",
+        icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="8,5 19,12 8,19"/></svg>',
+      };
+    }
+    return {
+      kind: "doc",
+      ext: ext || "FILE",
+      icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5M9 13h6M9 17h6"/></svg>',
+    };
+  }
+
   function attachmentHtml(file) {
-    return `<span class="message-file"><b>${extension(file.name)}</b><span><strong>${escapeHtml(file.name)}</strong><small>${formatBytes(file.size)}</small></span></span>`;
+    const meta = fileVisualMeta(file);
+    return `<span class="message-file" data-file-kind="${meta.kind}">
+      <span class="message-file-icon" aria-hidden="true">${meta.icon}</span>
+      <span class="message-file-body"><strong>${escapeHtml(file.name)}</strong><small>${escapeHtml(meta.ext)} · ${formatBytes(file.size)}</small></span>
+    </span>`;
   }
 
   function imageUrl(image) {
@@ -3013,13 +3274,35 @@
     return groups.find((group) => group.key === state.artifactKey) || groups.at(-1) || null;
   }
 
+  function isImageArtifact(artifact) {
+    return /^image\//i.test(String(artifact?.mimeType || "")) ||
+      /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(String(artifact?.name || ""));
+  }
+
   function artifactPreviewHtml(message) {
     const versions = (message.previewVersions || []).filter(isPreviewableArtifact);
     const live = isPreviewableArtifact(message.livePreview) ? message.livePreview : versions.at(-1);
-    const files = (message.artifacts || []).map((artifact) => ({ artifact, live: false }));
-    if (live && !files.some((file) => file.artifact.name === live.name)) files.push({ artifact: live, live: true });
-    if (!files.length) return "";
-    return `<div class="message-artifacts" aria-label="本轮文件">${files.map((file) => {
+    const allFiles = (message.artifacts || []).map((artifact) => ({ artifact, live: false }));
+    if (live && !allFiles.some((file) => file.artifact.name === live.name)) allFiles.push({ artifact: live, live: true });
+    if (!allFiles.length) return "";
+    const imageFiles = allFiles.filter((file) => !file.live && isImageArtifact(file.artifact));
+    const files = allFiles.filter((file) => file.live || !isImageArtifact(file.artifact));
+    const imagesHtml = imageFiles.length ? `<div class="message-image-artifacts" aria-label="生成图片">${imageFiles.map((file) => {
+      const artifact = file.artifact;
+      const imgUrl = artifactUrl(message.id, artifact, false);
+      const name = escapeHtml(artifact.name || "生成图片");
+      const sizeText = formatBytes(artifact.size);
+      return `<figure class="message-image-card message-artifact" data-download-key="${escapeHtml(artifactDownloadKey(state.activeId, message.id, artifact.id))}">
+        <button type="button" class="message-image-zoom" data-inline-image="${escapeHtml(imgUrl)}" data-image-name="${name}" data-image-mime="${escapeHtml(artifact.mimeType || "image/png")}" aria-label="放大查看 ${name}">
+          <img src="${escapeHtml(imgUrl)}" alt="${name}" loading="lazy" decoding="async">
+        </button>
+        <figcaption class="message-image-bar">
+          <span class="message-image-meta"><strong>${name}</strong><small data-download-caption data-file-caption="${escapeHtml(sizeText)}">${escapeHtml(sizeText)}</small></span>
+          <button type="button" class="message-artifact-download" data-download-artifact="${escapeHtml(artifact.id)}" data-message="${escapeHtml(message.id)}" aria-label="下载 ${name}" title="下载图片"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4"/></svg><span>下载</span></button>
+        </figcaption>
+      </figure>`;
+    }).join("")}</div>` : "";
+    const filesHtml = files.length ? `<div class="message-artifacts" aria-label="本轮文件">${files.map((file) => {
       const artifact = file.artifact;
       const previewable = isPreviewableArtifact(artifact);
       const useVersions = previewable && versions.some((version) => version.name === artifact.name);
@@ -3036,7 +3319,8 @@
         ${previewable ? `<button type="button" class="message-artifact-main" data-open-artifact="${escapeHtml(key)}" aria-label="预览 ${name}">${content}</button>` : `<div class="message-artifact-main">${content}</div>`}
         <button type="button" class="message-artifact-download" data-download-artifact="${escapeHtml(artifact.id)}" data-message="${escapeHtml(message.id)}" aria-label="下载 ${name}" title="下载文件"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4"/></svg><span>下载</span></button>
       </article>`;
-    }).join("")}</div>`;
+    }).join("")}</div>` : "";
+    return `${imagesHtml}${filesHtml}`;
   }
 
   function artifactDownloadKey(conversationId, messageId, artifactId) {
@@ -3410,21 +3694,24 @@
     const questions = Array.isArray(entry.approvalQuestions) ? entry.approvalQuestions : [];
     const fields = questions.map((question, questionIndex) => {
       const options = Array.isArray(question.options) ? question.options : [];
+      const multi = Boolean(question.isMultiSelect);
+      const inputType = multi ? "checkbox" : "radio";
       const input = options.length ? `<div class="approval-choice-grid">${options.map((option, index) => `
-        <label><input type="radio" name="approval-question-${questionIndex}" value="${escapeHtml(option.label)}" ${index === 0 ? "required" : ""}>
-          <span><b>${escapeHtml(option.label)}</b><small>${escapeHtml(option.description || "")}</small></span></label>`).join("")}
-        ${question.allowOther ? `<label><input type="radio" name="approval-question-${questionIndex}" value="__other__"><span><b>其他</b><small>输入自定义回答</small></span></label>
-          <div class="approval-other-wrap" hidden><input class="approval-other-input" type="text" maxlength="2000" autocomplete="off" placeholder="请输入你的回答"></div>` : ""}</div>`
-        : `<input class="approval-text-input" type="${question.isSecret ? "password" : "text"}" maxlength="2000" required autocomplete="off" placeholder="输入回答">`;
-      return `<fieldset class="approval-question" data-question-id="${escapeHtml(question.id)}" data-approval-slide="${questionIndex}">
-        <legend>${escapeHtml(question.header || `问题 ${questionIndex + 1}`)}</legend>
+        <label><input type="${inputType}" name="approval-question-${questionIndex}" value="${escapeHtml(option.label)}" ${!multi && index === 0 ? "required" : ""}>
+          <span><b>${escapeHtml(option.label)}</b>${option.description ? `<small>${escapeHtml(option.description)}</small>` : ""}</span></label>`).join("")}
+        ${question.allowOther ? `<label><input type="${inputType}" name="approval-question-${questionIndex}" value="__other__"><span><b>其他</b><small>自定义输入</small></span></label>
+          <div class="approval-other-wrap" hidden><input class="approval-other-input" type="text" maxlength="2000" autocomplete="off" placeholder="请输入你的回答…"></div>` : ""}</div>`
+        : `<input class="approval-text-input" type="${question.isSecret ? "password" : "text"}" maxlength="2000" required autocomplete="off" placeholder="请输入你的回答…">`;
+      const headerTag = question.header ? `<legend>${escapeHtml(question.header)}${multi ? " · 可多选" : ""}</legend>` : (multi ? `<legend>可多选</legend>` : "");
+      return `<fieldset class="approval-question" data-question-id="${escapeHtml(question.id)}" data-multi="${multi ? "1" : "0"}" data-approval-slide="${questionIndex}">
+        ${headerTag}
         <p>${escapeHtml(question.question || "请选择如何继续")}</p>${input}</fieldset>`;
     }).join("");
     return `<form class="approval-structured-form" data-approval-input-form data-approval-id="${escapeHtml(entry.approvalId)}" novalidate>
       <div class="approval-carousel" data-approval-carousel>${fields}</div>
       <div class="approval-carousel-actions">
-        <button type="button" class="approval-back" data-approval-back hidden aria-label="上一题">←</button>
-        <div class="approval-dots" aria-hidden="true">${questions.map((_, index) => `<i class="${index === 0 ? "active" : ""}"></i>`).join("")}</div>
+        <button type="button" class="approval-back" data-approval-back hidden aria-label="上一题">← 上一题</button>
+        <div class="approval-dots" aria-hidden="true">${questions.length > 1 ? questions.map((_, index) => `<i class="${index === 0 ? "active" : ""}"></i>`).join("") : ""}</div>
         <button type="button" class="approval-next" data-approval-next ${questions.length <= 1 ? "hidden" : ""}>下一题</button>
         <button type="submit" class="approval-submit" ${questions.length > 1 ? "hidden" : ""}>提交</button>
       </div>
@@ -3505,7 +3792,7 @@
     ].filter(Boolean).join("");
     const fallbackOptions = [
       { id: "accept", label: "允许一次", description: "仅批准当前这项操作", tone: "accepted" },
-      { id: "decline", label: "拒绝并继续", description: "不执行操作，让 Codex 尝试其他做法", tone: "declined" },
+      { id: "decline", label: "拒绝并继续", description: "不执行此操作，换一种方式继续", tone: "declined" },
     ];
     const options = Array.isArray(entry.approvalOptions) && entry.approvalOptions.length
       ? entry.approvalOptions : fallbackOptions;
@@ -3517,11 +3804,17 @@
     const isUserInput = entry.approvalType === "user_input";
     const questionCount = Array.isArray(entry.approvalQuestions)
       ? entry.approvalQuestions.length : 0;
+    const cleanTitle = isUserInput
+      ? (questionCount > 1 ? "请完成以下选择" : (entry.title && entry.title !== "需要你的选择" ? entry.title : "请选择"))
+      : (entry.title || "操作确认");
+    const pageBadge = pending && isUserInput && questionCount > 1
+      ? `<b data-approval-page>1 / ${questionCount}</b>`
+      : (!pending ? `<b data-approval-page>${escapeHtml(statusLabels[entry.status] || "已处理")}</b>` : "");
     return `<section class="approval-card ${isUserInput ? "user-input" : ""} ${entry.status || "pending"}" data-approval-card="${escapeHtml(entry.approvalId)}" data-approval-type="${escapeHtml(entry.approvalType || "")}">
       <div class="approval-sheet-grabber" aria-hidden="true"></div>
       <header>
-        <div><small>${escapeHtml(typeLabels[entry.approvalType] || "APPROVAL")}</small><strong>${isUserInput ? "Codex 需要输入" : "Codex 请求确认"}</strong></div>
-        <b data-approval-page>${pending && isUserInput && questionCount ? `1 / ${questionCount}` : pending ? "待确认" : escapeHtml(statusLabels[entry.status] || "已处理")}</b>
+        <strong>${escapeHtml(cleanTitle)}</strong>
+        <div class="approval-head-actions">${pageBadge}${pending ? `<button type="button" class="approval-minimize-btn" data-approval-minimize aria-label="暂时收起" title="暂时收起以查看对话">×</button>` : ""}</div>
       </header>
       ${pending ? structuredHtml
         : `<footer class="approval-resolution"><i></i><span>${escapeHtml(resolvedLabel)}</span></footer>`}
@@ -3539,32 +3832,40 @@
     const entry = pendingApproval();
     if (!entry) {
       dock.hidden = true;
-      dock.classList.remove("submitting");
+      dock.classList.remove("submitting", "minimized");
       panel.innerHTML = "";
       delete panel.dataset.signature;
+      delete dock.dataset.approvalId;
       document.body.classList.remove("approval-dock-open");
       return;
     }
+    const isNewApproval = dock.dataset.approvalId !== entry.approvalId;
     const signature = JSON.stringify([
       entry.approvalId, entry.approvalType, entry.title, entry.reason,
       entry.approvalOptions, entry.approvalQuestions, entry.approvalForm,
       entry.command, entry.cwd, entry.host, entry.permissionSummary,
     ]);
     if (panel.dataset.signature !== signature) {
-      panel.innerHTML = approvalHtml(entry);
+      const reopenLabel = entry.approvalType === "user_input" ? "有待回答的问题 · 点击继续" : "有待确认的操作 · 点击查看";
+      panel.innerHTML = `<button type="button" class="approval-reopen-pill" data-approval-reopen><i aria-hidden="true"></i><span>${escapeHtml(reopenLabel)}</span></button>${approvalHtml(entry)}`;
       panel.dataset.signature = signature;
     }
+    if (isNewApproval) {
+      dock.dataset.approvalId = entry.approvalId;
+      dock.classList.remove("minimized");
+    }
     dock.hidden = false;
-    document.body.classList.add("approval-dock-open");
+    document.body.classList.toggle("approval-dock-open", !dock.classList.contains("minimized"));
   }
 
   function approvalQuestionComplete(field) {
-    const checked = field?.querySelector('input[type="radio"]:checked');
     const textInput = field?.querySelector(".approval-text-input");
     if (textInput) return Boolean(textInput.value.trim());
-    if (!checked) return false;
-    if (checked.value !== "__other__") return true;
-    return Boolean(field.querySelector(".approval-other-input")?.value.trim());
+    const checked = [...(field?.querySelectorAll('input[type="radio"]:checked, input[type="checkbox"]:checked') || [])];
+    if (!checked.length) return false;
+    const hasOther = checked.some((item) => item.value === "__other__");
+    if (hasOther && !field.querySelector(".approval-other-input")?.value.trim()) return false;
+    return true;
   }
 
   function updateApprovalPageState(form, requestedIndex) {
@@ -3643,7 +3944,7 @@
         flushActions();
         if (!entry.text) return;
         const phase = entry.phase === "final_answer" ? "final" : "commentary";
-        rendered.push(`<div class="stream-message ${phase} ${entry.status || ""}">${textHtml(entry.text)}</div>`);
+        rendered.push(`<div data-stream-id="${escapeHtml(entry.id)}" class="stream-message ${phase} ${entry.status || ""}">${textHtml(entry.text)}</div>`);
         return;
       }
       if (entry.kind === "image") {
@@ -3727,7 +4028,9 @@
     const editIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
     if (message.role === "user") {
       const canAct = message.status !== "sending" && Boolean(String(message.text || "").trim());
-      return `<div class="bubble">${message.text
+      const toolBadgeLabel = message.toolMode ? (GEMINI_TOOL_MODES[message.toolMode]?.label || (message.toolMode === "research_run" ? "Deep Research · 执行中" : "")) : "";
+      const toolBadgeHtml = toolBadgeLabel ? `<div class="msg-tool-badge"><span>✦</span>${escapeHtml(toolBadgeLabel)}</div>` : "";
+      return `<div class="bubble">${toolBadgeHtml}${message.text
         ? `<div class="user-message-copy"><div class="user-message-rich">${textHtml(message.text)}</div></div>
           <button type="button" class="user-message-toggle" aria-expanded="false" hidden>展开全文</button>`
         : ""}${files ? `<div class="message-files">${files}</div>` : ""}</div>
@@ -3749,11 +4052,26 @@
       .join("");
     const finished = ["completed", "failed", "interrupted"].includes(message.status);
     const hasCopyable = Boolean(messagePlainText(message));
+    const allMsgs = state.active?.messages || [];
+    const isLatestAssistant = allMsgs.length > 0 && allMsgs[allMsgs.length - 1]?.id === message.id;
+    const researchPlanHtml = finished && message.status === "completed" && message.toolMode === "research" && isLatestAssistant
+      ? `<div class="research-plan-card" data-research-plan="${escapeHtml(message.id)}">
+          <div class="research-plan-copy">
+            <strong>✦ 研究计划已就绪</strong>
+            <small>确认后将展开多轮联网检索并生成完整报告</small>
+          </div>
+          <div class="research-plan-actions">
+            <button type="button" class="research-btn-secondary" data-research-edit>修改计划</button>
+            <button type="button" class="research-btn-primary" data-research-start>开始深度研究</button>
+          </div>
+        </div>`
+      : "";
     return `<div class="assistant-body">
       ${finished
         ? completedMessageHtml(message) : streamHtml(message)}
       ${deliveredImages ? `<div class="message-image-gallery">${deliveredImages}</div>` : ""}
       ${artifactPreviewHtml(message)}
+      ${researchPlanHtml}
       <div class="message-meta-row">
         <time>${formatDate(message.createdAt)}</time>
         ${finished && hasCopyable ? `<div class="message-actions">
@@ -3992,7 +4310,57 @@
     return result;
   }
 
+  // Streaming DOM updates preserve text nodes, code scroll and disclosure state.
+  function patchStreamingMessage(target, html) {
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const key = node => node.nodeType === 1
+      ? node.id || node.getAttribute("data-stream-id") || node.getAttribute("data-process-key") || "" : "";
+    const compatible = (left, right) => left && left.nodeType === right.nodeType &&
+      left.nodeName === right.nodeName && key(left) === key(right);
+    const patch = (parent, nextParent) => {
+      const keyed = new Map([...parent.childNodes].filter(key).map(node => [key(node), node]));
+      let current = parent.firstChild;
+      for (const next of nextParent.childNodes) {
+        const existing = key(next) ? keyed.get(key(next)) : current;
+        if (!compatible(existing, next)) {
+          const added = next.cloneNode(true);
+          parent.insertBefore(added, current);
+          continue;
+        }
+        if (existing !== current) parent.insertBefore(existing, current);
+        if (!existing.isEqualNode(next)) {
+          if (existing.nodeType === 3 || existing.nodeType === 8) existing.nodeValue = next.nodeValue;
+          else {
+            for (const attr of [...existing.attributes]) {
+              if (existing.nodeName === "DETAILS" && attr.name === "open") continue;
+              if (!next.hasAttribute(attr.name)) existing.removeAttribute(attr.name);
+            }
+            for (const attr of next.attributes) {
+              if (existing.nodeName === "DETAILS" && attr.name === "open") continue;
+              if (existing.getAttribute(attr.name) !== attr.value) existing.setAttribute(attr.name, attr.value);
+            }
+            patch(existing, next);
+          }
+        }
+        current = existing.nextSibling;
+      }
+      while (current) { const next = current.nextSibling; current.remove(); current = next; }
+    };
+    patch(target, template.content);
+  }
+
+  let messageRenderFrame = 0;
+  function scheduleMessageRender() {
+    if (messageRenderFrame) return;
+    messageRenderFrame = requestAnimationFrame(() => {
+      messageRenderFrame = 0;
+      renderMessages(true);
+    });
+  }
+
   function renderMessages(keepPosition = false) {
+    if (messageRenderFrame) { cancelAnimationFrame(messageRenderFrame); messageRenderFrame = 0; }
     const list = $("#messageList");
     const scrollAnchor = keepPosition ? captureMessageScrollAnchor() : null;
     const renderEpoch = ++messageRenderEpoch;
@@ -4023,7 +4391,7 @@
           : [message, ...steers]
       ));
     });
-    $("#welcome").hidden = orderedMessages.length > 0;
+    $("#welcome").hidden = !initialConversationReady || orderedMessages.length > 0;
     renderComposerProjectStrip();
     $("#chatStage").classList.toggle("empty-conversation", orderedMessages.length === 0);
     if (!orderedMessages.length) $("#chatStage").scrollTop = 0;
@@ -4036,8 +4404,9 @@
         changed = true;
       }
     });
+    const messageNodes = new Map([...list.children].map(node => [node.dataset.message, node]));
     orderedMessages.forEach((message, index) => {
-      let article = list.querySelector(`[data-message="${CSS.escape(message.id)}"]`);
+      let article = messageNodes.get(message.id);
       const isNew = !article;
       if (isNew) {
         article = document.createElement("article");
@@ -4046,7 +4415,10 @@
       const signature = fingerprint(message);
       if (article.dataset.fingerprint !== signature) {
         article.className = `message ${message.role} ${message.status || ""} ${message.steeredInto ? "guided" : ""}`;
-        article.innerHTML = messageInnerHtml(message);
+        const html = messageInnerHtml(message);
+        if (!isNew && message.role === "assistant" && article.dataset.status === "running" && message.status === "running") {
+          patchStreamingMessage(article, html);
+        } else article.innerHTML = html;
         article.dataset.status = message.status || "";
         article.dataset.fingerprint = signature;
         changed = true;
@@ -4059,14 +4431,14 @@
       syncUserMessageCollapse(article, message);
     });
     if (changed) {
-      requestAnimationFrame(() => requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
         if (renderEpoch !== messageRenderEpoch) return;
         if (keepPosition) restoreMessageScrollAnchor(scrollAnchor, renderEpoch);
         else {
           scrollToBottom();
           latestPinned = true;
         }
-      }));
+      });
     }
     const busy = messages.some((message) =>
       message.role === "assistant" &&
@@ -4140,23 +4512,114 @@
 
   function renderAttachments() {
     const files = [...state.attachments.values()];
-    $("#attachmentStrip").innerHTML = files.map((file) => `
-      <span class="attachment-chip ${file.state || ""}">
-        <b>${extension(file.name)}</b>
-        <span><strong>${escapeHtml(file.name)}</strong><small>${file.label || formatBytes(file.size)}</small></span>
-        <button data-remove-file="${file.id}" ${file.state === "uploading" ? "disabled" : ""}>×</button>
-        <i style="width:${file.progress || 0}%"></i>
-      </span>`).join("");
+    $("#attachmentStrip").innerHTML = files.map((file) => {
+      const meta = fileVisualMeta(file);
+      const isThumb = Boolean(file.previewUrl && meta.kind === "image");
+      const progress = Math.max(0, Math.min(100, Number(file.progress || 0)));
+      const subText = file.state === "uploading"
+        ? (file.label || `上传中 ${progress}%`)
+        : file.state === "error"
+          ? (file.label || "上传失败")
+          : `${meta.ext} · ${formatBytes(file.size)}`;
+      if (isThumb) {
+        return `<div class="attachment-chip is-image ${escapeHtml(file.state || "")}" data-file-kind="image" title="${escapeHtml(file.name)}">
+          <img class="attachment-thumb" src="${escapeHtml(file.previewUrl)}" alt="${escapeHtml(file.name)}">
+          ${file.state === "uploading" ? `<span class="attachment-thumb-badge">${progress}%</span>` : ""}
+          <button type="button" class="attachment-remove" data-remove-file="${escapeHtml(file.id)}" ${file.state === "uploading" ? "disabled" : ""} aria-label="移除 ${escapeHtml(file.name)}">×</button>
+          <i class="attachment-progress" style="width:${progress}%"></i>
+        </div>`;
+      }
+      return `<div class="attachment-chip is-file ${escapeHtml(file.state || "")}" data-file-kind="${meta.kind}" title="${escapeHtml(file.name)}">
+        <span class="attachment-icon" aria-hidden="true">${meta.icon}</span>
+        <span class="attachment-info"><strong>${escapeHtml(file.name)}</strong><small>${escapeHtml(subText)}</small></span>
+        <button type="button" class="attachment-remove" data-remove-file="${escapeHtml(file.id)}" ${file.state === "uploading" ? "disabled" : ""} aria-label="移除 ${escapeHtml(file.name)}">×</button>
+        <i class="attachment-progress" style="width:${progress}%"></i>
+      </div>`;
+    }).join("");
     $("#attachmentStrip").classList.toggle("visible", files.length > 0);
     refreshActionButton();
+  }
+
+  const GEMINI_TOOL_MODES = {
+    canvas: {
+      id: "canvas",
+      label: "Canvas 画布",
+      shortLabel: "Canvas",
+      promptPrefix: "[Canvas 交互画布模式] 请制作一个自包含的单文件交互网页（.html），不要使用外部 CDN 或网络请求，完成后按规范提供实时预览并交付。",
+    },
+    research: {
+      id: "research",
+      label: "Deep Research",
+      shortLabel: "深度研究",
+      promptPrefix: "[Deep Research 深度研究模式] 请先进行充分的多角度联网检索与交叉验证，再输出结构清晰、论据扎实的深度研究报告，并附关键参考来源。",
+    },
+    image: {
+      id: "image",
+      label: "生成图片",
+      shortLabel: "生图",
+      promptPrefix: "[生成图片模式] 请根据以下要求创作高质量图片，并将生成的图片文件直接交付给我。",
+    },
+    search: {
+      id: "search",
+      label: "联网搜索",
+      shortLabel: "搜索",
+      promptPrefix: "[联网搜索模式] 请先联网检索最新、权威的公开信息后再作答，并附上参考链接。",
+    },
+  };
+
+  function renderActiveTool() {
+    const tool = state.activeTool ? GEMINI_TOOL_MODES[state.activeTool] : null;
+    const btn = $("#toolsButton");
+    const labelEl = $("#toolsButtonLabel");
+    const clearEl = $("#clearActiveTool");
+    if (btn) btn.classList.toggle("is-active", Boolean(tool));
+    if (labelEl) labelEl.textContent = tool ? tool.shortLabel : "工具";
+    if (clearEl) clearEl.hidden = !tool;
+    document.querySelectorAll("#toolsMenu [data-tool-mode]").forEach((item) => {
+      item.classList.toggle("selected", item.dataset.toolMode === state.activeTool);
+    });
+  }
+
+  function setActiveTool(modeId) {
+    state.activeTool = modeId && GEMINI_TOOL_MODES[modeId]
+      ? (state.activeTool === modeId ? null : modeId)
+      : null;
+    renderActiveTool();
+    setToolsMenu(false);
+    $("#messageInput")?.focus();
+  }
+
+  function setToolsMenu(open) {
+    const menu = $("#toolsMenu");
+    if (!menu) return;
+    const expanded = Boolean(open);
+    if (expanded) {
+      setAttachmentMenu(false);
+      setQuickModelMenu(false);
+    }
+    menu.classList.toggle("open", expanded);
+    menu.setAttribute("aria-hidden", String(!expanded));
+    $("#toolsButton")?.setAttribute("aria-expanded", String(expanded));
+    const anyOpen = expanded || $("#attachmentMenu")?.classList.contains("open");
+    $(".composer-wrap")?.classList.toggle("menu-open", Boolean(anyOpen));
   }
 
   function setAttachmentMenu(open) {
     const menu = $("#attachmentMenu");
     const expanded = Boolean(open);
+    if (expanded) {
+      const toolsMenu = $("#toolsMenu");
+      if (toolsMenu?.classList.contains("open")) {
+        toolsMenu.classList.remove("open");
+        toolsMenu.setAttribute("aria-hidden", "true");
+        $("#toolsButton")?.setAttribute("aria-expanded", "false");
+      }
+      setQuickModelMenu(false);
+    }
     menu.classList.toggle("open", expanded);
     menu.setAttribute("aria-hidden", String(!expanded));
-    $(".composer-wrap").classList.toggle("menu-open", expanded);
+    const anyOpen = expanded || $("#toolsMenu")?.classList.contains("open");
+    $(".composer-wrap").classList.toggle("menu-open", Boolean(anyOpen));
     $("#attachButton").setAttribute("aria-expanded", String(expanded));
   }
 
@@ -4170,6 +4633,9 @@
       state.artifactKey = "";
       state.artifactAutoOpened = "";
       state.artifactDismissed = "";
+      state.activeTool = null;
+      renderActiveTool();
+      setToolsMenu(false);
     }
     state.activeId = id;
     {
@@ -4207,8 +4673,9 @@
     return conversation;
   }
 
-  function applyConversation(conversation) {
+  function applyConversation(conversation, streaming = false) {
     if (!conversation || conversation.id !== state.activeId) return;
+    initialConversationReady = true;
     const wasBusy = state.busy;
     conversation = preservePendingModel(mergeVisibleConversation(conversation));
     state.active = conversation;
@@ -4230,7 +4697,13 @@
     hydrateCachedUsage(state.codexProfile);
   updateModelControls();
     setConnected(true, conversation.busy ? "Witt 正在处理" : "服务器在线");
-    renderMessages(true);
+    if (streaming) {
+      // Status transitions must stay synchronous even when painting is coalesced.
+      setBusy((conversation.messages || []).some(message => message.role === "assistant" &&
+        (message.status === "queued" || message.status === "running")));
+      scheduleMessageRender();
+    } else renderMessages(true);
+    if (!streaming) dismissBoot();
     if (pendingLatestConversationId === conversation.id) {
       scrollOpenedConversationToLatest(conversation.id, true);
     }
@@ -4299,12 +4772,12 @@
 
   function submitUploadedMessage() {
     if (!state.pendingSend) return;
-    const { text } = state.pendingSend;
+    const { text, toolMode = "" } = state.pendingSend;
     const uploadedIds = state.sendRequest.fileIds.map((id) => state.sendRequest.uploadedByFile[id]);
-    sendPreparedMessage(text, uploadedIds);
+    sendPreparedMessage(text, uploadedIds, toolMode);
   }
 
-  function sendPreparedMessage(text, uploadedIds) {
+  function sendPreparedMessage(text, uploadedIds, toolMode = "") {
     const transport = bridge();
     // Workspace support does not imply support for request-ID message transport.
     const supportsRequestIds = window.WittNative
@@ -4312,9 +4785,17 @@
       : typeof transport?.sendChatMessageWithRequestId === "function";
     try {
       if (supportsRequestIds) {
-        transport.sendChatMessageWithRequestId(state.activeId, text, JSON.stringify(uploadedIds), state.sendRequest.id);
+        if (window.WittNative) {
+          transport.sendChatMessageWithRequestId(state.activeId, text, JSON.stringify(uploadedIds), state.sendRequest.id);
+        } else {
+          transport.sendChatMessageWithRequestId(state.activeId, text, JSON.stringify(uploadedIds), state.sendRequest.id, toolMode);
+        }
       } else if (typeof transport?.sendChatMessage === "function") {
-        transport.sendChatMessage(state.activeId, text, JSON.stringify(uploadedIds));
+        if (window.WittNative) {
+          transport.sendChatMessage(state.activeId, text, JSON.stringify(uploadedIds));
+        } else {
+          transport.sendChatMessage(state.activeId, text, JSON.stringify(uploadedIds), toolMode);
+        }
       } else {
         window.DropVault.onMessageSendError("发送连接不可用，请重新打开 App 后再试");
       }
@@ -4323,23 +4804,25 @@
     }
   }
 
-  function sendMessage(prefill) {
-    const text = typeof prefill === "string" ? prefill.trim() : $("#messageInput").value.trim();
+  function sendMessage(prefill, options = {}) {
+    const rawText = typeof prefill === "string" ? prefill.trim() : $("#messageInput").value.trim();
     const files = [...state.attachments.values()];
-    if (!text && !files.length) return;
+    if (!rawText && !files.length) return;
     if (state.transmitting) {
       toast("上一条消息正在送达，请稍候");
       return;
     }
-    const signature = JSON.stringify([state.activeId, text, files.map((file) => file.id)]);
+    const toolMode = String(options.toolMode || state.activeTool || "");
+    const signature = JSON.stringify([state.activeId, rawText, toolMode, files.map((file) => file.id)]);
     if (state.sendRequest?.signature !== signature) state.sendRequest = { signature, id: crypto.randomUUID(), fileIds: files.map((file) => file.id), uploadedByFile: {} };
     saveDraft();
     state.transmitting = true;
-    state.lastSubmittedText = text;
+    state.lastSubmittedText = rawText;
     state.optimisticMessage = {
       id: `local-${Date.now()}`,
       role: "user",
-      text,
+      text: rawText,
+      ...(toolMode ? { toolMode } : {}),
       attachments: files.map((file) => ({ ...file })),
       createdAt: new Date().toISOString(),
       status: "sending",
@@ -4357,19 +4840,23 @@
     setBusy(state.busy);
     renderMessages();
     ensureConversation(() => {
-      state.sendRequest.signature = JSON.stringify([state.activeId, text, files.map((file) => file.id)]);
+      state.sendRequest.signature = JSON.stringify([state.activeId, rawText, toolMode, files.map((file) => file.id)]);
       if (files.length) {
         const waitingFiles = files.filter((file) => !state.sendRequest.uploadedByFile[file.id]);
-        state.pendingSend = { text, waiting: new Set(waitingFiles.map((file) => file.id)) };
+        state.pendingSend = { text: rawText, toolMode, waiting: new Set(waitingFiles.map((file) => file.id)) };
         if (!waitingFiles.length) { submitUploadedMessage(); return; }
         waitingFiles.forEach((file) => {
           file.state = "uploading";
           file.label = "准备上传";
-          bridge()?.uploadFile?.(file.id);
+          if (nativeDroppedFiles.has(file.id)) {
+            uploadNativeDroppedFile(file.id);
+          } else {
+            bridge()?.uploadFile?.(file.id);
+          }
         });
         renderAttachments();
       } else {
-        sendPreparedMessage(text, []);
+        sendPreparedMessage(rawText, [], toolMode);
       }
     });
   }
@@ -4380,6 +4867,8 @@
     state.attachments.clear();
     state.pendingSend = null;
     state.optimisticMessage = null;
+    state.activeTool = null;
+    renderActiveTool();
     renderAttachments();
   }
 
@@ -4401,7 +4890,8 @@
       state.sendRequestIds = Boolean(info.sendRequestIds);
       state.workspaceOperations = Boolean(info.workspaceOperations);
       // Do not expose controls whose native transport is absent in older APKs.
-      $("#workspaceOverviewButton").hidden = !(state.workspaceFeatures && state.admin);
+      $("#workspaceOverviewButton").hidden = true;
+      syncServerClusterVisibility();
       $("#moreGroupButton").hidden = true;
       if (!state.workspaceFeatures) {
         $("#historySearch").placeholder = "搜索对话标题和摘要";
@@ -4426,6 +4916,8 @@
           typeof bridge()?.requestAuthStatus !== "function") {
         dismissBoot();
         setConnected(false, "需要更新 App");
+        initialConversationReady = true;
+        $("#welcome").hidden = false;
         $("#welcome h1").textContent = "新版对话已经准备好";
         $("#welcome>p").textContent = "请先更新 Witt，更新完成后即可在这里连续对话。";
         $(".suggestions").innerHTML = `<button id="legacyUpdate"><b>立即更新 Witt</b><small>安装支持连续对话的新版本</small></button>`;
@@ -4445,7 +4937,8 @@
         state.admin = Boolean(payload.principal?.admin);
         applyPrincipalPolicy(payload.principal);
         $("#adminSettingsButton").hidden = !state.admin;
-        $("#workspaceOverviewButton").hidden = !(state.workspaceFeatures && state.admin);
+        $("#workspaceOverviewButton").hidden = true;
+      syncServerClusterVisibility();
         $("#codexAccountsButton").hidden = !state.admin && state.allowedCodexProfiles.length < 2;
         hideActivation();
         hydrateCachedUsage(state.codexProfile);
@@ -4501,7 +4994,6 @@
       maxConcurrentTasks = Number(payload.maxConcurrentTasks) || maxConcurrentTasks;
       persistConversationList();
       setConnected(true, "服务器在线");
-      dismissBoot();
       loadProjects();
       renderConversations();
       if (wasSummaryRefresh) return;
@@ -4512,6 +5004,7 @@
       } else if (state.conversations.length) {
         selectConversation(state.conversations[0].id);
       } else {
+        initialConversationReady = true;
         state.activeId = null;
         state.active = null;
         state.workDir = "";
@@ -4519,6 +5012,7 @@
         hydrateCachedUsage(state.codexProfile);
   updateModelControls();
         renderMessages();
+        dismissBoot();
       }
     },
     onCapabilities(json) {
@@ -4703,7 +5197,7 @@
         totalMessages: payload.totalMessages,
         hasMore: offset > 0,
         messages: [...currentMessages.slice(0, replaceFrom - offset), ...messages],
-      });
+      }, true);
     },
     onConversationPage(json) {
       const page = JSON.parse(json).conversation;
@@ -4755,15 +5249,29 @@
       $("#refreshWorkspace").disabled = false;
       const payload = JSON.parse(json);
       workspaceServices = Array.isArray(payload.services) ? payload.services : [];
-      const query = $("#workspaceServiceSearch")?.value || "";
-      const focused = document.activeElement?.id === "workspaceServiceSearch";
-      const cursor = focused ? $("#workspaceServiceSearch").selectionStart : 0;
-      const count = status => workspaceServices.filter(row=>row.status===status).length;
-      const warning = payload.serviceDiscovery?.available === false ? '<p class="services-warning" role="status">服务发现暂时不可用，请刷新重试。</p>' : payload.serviceDiscovery?.complete === false ? '<p class="services-warning" role="status">已读取部分服务，完整列表暂时不可用。</p>' : '';
-      const context = (title, rows) => rows?.length ? `<section class="workspace-section"><h3>${escapeHtml(title)}</h3>${rows.map(row=>`<article><div><strong>${escapeHtml(row.name||row.id)}</strong><small>${escapeHtml(row.description||row.role||row.detail||"")}</small>${row.workDir?`<code>${escapeHtml(row.workDir)}</code>`:""}</div></article>`).join("")}</section>` : "";
-      $("#workspaceOverviewContent").innerHTML = `${warning}<section class="services-summary"><div><small>${payload.serviceDiscovery?.scope === "all" ? "本机全部服务" : "当前可见服务"}</small><strong>${workspaceServices.length}<span>项</span></strong></div><p>运行 ${count("active")} · 失败 ${count("failed")} · 未运行 ${count("inactive")}</p></section><label class="service-search-label" for="workspaceServiceSearch">查找服务</label><input type="search" id="workspaceServiceSearch" placeholder="搜索名称、用途或服务名" value="${escapeHtml(query)}" autocomplete="off"><div class="service-status-filters" role="group" aria-label="筛选服务状态">${[["all","全部"],["active","运行"],["failed","失败"],["inactive","未运行"]].map(([id,label])=>`<button type="button" data-service-filter="${id}" aria-pressed="${workspaceServiceFilter===id}">${label}</button>`).join("")}</div><small id="workspaceServiceResult" role="status"></small><div id="workspaceServiceList" class="service-status-list"></div><details class="service-workspace-context"><summary>工作区与其他连接</summary>${context("项目",payload.projects)}${context("服务器",payload.servers)}${context("其他连接",payload.connections)}</details><p class="workspace-checked">最近检查：${escapeHtml(payload.checkedAt?new Date(payload.checkedAt).toLocaleTimeString():"未知")}<br>面板打开时每 15 秒刷新。未运行不一定异常，定时和按需服务执行后会停止。</p>`;
-      renderWorkspaceServices();
-      if (focused) { $("#workspaceServiceSearch").focus({preventScroll:true}); $("#workspaceServiceSearch").setSelectionRange(cursor,cursor); }
+      const formatUptime = (sec) => {
+        if (!Number.isFinite(sec) || sec < 0) return "";
+        const days = Math.floor(sec / 86400);
+        const hours = Math.floor((sec % 86400) / 3600);
+        const mins = Math.floor((sec % 3600) / 60);
+        if (days > 0) return `${days}天${hours}小时`;
+        if (hours > 0) return `${hours}小时${mins}分`;
+        return `${Math.max(1, mins)}分钟`;
+      };
+      const clusterStatusLabel = { online: "在线", degraded: "部分异常", offline: "离线", unknown: "未知" };
+      const clusterRows = Array.isArray(payload.serverCluster) ? payload.serverCluster : [];
+      renderServerClusterWidgets(clusterRows);
+      const clusterOnline = clusterRows.filter(s => s.status === "online").length;
+      const clusterState = !clusterRows.length ? "unknown"
+        : clusterOnline === clusterRows.length ? "online"
+        : clusterRows.some(s => s.status === "online" || s.status === "degraded") ? "degraded" : "offline";
+      const clusterSection = clusterRows.length ? `<section class="server-cluster-section" aria-label="多节点服务器状态"><div class="server-cluster-head"><div><small>SERVER CLUSTER</small><h3>多节点服务器</h3></div><span class="server-cluster-summary" data-status="${clusterState}"><i aria-hidden="true"></i>${clusterOnline} / ${clusterRows.length} 在线</span></div><div class="server-cluster-grid">${clusterRows.map(s => {
+        const latencyText = s.isLocal ? "本机" : (Number.isFinite(s.latencyMs) ? `${s.latencyMs} ms` : "超时");
+        const metricsHtml = s.metrics ? `<div class="server-cluster-metrics"><span>负载 ${escapeHtml(s.metrics.load1m)}/${escapeHtml(s.metrics.cpuCount)}C</span><span>内存 ${escapeHtml(s.metrics.memUsedGb)}/${escapeHtml(s.metrics.memTotalGb)}G (${escapeHtml(s.metrics.memPercent)}%)</span>${Number.isFinite(s.metrics.uptimeSec) ? `<span>运行 ${escapeHtml(formatUptime(s.metrics.uptimeSec))}</span>` : ""}</div>` : "";
+        const checksHtml = Array.isArray(s.checks) && s.checks.length ? `<div class="server-check-list">${s.checks.map(c => `<span class="server-check-chip" data-ok="${c.ok ? "1" : "0"}"><i aria-hidden="true"></i>${escapeHtml(c.label)}${c.port ? ` :${escapeHtml(c.port)}` : ""}</span>`).join("")}</div>` : "";
+        return `<article class="server-cluster-card" data-status="${escapeHtml(s.status || "unknown")}"><div class="server-cluster-top"><div class="server-cluster-title"><span class="server-cluster-flag" aria-hidden="true">${escapeHtml(s.flag || "🖥")}</span><div><strong>${escapeHtml(s.name || s.hostname)}</strong><small>${escapeHtml(s.provider || "")}</small></div></div><div class="server-cluster-badges"><span class="server-cluster-latency">${escapeHtml(latencyText)}</span><span class="server-cluster-status"><i aria-hidden="true"></i>${escapeHtml(clusterStatusLabel[s.status] || "未知")}</span></div></div><div class="server-cluster-meta"><code>${escapeHtml(s.ip || "")}</code><span>${escapeHtml(s.spec || "")}</span></div>${metricsHtml}${checksHtml}</article>`;
+      }).join("")}</div></section>` : '<p class="services-empty">暂无可显示的服务器节点。</p>';
+      $("#workspaceOverviewContent").innerHTML = `${clusterSection}<p class="workspace-checked">最近检查：${escapeHtml(payload.checkedAt ? new Date(payload.checkedAt).toLocaleTimeString() : "未知")}<br>打开面板时每 15 秒自动刷新，后台每 30 秒同步节点延迟。</p>`;
     },
     onWorkspaceOverviewError(message) {
       workspaceOverviewLoading = false;
@@ -4901,7 +5409,7 @@
       state.usageLoading = false;
       const payload = JSON.parse(json);
       if (payload.codexProfile && payload.codexProfile !== state.codexProfile) return;
-      const provider = payload.provider === "antigravity" ? "gemini" : payload.provider === "claude" ? "claude" : "gpt";
+      const provider = isAntigravityProfile(payload.provider) ? "gemini" : payload.provider === "claude" ? "claude" : "gpt";
       if (provider !== profileProvider(state.codexProfile)) return;
       state.usage = payload;
       state.usageStale = false;
@@ -4990,6 +5498,7 @@
     },
     onChatError(message) {
       pendingModelSettings.clear();
+      initialConversationReady = true;
       dismissBoot();
       setConnected(false, "连接失败");
       state.afterCreate = null;
@@ -5166,6 +5675,9 @@
       return;
     }
     saveDraft();
+    state.activeTool = null;
+    renderActiveTool();
+    setToolsMenu(false);
     saveAccountPreference();
     const selectedProfile = codexProfile || state.codexProfile || state.allowedCodexProfiles[0] || "default";
     const previousProfile = state.codexProfile;
@@ -5176,7 +5688,7 @@
     const chosen=models.find(m=>m.id===preference?.model)||models.find(m=>m.id===state.model)||models.find(m=>m.isDefault)||models[0];
     if(!chosen){
       state.codexProfile=previousProfile;selectAccountCapabilities();
-      if (["claude", "antigravity"].includes(selectedProfile)) {
+      if (["claude", "antigravity", "antigravity2"].includes(selectedProfile)) {
         if (pendingProviderConversation !== selectedProfile) {
           pendingProviderConversation = selectedProfile;
           clearTimeout(pendingProviderConversationTimer);
@@ -5324,7 +5836,25 @@
     wheelDistance += -event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? historyStage.clientHeight : 1);
     if (wheelDistance >= 64) { wheelUsed = true; loadOlderDay(); }
   }, { passive: true });
-  $("#workspaceOverviewButton").addEventListener("click", openWorkspaceOverview);
+  $("#workspaceOverviewButton")?.addEventListener("click", openWorkspaceOverview);
+  $("#approvalDock")?.addEventListener("click", (event) => {
+    const dock = $("#approvalDock");
+    if (!dock || dock.hidden) return;
+    if (event.target.closest("[data-approval-reopen]")) {
+      dock.classList.remove("minimized");
+      document.body.classList.add("approval-dock-open");
+      return;
+    }
+    if (event.target.closest("[data-approval-minimize]")) {
+      dock.classList.add("minimized");
+      document.body.classList.remove("approval-dock-open");
+    }
+  });
+  $("#headerServerStatus")?.addEventListener("click", openWorkspaceOverview);
+  $("#sidebarServerOpen")?.addEventListener("click", openWorkspaceOverview);
+  $("#sidebarServerRows")?.addEventListener("click", (event) => {
+    if (event.target.closest(".sidebar-server-row")) openWorkspaceOverview();
+  });
   $("#closeWorkspace").addEventListener("click", closeWorkspaceOverview);
   $("#workspaceBackdrop").addEventListener("click", closeWorkspaceOverview);
   $("#refreshWorkspace").addEventListener("click", requestWorkspaceOverview);
@@ -5485,7 +6015,7 @@
     const provider=event.target.closest("[data-login-provider]")?.dataset.loginProvider;
     if(provider){
       const account=state.codexAccounts.find(a=>a.provider===provider);
-      const pattern=provider==="claude" ? /^\/vault-api\/claude\/login#[A-Za-z0-9_-]{43}$/ : /^\/vault-api\/antigravity\/login#[A-Za-z0-9_-]{43}$/;
+      const pattern=provider==="claude" ? /^\/vault-api\/claude\/login#[A-Za-z0-9_-]{43}$/ : /^\/vault-api\/antigravity2?\/login#[A-Za-z0-9_-]{43}$/;
       if(typeof account?.loginUrl==="string"&&pattern.test(account.loginUrl))window.location.href=account.loginUrl;
       else toast("登录入口已失效，请重新打开账号列表");
       return;
@@ -5703,6 +6233,60 @@
     setAttachmentMenu(false);
     bridge()?.pickFiles?.();
   });
+  $("#attachFolderButton")?.addEventListener("click", () => {
+    setAttachmentMenu(false);
+    if (bridge()?.pickFolder) {
+      bridge().pickFolder();
+    } else {
+      toast("当前客户端暂不支持选文件夹，已切换为多文件选择");
+      bridge()?.pickFiles?.();
+    }
+  });
+  $("#attachCaptureButton")?.addEventListener("click", () => {
+    setAttachmentMenu(false);
+    if (bridge()?.captureMedia) {
+      bridge().captureMedia();
+    } else {
+      bridge()?.pickFiles?.();
+    }
+  });
+  $("#toolsButton")?.addEventListener("click", (event) => {
+    if (event.target.closest("#clearActiveTool")) {
+      event.preventDefault();
+      event.stopPropagation();
+      setActiveTool(null);
+      return;
+    }
+    setToolsMenu(!$("#toolsMenu")?.classList.contains("open"));
+  });
+  $("#toolsMenu")?.addEventListener("click", (event) => {
+    const modeBtn = event.target.closest("[data-tool-mode]");
+    if (modeBtn) {
+      setActiveTool(modeBtn.dataset.toolMode);
+      return;
+    }
+    if (event.target.closest("#toolScheduleShortcut")) {
+      setToolsMenu(false);
+      $("#featureSchedules")?.click();
+    }
+  });
+  $("#messageList")?.addEventListener("click", (event) => {
+    const startBtn = event.target.closest("[data-research-start]");
+    if (startBtn) {
+      startBtn.disabled = true;
+      startBtn.textContent = "已开始研究…";
+      sendMessage("按以上研究计划开始深度研究", { toolMode: "research_run" });
+      return;
+    }
+    if (event.target.closest("[data-research-edit]")) {
+      const input = $("#messageInput");
+      if (input) {
+        input.value = "请帮我调整一下研究计划：";
+        input.dispatchEvent(new Event("input"));
+        input.focus();
+      }
+    }
+  });
   $("#activateInviteButton").addEventListener("click", () => {
     if (state.openAccess) { bridge()?.requestAuthStatus?.(); return; }
     const code = $("#inviteCode").value.trim();
@@ -5749,6 +6333,9 @@
   $("#attachmentStrip").addEventListener("click", (event) => {
     const id = event.target.closest("[data-remove-file]")?.dataset.removeFile;
     if (!id) return;
+    const removed = state.attachments.get(id);
+    if (removed?.previewUrl) { try { URL.revokeObjectURL(removed.previewUrl); } catch {} }
+    nativeDroppedFiles.delete(id);
     state.attachments.delete(id);
     renderAttachments();
   });
@@ -5857,15 +6444,28 @@
       let valid = true;
       let invalidIndex = -1;
       inputForm.querySelectorAll(".approval-question").forEach((field, index) => {
-        const checked = field.querySelector('input[type="radio"]:checked');
         const textInput = field.querySelector(".approval-text-input");
-        let value = checked?.value || textInput?.value.trim() || "";
-        if (value === "__other__") value = field.querySelector(".approval-other-input")?.value.trim() || "";
-        if (!value) {
+        let values = [];
+        if (textInput) {
+          const v = textInput.value.trim();
+          if (v) values.push(v);
+        } else {
+          const checked = [...field.querySelectorAll('input[type="radio"]:checked, input[type="checkbox"]:checked')];
+          for (const item of checked) {
+            if (item.value === "__other__") {
+              const otherText = field.querySelector(".approval-other-input")?.value.trim() || "";
+              if (!otherText) { valid = false; if (invalidIndex < 0) invalidIndex = index; }
+              else values.push(otherText);
+            } else if (item.value) {
+              values.push(item.value);
+            }
+          }
+        }
+        if (!values.length) {
           valid = false;
           if (invalidIndex < 0) invalidIndex = index;
         }
-        answers[field.dataset.questionId] = { answers: value ? [value] : [] };
+        answers[field.dataset.questionId] = { answers: values };
       });
       if (!valid) {
         toast("请完成所有问题");
@@ -5888,14 +6488,15 @@
     respondToApproval(mcpForm.dataset.approvalId, JSON.stringify({ action: "accept", content }));
   });
   document.addEventListener("change", (event) => {
-    const radio = event.target.closest('.approval-choice-grid input[type="radio"]');
-    if (!radio) return;
-    const question = radio.closest(".approval-question");
+    const choice = event.target.closest('.approval-choice-grid input[type="radio"], .approval-choice-grid input[type="checkbox"]');
+    if (!choice) return;
+    const question = choice.closest(".approval-question");
     const otherWrap = question?.querySelector(".approval-other-wrap");
     if (!otherWrap) return;
-    const isOther = radio.value === "__other__";
+    const otherInput = question.querySelector('input[value="__other__"]');
+    const isOther = Boolean(otherInput?.checked);
     otherWrap.hidden = !isOther;
-    if (isOther) question.querySelector(".approval-other-input")?.focus();
+    if (isOther && choice === otherInput) question.querySelector(".approval-other-input")?.focus({ preventScroll: true });
   });
   $("#conversationList").addEventListener("click", (event) => {
     const openId = event.target.closest("[data-open]")?.dataset.open;
@@ -5903,7 +6504,7 @@
     if (openId) selectConversation(openId);
     if (menuId) window.WittUpgrades?.openConversationMenu(menuId);
   });
-  $(".suggestions").addEventListener("click", (event) => {
+  $(".suggestions")?.addEventListener("click", (event) => {
     const prompt = event.target.closest("[data-prompt]")?.dataset.prompt;
     if (prompt) {
       $("#messageInput").value = prompt;
@@ -6038,6 +6639,15 @@
       renderQuotaSurfaces(currentQuotaSummary());
       return;
     }
+    const switchBtn = event.target.closest("[data-quota-switch]");
+    if (switchBtn) {
+      const targetId = switchBtn.dataset.quotaSwitch;
+      if (targetId) {
+        switchHarnessProfile(targetId);
+        toast(`已切换到 ${switchBtn.textContent.replace(/^切到\s*/, "")}`);
+      }
+      return;
+    }
     if (event.target.closest("[data-quota-open]")) {
       openProfile();
     }
@@ -6122,16 +6732,25 @@
       setQuickModelMenu(false);
     },
   });
+  $("#quickModelMenu")?.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+  });
   document.addEventListener("pointerdown", (event) => {
-    if (!event.target.closest(".composer-wrap")) {
+    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+    const inComposer = Boolean(event.target?.closest?.(".composer-wrap, #wittV3QuickModelMenu, #quickModelMenu")) ||
+      path.some((node) => node?.classList?.contains?.("composer-wrap") ||
+        node?.id === "wittV3QuickModelMenu" || node?.id === "quickModelMenu");
+    if (!inComposer) {
       setAttachmentMenu(false);
+      setToolsMenu(false);
       setQuickModelMenu(false);
     }
-    if (!event.target.closest(".compact-nav")) setChatMoreMenu(false);
+    if (!event.target?.closest?.(".compact-nav")) setChatMoreMenu(false);
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       setAttachmentMenu(false);
+      setToolsMenu(false);
       setQuickModelMenu(false);
       setChatMoreMenu(false);
     }
@@ -6261,60 +6880,227 @@
     }
   });
 
-  // Paste screenshot / files directly into composer (Web & desktop)
-  $("#messageInput").addEventListener("paste", (event) => {
+  // Normalize pasted/dropped files (give unnamed clipboard screenshots readable timestamps)
+  function normalizeDroppedFile(file) {
+    if (!file) return null;
+    if ((!file.name || file.name === "image.png") && String(file.type || "").startsWith("image/")) {
+      const stamp = new Date().toTimeString().slice(0, 8).replaceAll(":", "");
+      const ext = file.type === "image/jpeg" ? ".jpg" : file.type === "image/webp" ? ".webp" : file.type === "image/gif" ? ".gif" : ".png";
+      return new File([file], `screenshot-${stamp}${ext}`, { type: file.type });
+    }
+    return file;
+  }
+
+  function isAuthGateBlocking() {
+    const gate = $("#authGate");
+    return Boolean(gate && gate.getAttribute("aria-hidden") === "false");
+  }
+
+  function readDroppedEntries(dataTransfer) {
+    // Snapshot files & entries synchronously before any async tick (browsers clear DataTransfer after drop returns).
+    const fallbackFiles = [...(dataTransfer?.files || [])].map(normalizeDroppedFile).filter(Boolean);
+    const items = [...(dataTransfer?.items || [])];
+    const entries = items
+      .map((item) => (item.kind === "file" && typeof item.webkitGetAsEntry === "function" ? item.webkitGetAsEntry() : null))
+      .filter(Boolean);
+    const hasDirectory = entries.some((entry) => entry.isDirectory);
+    if (!hasDirectory) {
+      return Promise.resolve(fallbackFiles);
+    }
+    const collected = [];
+    const MAX_DROP_FILES = 60;
+    const walk = (entry, prefix = "") => new Promise((resolve) => {
+      if (collected.length >= MAX_DROP_FILES) { resolve(); return; }
+      if (entry.isFile) {
+        entry.file((file) => {
+          const normalized = normalizeDroppedFile(file);
+          if (normalized && collected.length < MAX_DROP_FILES) {
+            if (prefix) {
+              try { Object.defineProperty(normalized, "webkitRelativePath", { value: `${prefix}${normalized.name}` }); } catch {}
+            }
+            collected.push(normalized);
+          }
+          resolve();
+        }, () => resolve());
+        return;
+      }
+      if (entry.isDirectory) {
+        const reader = entry.createReader();
+        const readBatch = () => {
+          reader.readEntries(async (batch) => {
+            if (!batch.length || collected.length >= MAX_DROP_FILES) { resolve(); return; }
+            for (const child of batch) {
+              if (collected.length >= MAX_DROP_FILES) break;
+              await walk(child, `${prefix}${entry.name}/`);
+            }
+            readBatch();
+          }, () => resolve());
+        };
+        readBatch();
+        return;
+      }
+      resolve();
+    });
+    return Promise.all(entries.map((entry) => walk(entry))).then(() => collected.length ? collected : fallbackFiles);
+  }
+
+  const nativeDroppedFiles = new Map();
+
+  async function uploadNativeDroppedFile(id) {
+    const file = nativeDroppedFiles.get(id);
+    if (!file) {
+      window.DropVault.onUploadFinished(id, false, "文件已失效，请重新拖入", "");
+      return;
+    }
+    try {
+      window.DropVault.onUploadProgress(id, 15, "正在读取…");
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < buf.length; i += 0x8000) {
+        bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      }
+      window.DropVault.onUploadProgress(id, 55, "正在上传…");
+      const data = await window.WittFeatures.request("chat/files-base64", "POST", {
+        name: file.webkitRelativePath ? file.webkitRelativePath.replace(/^\/+/, "") : (file.name || `file-${Date.now()}`),
+        mimeType: file.type || "application/octet-stream",
+        contentBase64: btoa(bin),
+      });
+      nativeDroppedFiles.delete(id);
+      window.DropVault.onUploadFinished(id, true, "已上传", data?.file?.id || "");
+    } catch (err) {
+      window.DropVault.onUploadFinished(id, false, err?.message || "上传失败，请重试", "");
+    }
+  }
+
+  function attachFilesFromInteraction(fileList, sourceLabel = "添加") {
+    if (!fileList?.length) return 0;
+    let added = 0;
+    if (!window.WittNative && typeof bridge()?.addPickedFiles === "function") {
+      added = bridge().addPickedFiles(fileList);
+    } else {
+      const selected = [];
+      for (const file of fileList) {
+        if (!file) continue;
+        if (file.size > 25 * 1024 * 1024) {
+          toast(`${file.name || "文件"} 超过 25 MB，请用「+ 上传文件」`);
+          continue;
+        }
+        const id = crypto.randomUUID();
+        const relName = file.webkitRelativePath ? file.webkitRelativePath.replace(/^\/+/, "") : (file.name || `file-${Date.now()}`);
+        nativeDroppedFiles.set(id, file);
+        const isImg = /^image\//i.test(file.type || "") || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(relName);
+        let previewUrl = "";
+        if (isImg) { try { previewUrl = URL.createObjectURL(file); } catch {} }
+        selected.push({ id, name: relName, size: file.size, type: file.type || "application/octet-stream", ...(previewUrl ? { previewUrl } : {}) });
+      }
+      if (selected.length) {
+        window.DropVault.onFilesPicked(JSON.stringify(selected));
+        added = selected.length;
+      }
+    }
+    if (added > 0) {
+      toast(`已${sourceLabel} ${added} 个文件`);
+      $("#messageInput")?.focus({ preventScroll: true });
+    }
+    return added;
+  }
+
+  // Global paste (capture phase: works in #messageInput and anywhere in Witt outside other text fields)
+  document.addEventListener("paste", (event) => {
+    const active = document.activeElement;
+    if (active && active.id !== "messageInput" && active.matches("input, textarea, [contenteditable='true']")) return;
+    if (isAuthGateBlocking()) return;
     const dt = event.clipboardData;
-    if (!dt || typeof bridge()?.addPickedFiles !== "function") return;
+    if (!dt) return;
     const files = [];
-    if (dt.items) {
+    if (dt.files?.length) {
+      for (const f of dt.files) {
+        const norm = normalizeDroppedFile(f);
+        if (norm) files.push(norm);
+      }
+    }
+    if (!files.length && dt.items?.length) {
       for (const item of dt.items) {
         if (item.kind === "file") {
-          const f = item.getAsFile();
-          if (f) {
-            const stamp = new Date().toTimeString().slice(0, 8).replaceAll(":", "");
-            const ext = f.type === "image/jpeg" ? ".jpg" : f.type === "image/webp" ? ".webp" : f.type === "image/gif" ? ".gif" : ".png";
-            const named = (!f.name || f.name === "image.png") && f.type.startsWith("image/")
-              ? new File([f], `screenshot-${stamp}${ext}`, { type: f.type })
-              : f;
-            files.push(named);
-          }
+          const norm = normalizeDroppedFile(item.getAsFile());
+          if (norm) files.push(norm);
         }
       }
-    } else if (dt.files?.length) {
-      files.push(...dt.files);
     }
     if (!files.length) return;
-    const added = bridge().addPickedFiles(files);
+    const added = attachFilesFromInteraction(files, "粘贴");
     if (added > 0 && !dt.getData("text/plain")) event.preventDefault();
-  });
+  }, true);
 
-  // Drag-and-drop files/images directly onto chat / composer
-  let dragDepth = 0;
-  const appShellEl = $(".app-shell");
-  if (appShellEl) {
-    appShellEl.addEventListener("dragenter", (event) => {
-      if (!event.dataTransfer?.types?.includes("Files")) return;
-      dragDepth += 1;
-      $("#composer")?.classList.add("drop-active");
-    });
-    appShellEl.addEventListener("dragover", (event) => {
-      if (!event.dataTransfer?.types?.includes("Files")) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "copy";
-    });
-    appShellEl.addEventListener("dragleave", () => {
-      dragDepth = Math.max(0, dragDepth - 1);
-      if (dragDepth === 0) $("#composer")?.classList.remove("drop-active");
-    });
-    appShellEl.addEventListener("drop", (event) => {
-      dragDepth = 0;
-      $("#composer")?.classList.remove("drop-active");
-      const files = event.dataTransfer?.files;
-      if (!files?.length || typeof bridge()?.addPickedFiles !== "function") return;
-      event.preventDefault();
-      bridge().addPickedFiles(files);
-    });
+  // Gemini-style full-window drag-and-drop: entering anywhere in Witt activates the drop overlay
+  let globalDragDepth = 0;
+  let globalDragTimer = null;
+  const globalDropOverlay = $("#globalDropOverlay");
+  function setGlobalDropActive(active) {
+    const on = Boolean(active && !isAuthGateBlocking());
+    document.body.classList.toggle("global-drop-active", on);
+    $("#composer")?.classList.toggle("drop-active", on);
+    if (globalDropOverlay) {
+      globalDropOverlay.classList.toggle("open", on);
+      globalDropOverlay.setAttribute("aria-hidden", String(!on));
+    }
+    if (!on) {
+      clearTimeout(globalDragTimer);
+      globalDragTimer = null;
+    }
   }
+  function isFileDragEvent(event) {
+    const dt = event.dataTransfer;
+    if (!dt) return false;
+    const types = Array.from(dt.types || []);
+    if (types.includes("Files") || types.includes("application/x-moz-file")) return true;
+    return Array.from(dt.items || []).some((item) => item.kind === "file");
+  }
+  window.addEventListener("dragenter", (event) => {
+    if (!isFileDragEvent(event)) return;
+    event.preventDefault();
+    globalDragDepth += 1;
+    setGlobalDropActive(true);
+  }, true);
+  window.addEventListener("dragover", (event) => {
+    if (!isFileDragEvent(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    if (!document.body.classList.contains("global-drop-active")) setGlobalDropActive(true);
+    clearTimeout(globalDragTimer);
+    globalDragTimer = setTimeout(() => {
+      globalDragDepth = 0;
+      setGlobalDropActive(false);
+    }, 260);
+  }, true);
+  window.addEventListener("dragleave", () => {
+    if (!document.body.classList.contains("global-drop-active")) return;
+    globalDragDepth = Math.max(0, globalDragDepth - 1);
+    if (globalDragDepth === 0) setGlobalDropActive(false);
+  }, true);
+  window.addEventListener("drop", (event) => {
+    const hadFiles = isFileDragEvent(event);
+    globalDragDepth = 0;
+    setGlobalDropActive(false);
+    if (!hadFiles) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (isAuthGateBlocking()) return;
+    const filesPromise = readDroppedEntries(event.dataTransfer);
+    filesPromise.then((files) => {
+      if (files.length) attachFilesFromInteraction(files, "拖入");
+    });
+  }, true);
+  window.addEventListener("blur", () => {
+    globalDragDepth = 0;
+    setGlobalDropActive(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.body.classList.contains("global-drop-active")) {
+      globalDragDepth = 0;
+      setGlobalDropActive(false);
+    }
+  });
 
   // Sidebar "My Projects" quick controls
   $("#drawerProjectsToggle")?.addEventListener("click", () => {

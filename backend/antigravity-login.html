@@ -12,7 +12,7 @@
 <h1>连接 Gemini</h1>
 <p>通过官方 Antigravity CLI 登录你的账号。通过 Google 官方授权页登录，密码只在 Google 页面填写。</p>
 <p id="status" class="status" role="status" aria-live="polite">正在检查登录状态…</p>
-<div class="actions"><button id="start" class="primary" disabled>开始登录</button><button id="cancel" hidden>取消本次登录</button></div>
+<div class="actions"><button id="start" class="primary" disabled>开始登录</button><button id="logout" hidden>退出并更换账号</button><button id="cancel" hidden>取消本次登录</button></div>
 <section id="authorization" hidden>
 <p>打开官方页面并完成授权。如果页面给出授权码，请回到这里粘贴。</p>
 <a class="action" id="official" rel="noreferrer noopener" href="#">打开 Google 官方授权页</a>
@@ -34,7 +34,8 @@
   let timer = null, busy = false, url = "";
   const pendingStates = ["starting", "pending", "verifying"];
   async function request(action, body) {
-    const response = await fetch(`/vault-api/antigravity/login/${action}`, {
+    const apiBase = location.pathname.replace(/\/+$/, '');
+    const response = await fetch(`${apiBase}/${action}`, {
       method: body === undefined ? "GET" : "POST", credentials: "omit", cache: "no-store",
       headers: { Authorization: `Bearer ${ticket}`, "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -53,6 +54,8 @@
     $("status").classList.remove("error");
     $("start").disabled = pending || result.authenticated;
     $("start").textContent = result.authenticated ? "账号已连接" : "开始登录";
+    $("logout").hidden = !result.authenticated || pending;
+    $("logout").disabled = false;
     $("cancel").hidden = !pending;
     $("authorization").hidden = !(pending && result.verificationUrl);
     $("submit").disabled = state === "verifying";
@@ -74,6 +77,10 @@
   }
   $("start").onclick = () => act("start");
   $("cancel").onclick = () => act("cancel");
+  $("logout").onclick = () => {
+    $("logout").disabled = true;
+    void act("logout");
+  };
   $("codeForm").onsubmit = (event) => {
     event.preventDefault(); const code = $("code").value.trim();
     if (!code) { $("code").focus(); return; }

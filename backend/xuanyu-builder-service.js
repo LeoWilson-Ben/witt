@@ -4,7 +4,8 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
-const { execFile, spawn } = require("node:child_process");
+const { execFile } = require("node:child_process");
+const { CodemagicAndroidBuilder } = require("./codemagic-android-builder");
 const { promisify } = require("node:util");
 
 const execFileAsync = promisify(execFile);
@@ -24,9 +25,7 @@ const IOS_BUNDLE_ID = "com.xuanyu.ios";
 const GITHUB_REPO = "LeoWilson-Ben/Flutter-app";
 const GITHUB_SSH_URL = `git@github.com:${GITHUB_REPO}.git`;
 const SSH_KEY_PATH = "/root/.ssh/github_ed25519";
-const US_REGION = "us-west-2";
-const US_INSTANCE_ID = "i-013abbfb294833a94";
-const US_BUILDER_IP = "35.84.98.222";
+const codemagicBuilder = new CodemagicAndroidBuilder();
 const MAX_RETAINED_APKS = 2;
 
 fs.mkdirSync(RELEASES_DIR, { recursive: true });
@@ -62,7 +61,7 @@ const defaultState = {
   durationSeconds: 186,
   error: null,
   artifact: "/releases/aaf4e4b62908ffc4f555cefbc31318f21774cdb2/app-release.apk",
-  buildProgress: { percent: 100, stage: "构建完成 · 美国构建机已自动关机" },
+  buildProgress: { percent: 100, stage: "Codemagic 构建服务已就绪" },
   releases: [],
   ios: {
     lastSyncAt: null,
@@ -73,7 +72,7 @@ const defaultState = {
 };
 
 let state = { ...defaultState, ...readJson(STATE_FILE, {}) };
-if (state.status === "building") {
+if (state.status === "building" && !state.codemagicBuildId) {
   state.status = "idle";
   state.buildingCommit = null;
   state.buildingCommitMessage = null;
@@ -232,7 +231,7 @@ async function syncReleasesWithGit() {
   for (const item of merged) {
     if (item.available && slotCounter <= MAX_RETAINED_APKS) {
       item.nativeDownloadSlot = slotCounter;
-      item.nativeDownloadUrl = `https://16-208-77-185.sslip.io/vault-api/chat-images/00000000-0000-4000-8000-00000000000${slotCounter}`;
+      item.nativeDownloadUrl = `https://dxmuzc75elhtc.cloudfront.net/vault-api/chat-images/00000000-0000-4000-8000-00000000000${slotCounter}`;
       slotCounter += 1;
     } else {
       item.nativeDownloadSlot = null;
@@ -258,73 +257,21 @@ async function syncReleasesWithGit() {
   return commits;
 }
 
-let cachedServerState = {
-  checkedAt: 0,
-  value: {
-    instanceId: US_INSTANCE_ID,
-    region: US_REGION,
-    name: "美国 · 俄勒冈构建机 (x86_64)",
-    state: "stopped",
-    publicIp: US_BUILDER_IP,
-    autoStop: true,
-  },
-};
-
-async function queryBuilderInstance(force = false) {
-  if (!force && Date.now() - cachedServerState.checkedAt < 8000) {
-    return cachedServerState.value;
-  }
-  try {
-    const { stdout } = await execFileAsync(
-      "aws",
-      [
-        "--no-cli-pager",
-        "ec2",
-        "describe-instances",
-        "--region",
-        US_REGION,
-        "--instance-ids",
-        US_INSTANCE_ID,
-        "--query",
-        "Reservations[0].Instances[0].{State:State.Name,PublicIP:PublicIpAddress,LaunchTime:LaunchTime}",
-        "--output",
-        "json",
-      ],
-      { timeout: 8000 }
-    );
-    const info = JSON.parse(stdout);
-    cachedServerState = {
-      checkedAt: Date.now(),
-      value: {
-        instanceId: US_INSTANCE_ID,
-        region: US_REGION,
-        name: "美国 · 俄勒冈构建机 (x86_64)",
-        state: info?.State || "unknown",
-        publicIp: info?.PublicIP || US_BUILDER_IP,
-        launchTime: info?.LaunchTime || null,
-        autoStop: true,
-      },
-    };
-  } catch {}
-  return cachedServerState.value;
+async function queryBuilderInstance() {
+  return { name: "Codemagic · macOS M2", provider: "codemagic",
+    state: state.status === "building" ? (state.codemagicStage || "queued") : "ready",
+    buildId: state.codemagicBuildId || null,
+    runUrl: state.codemagicBuildId ? `https://codemagic.io/app/${codemagicBuilder.config().appId}/build/${state.codemagicBuildId}` : null,
+    autoStop: false };
 }
 
-async function stopBuilderInstance(reason = "构建任务完成") {
-  try {
-    appendLog(`${reason}，正在关闭美国俄勒冈构建机 (${US_INSTANCE_ID})...`);
-    await execFileAsync(
-      "aws",
-      ["--no-cli-pager", "ec2", "stop-instances", "--region", US_REGION, "--instance-ids", US_INSTANCE_ID, "--output", "json"],
-      { timeout: 10000 }
-    );
-    cachedServerState.checkedAt = 0;
-    await queryBuilderInstance(true);
-  } catch (err) {
-    appendLog(`关闭构建机提示: ${err.message}`);
+async function stopBuilderInstance() {
+  if (state.status === "building" && state.codemagicBuildId) {
+    await codemagicBuilder.cancel(state.codemagicBuildId);
+    appendLog("已请求取消 Codemagic 构建");
   }
 }
 
-// App Store Connect JWT & Xcode Cloud reader (never logs or returns key/token)
 function b64url(buf) {
   return Buffer.from(buf).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
@@ -553,256 +500,77 @@ async function getIosStatus(commits = [], force = false) {
 
 let buildInFlight = null;
 
-async function runAndroidBuild(targetCommit, targetMessage, triggerReason = "GitHub 更新自动触发") {
+async function runAndroidBuild(targetCommit, targetMessage, triggerReason = "手动构建", resume = false) {
   if (buildInFlight) return buildInFlight;
+  if (!/^[a-f0-9]{40}$/.test(targetCommit || "")) throw Error("无效源码提交");
   buildInFlight = (async () => {
-    const startMs = Date.now();
-    state.status = "building";
-    state.buildingCommit = targetCommit;
-    state.buildingCommitMessage = targetMessage;
-    state.startedAt = new Date(startMs).toISOString();
-    state.error = null;
-    state.buildProgress = { percent: 5, stage: "正在准备隔离构建工作区..." };
+    const startMs = resume ? Date.parse(state.startedAt) : Date.now();
+    const requestId = resume ? state.codemagicRequestId : crypto.randomUUID();
+    if (!resume) Object.assign(state, { status: "building", buildingCommit: targetCommit,
+      buildingCommitMessage: targetMessage, startedAt: new Date(startMs).toISOString(),
+      codemagicBuildId: null, codemagicRequestId: requestId, error: null,
+      lastAttemptedCommit: targetCommit, codemagicStage: "queued",
+      buildProgress: { percent: 5, stage: "正在提交 Codemagic 构建任务…" } });
     saveState();
-    appendLog(`=== 开始 Android 构建 (${targetCommit.slice(0, 8)}) · ${triggerReason} ===`);
-    appendLog(`提交说明: ${targetMessage}`);
-
+    appendLog(`=== ${resume ? "恢复跟踪" : "开始"} Codemagic Android 构建 (${targetCommit.slice(0, 8)}) · ${triggerReason} ===`);
     try {
-      // 1. Ensure clean local checkout at targetCommit
-      await execFileAsync("git", ["-C", CHECKOUT_DIR, "fetch", "origin", "master"], {
-        timeout: 60000,
-        env: { ...process.env, GIT_SSH_COMMAND: `ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no` },
-      });
-      await execFileAsync("git", ["-C", CHECKOUT_DIR, "checkout", "-f", targetCommit], { timeout: 20000 });
-
-      // 2. Wake up US EC2 builder instance
-      state.buildProgress = { percent: 12, stage: "正在唤醒美国俄勒冈构建机 (i-013abbfb294833a94)..." };
-      saveState();
-      let srv = await queryBuilderInstance(true);
-      if (srv.state === "stopping") {
-        appendLog("构建机正在关机中，等待完全停止后重新唤醒...");
-        for (let i = 0; i < 36; i++) {
-          await new Promise((r) => setTimeout(r, 5000));
-          srv = await queryBuilderInstance(true);
-          if (srv.state === "stopped") break;
-        }
-      }
-      if (srv.state !== "running") {
-        appendLog("发送 AWS EC2 开机指令 (us-west-2 / i-013abbfb294833a94)...");
-        await execFileAsync(
-          "aws",
-          ["--no-cli-pager", "ec2", "start-instances", "--region", US_REGION, "--instance-ids", US_INSTANCE_ID, "--output", "json"],
-          { timeout: 15000 }
-        );
-      }
-
-      // Wait for running + SSH ready
-      state.buildProgress = { percent: 20, stage: "等待美国构建机启动并建立安全 SSH 通道..." };
-      saveState();
-      let sshReady = false;
-      for (let attempt = 1; attempt <= 40; attempt++) {
-        await new Promise((r) => setTimeout(r, 5000));
-        srv = await queryBuilderInstance(true);
-        if (srv.state !== "running") continue;
-        try {
-          await execFileAsync(
-            "ssh",
-            ["-i", SSH_KEY_PATH, "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=6", `ubuntu@${US_BUILDER_IP}`, " date +%s > /run/xuanyu-last-active 2>/dev/null || true"],
-            { timeout: 10000 }
-          );
-          sshReady = true;
-          break;
-        } catch {
-          try {
-            await execFileAsync(
-              "aws",
-              [
-                "--no-cli-pager",
-                "ec2-instance-connect",
-                "send-ssh-public-key",
-                "--region",
-                US_REGION,
-                "--instance-id",
-                US_INSTANCE_ID,
-                "--instance-os-user",
-                "ubuntu",
-                "--ssh-public-key",
-                `file://${SSH_KEY_PATH}.pub`,
-                "--output",
-                "json",
-              ],
-              { timeout: 10000 }
-            );
-          } catch {}
-        }
-      }
-      if (!sshReady) throw new Error("美国构建机 SSH 连接超时");
-
-      // 3. Pull source code directly from GitHub on US builder
-      state.buildProgress = { percent: 30, stage: "美国构建机正在从 GitHub 仓库拉取最新源码..." };
-      saveState();
-      appendLog("SSH 已连通，正在配置 GitHub SSH 并在美国构建机直接从 GitHub 拉取源码...");
-      await execFileAsync(
-        "scp",
-        [
-          "-i",
-          SSH_KEY_PATH,
-          "-o",
-          "StrictHostKeyChecking=no",
-          SSH_KEY_PATH,
-          `ubuntu@${US_BUILDER_IP}:/home/ubuntu/.ssh/github_ed25519`,
-        ],
-        { timeout: 20000 }
-      );
-
-      // 4. Execute git fetch/checkout from GitHub + Flutter APK release build on US builder
-      state.buildProgress = { percent: 42, stage: "正在拉取 GitHub 仓库并解析 Flutter 依赖..." };
-      saveState();
-      appendLog("开始在远程构建机从 GitHub 拉取最新提交并执行 Flutter Android Release 编译...");
-
-      await new Promise((resolve, reject) => {
-        const remoteScript = `
-set -euo pipefail
-chmod 600 /home/ubuntu/.ssh/github_ed25519
-export GIT_SSH_COMMAND="ssh -i /home/ubuntu/.ssh/github_ed25519 -o StrictHostKeyChecking=no"
-export PATH="/data/flutter-3.44.6-x64/bin:/data/android-sdk/platform-tools:$PATH"
-export PUB_CACHE="/home/ubuntu/.pub-cache"
-export GRADLE_USER_HOME="/home/ubuntu/.gradle"
-(
-  sudo touch /run/xuanyu-last-active 2>/dev/null || true
-  sudo chown ubuntu:ubuntu /run/xuanyu-last-active 2>/dev/null || true
-  while true; do
-    { date +%s > /run/xuanyu-last-active; } 2>/dev/null || true
-    sleep 20
-  done
-) &
-HEARTBEAT_PID=$!
-trap 'kill $HEARTBEAT_PID 2>/dev/null || true' EXIT
-
-cd /data/xuanyu-build-console/repo
-git remote set-url origin ${GITHUB_SSH_URL}
-git fetch origin master
-git checkout -f ${targetCommit}
-git reset --hard ${targetCommit}
-echo "flutter.sdk=/data/flutter-3.44.6-x64" > android/local.properties
-echo "sdk.dir=/data/android-sdk" >> android/local.properties
-cat > android/gradle.properties << 'EOG'
-org.gradle.jvmargs=-Xmx2304M -XX:MaxMetaspaceSize=1G -Dfile.encoding=UTF-8
-android.useAndroidX=true
-android.enableJetifier=true
-android.builtInKotlin=false
-android.newDsl=false
-org.gradle.workers.max=2
-org.gradle.parallel=true
-org.gradle.daemon=true
-kotlin.compiler.execution.strategy=in-process
-EOG
-flutter pub get
-flutter build apk --release --dart-define=APP_DISTRIBUTION_CHANNEL=official_apk
-`;
-        const child = spawn(
-          "ssh",
-          [
-            "-i",
-            SSH_KEY_PATH,
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "ServerAliveInterval=20",
-            "-o",
-            "ServerAliveCountMax=30",
-            `ubuntu@${US_BUILDER_IP}`,
-            "bash -s",
-          ],
-          { stdio: ["pipe", "pipe", "pipe"] }
-        );
-        child.stdin.write(remoteScript);
-        child.stdin.end();
-
-        const onChunk = (chunk) => {
-          const lines = chunk.toString("utf8").split(/\r?\n/).filter(Boolean);
-          for (const line of lines) {
-            if (/xuanyu-last-active:\s*Permission denied/i.test(line)) continue;
-            appendLog(line);
-            if (/Got dependencies|Resolving dependencies/i.test(line)) {
-              state.buildProgress = { percent: 50, stage: "依赖解析完成，正在启动 Gradle 编译..." };
-            } else if (/assembleRelease|compileReleaseKotlin|compileFlutterBuildRelease/i.test(line)) {
-              state.buildProgress = { percent: 72, stage: "正在编译 Dart AOT 与 Android 原生模块..." };
-            } else if (/packageRelease|validateReleaseSigning/i.test(line)) {
-              state.buildProgress = { percent: 86, stage: "正在使用正式证书签名并打包 APK..." };
-            } else if (/Built build\/app\/outputs\/flutter-apk\/app-release\.apk/i.test(line)) {
-              state.buildProgress = { percent: 92, stage: "编译完成，准备回传 APK 产物..." };
-            }
-          }
-          saveState();
-        };
-        child.stdout.on("data", onChunk);
-        child.stderr.on("data", onChunk);
-        child.on("error", reject);
-        child.on("close", (code) => {
-          if (code === 0) resolve();
-          else reject(new Error(`远程构建退出码 ${code}`));
-        });
-      });
-
-      // 5. Pull APK back to Osaka server
-      state.buildProgress = { percent: 95, stage: "正在回传 APK 至维特服务器并校验..." };
-      saveState();
-      const destDir = path.join(RELEASES_DIR, targetCommit);
-      fs.mkdirSync(destDir, { recursive: true });
-      const tmpApk = path.join(destDir, "app-release.apk.part");
-      const finalApk = path.join(destDir, "app-release.apk");
-
-      await execFileAsync(
-        "scp",
-        [
-          "-i",
-          SSH_KEY_PATH,
-          "-o",
-          "StrictHostKeyChecking=no",
-          `ubuntu@${US_BUILDER_IP}:/data/xuanyu-build-console/repo/build/app/outputs/flutter-apk/app-release.apk`,
-          tmpApk,
-        ],
-        { timeout: 180000 }
-      );
-      const st = fs.statSync(tmpApk);
-      if (st.size < 20 * 1024 * 1024) {
-        throw new Error("回传的 APK 文件大小异常");
-      }
-      fs.renameSync(tmpApk, finalApk);
-      fs.copyFileSync(finalApk, path.join(BUILD_DIR, "Xuanyu-app-release.apk"));
-
-      const durationSeconds = Math.max(1, Math.round((Date.now() - startMs) / 1000));
-      state.status = "success";
-      state.buildingCommit = null;
-      state.buildingCommitMessage = null;
-      state.lastSuccessfulCommit = targetCommit;
-      state.lastSuccessfulCommitMessage = targetMessage;
-      state.artifact = `/releases/${targetCommit}/app-release.apk`;
-      state.artifactUpdatedAt = new Date().toISOString();
-      state.durationSeconds = durationSeconds;
-      state.error = null;
-      state.buildProgress = { percent: 100, stage: "构建成功 · 正在自动关闭美国构建机" };
-      saveState();
-
-      await syncReleasesWithGit();
-      appendLog(`=== Android 构建成功 (${targetCommit.slice(0, 8)})，耗时 ${durationSeconds}s ===`);
-    } catch (err) {
-      state.status = "failed";
-      state.buildingCommit = null;
-      state.buildingCommitMessage = null;
-      state.error = err.message || "构建失败";
-      state.buildProgress = { percent: 0, stage: `构建失败：${state.error}` };
-      saveState();
-      appendLog(`=== Android 构建失败: ${state.error} ===`);
-    } finally {
-      await stopBuilderInstance("Android 构建流程结束");
-      if (state.status === "success") {
-        state.buildProgress = { percent: 100, stage: "构建完成 · 美国构建机已自动关机" };
+      if (!resume) {
+        state.codemagicBuildId = await codemagicBuilder.start(targetCommit, requestId);
         saveState();
       }
-      buildInFlight = null;
-    }
+      const buildId = state.codemagicBuildId;
+      let build, lastStage = "", previousLogs = "";
+      const labels = { initializing: "正在初始化", queued: "等待免费运行器", waiting: "等待免费运行器",
+        preparing: "正在准备 macOS M2 构建机", fetching: "正在拉取玄遇源码",
+        testing: "正在验证源码", building: "正在编译并签名 APK", publishing: "正在保存构建产物", finishing: "正在清理临时环境" };
+      const progress = { initializing: 5, queued: 8, waiting: 8, preparing: 12, fetching: 20, testing: 30,
+        building: 55, publishing: 90, finishing: 94 };
+      // Free runners can queue; there is still a 55 minute compilation timeout in YAML.
+      for (let n = 0; n < 720; n++) {
+        try { build = await codemagicBuilder.read(buildId); }
+        catch (e) { if (n < 4 && /404/.test(e.message)) { await new Promise(r => setTimeout(r, 10000)); continue; } throw e; }
+        if (["finished", "failed", "canceled", "timeout", "skipped"].includes(build.status)) break;
+        const actions = await codemagicBuilder.actions(buildId);
+        const active = actions.find(a => a.started_at && !a.finished_at);
+        const stage = `Codemagic：${labels[build.status] || build.status}${active?.name ? " · " + active.name : ""}`;
+        state.codemagicStage = ["queued", "waiting", "initializing"].includes(build.status) ? "queued" : "running";
+        state.buildProgress = { percent: progress[build.status] || 15, stage };
+        if (stage !== lastStage) { appendLog(stage); lastStage = stage; }
+        if (n % 4 === 0 && !["initializing", "queued", "waiting"].includes(build.status)) {
+          try {
+            const currentLogs = await codemagicBuilder.logs(buildId);
+            if (currentLogs && currentLogs !== previousLogs) {
+              appendLog(currentLogs.startsWith(previousLogs) ? currentLogs.slice(previousLogs.length) : currentLogs);
+              previousLogs = currentLogs;
+            }
+          } catch { /* Keep following the build when logs are temporarily unavailable. */ }
+        }
+        saveState();
+        await new Promise(r => setTimeout(r, 15000));
+      }
+      if (build?.status !== "finished") {
+        try { appendLog(await codemagicBuilder.logs(buildId)); } catch {}
+        throw Error(`Codemagic 构建未完成 (${build?.status || "unknown"})，任务 ${buildId}`);
+      }
+      state.buildProgress = { percent: 96, stage: "正在回传 APK 并核验正式签名、版本和 SHA-256…" };
+      saveState();
+      const destination = path.join(RELEASES_DIR, targetCommit);
+      const metadata = await codemagicBuilder.receive(build, { commit: targetCommit, requestId }, destination);
+      fs.copyFileSync(path.join(destination, "app-release.apk"), path.join(BUILD_DIR, "Xuanyu-app-release.apk"));
+      Object.assign(state, { status: "success", buildingCommit: null, buildingCommitMessage: null,
+        lastSuccessfulCommit: targetCommit, lastSuccessfulCommitMessage: targetMessage,
+        artifact: `/releases/${targetCommit}/app-release.apk`, artifactUpdatedAt: new Date().toISOString(),
+        durationSeconds: Math.max(1, Math.round((Date.now() - startMs) / 1000)), error: null,
+        codemagicStage: "ready", buildProgress: { percent: 100, stage: "Codemagic 构建完成 · APK 已验证并可下载" } });
+      saveState();
+      await syncReleasesWithGit();
+      appendLog(`=== Codemagic 构建成功 · ${metadata.versionName} (${metadata.versionCode}) · 签名与 SHA-256 校验通过 ===`);
+    } catch (e) {
+      Object.assign(state, { status: "failed", buildingCommit: null, buildingCommitMessage: null,
+        error: e.message || "Codemagic 构建失败", codemagicStage: "ready",
+        buildProgress: { percent: 0, stage: `构建失败：${e.message}` } });
+      saveState(); appendLog(`=== Codemagic 构建失败：${state.error} ===`);
+    } finally { buildInFlight = null; }
   })();
   return buildInFlight;
 }
@@ -810,7 +578,7 @@ flutter build apk --release --dart-define=APP_DISTRIBUTION_CHANNEL=official_apk
 let pollInFlight = false;
 
 async function checkGitHubForUpdates(forceBuild = false) {
-  if (pollInFlight) return;
+  if (pollInFlight || buildInFlight) return;
   pollInFlight = true;
   try {
     await execFileAsync(
@@ -827,7 +595,7 @@ async function checkGitHubForUpdates(forceBuild = false) {
     if (!head) return;
 
     const headApkExists = fs.existsSync(apkFileFor(head.commit));
-    if (forceBuild || (!headApkExists && state.lastAttemptedCommit !== head.commit)) {
+    if (forceBuild) {
       state.lastAttemptedCommit = head.commit;
       saveState();
       void runAndroidBuild(
@@ -866,7 +634,10 @@ function readBody(req, callback) {
   });
 }
 
-// Initialize state from git checkout on startup
+// Resume monitoring after service restarts, without starting duplicate paid/free jobs.
+if (state.status === "building" && state.codemagicBuildId && state.buildingCommit) {
+  void runAndroidBuild(state.buildingCommit, state.buildingCommitMessage, "服务重启后恢复跟踪", true);
+}
 void syncReleasesWithGit();
 setInterval(() => {
   void checkGitHubForUpdates(false);
@@ -962,13 +733,14 @@ http
           fullName: GITHUB_REPO,
           branch: "master",
           sshConnected: true,
+          buildProvider: "codemagic",
           lastCheckAt: state.lastCheckAt,
           pollIntervalSeconds: 45,
         },
         android: {
           status: state.status === "idle" && state.lastSuccessfulCommit ? "success" : state.status,
           progress: state.status === "building" ? (state.buildProgress?.percent || 15) : 100,
-          stage: state.buildProgress?.stage || "构建完成 · 美国构建机已自动关机",
+          stage: state.buildProgress?.stage || "Codemagic 构建服务已就绪",
           latestCommit: state.latestCommit,
           latestCommitMessage: state.latestCommitMessage,
           latestCommitAt: state.latestCommitAt,
@@ -1010,7 +782,7 @@ http
         void runAndroidBuild(commitObj.commit, commitObj.message, "手动触发构建");
         sendJson(res, 202, {
           ok: true,
-          message: "已启动美国构建机并开始编译 Android APK，完成后将自动关机",
+          message: "已提交 Codemagic 免费构建，验证完成后可在这里下载 APK",
           commit: commitObj.commit,
         });
       });

@@ -123,12 +123,57 @@ function createFilesService({
     req.pipe(output);
   }
 
+  function uploadBase64(req, res, readJsonBody, directory = dataDir) {
+    readJsonBody(req, 36 * 1024 * 1024, (error, body) => {
+      if (error) {
+        sendJson(res, error.status || 400, { error: error.message || "无法读取上传内容" });
+        return;
+      }
+      const raw = String(body?.contentBase64 || "").trim();
+      if (!raw) {
+        sendJson(res, 400, { error: "缺少文件内容" });
+        return;
+      }
+      const buffer = Buffer.from(raw, "base64");
+      if (buffer.length > 25 * 1024 * 1024) {
+        sendJson(res, 413, { error: "桌面端直传单文件上限 25 MB，更大文件请用「+ 上传文件」" });
+        return;
+      }
+      fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+      const originalName = parseName(encodeURIComponent(String(body?.name || "file")));
+      const mimeType = String(body?.mimeType || "application/octet-stream").slice(0, 160);
+      const id = `${Date.now()}-${crypto.randomUUID()}`;
+      const extension = path.extname(originalName).slice(0, 18);
+      const storedName = `${id}${extension}`;
+      const destination = path.join(directory, storedName);
+      try {
+        fs.writeFileSync(destination, buffer, { flag: "wx", mode: 0o600 });
+        const record = {
+          id,
+          originalName,
+          storedName,
+          size: buffer.length,
+          mimeType,
+          sha256: crypto.createHash("sha256").update(buffer).digest("hex"),
+          uploadedAt: new Date().toISOString(),
+        };
+        fs.writeFileSync(metadataPath(id, directory), `${JSON.stringify(record)}\n`, { flag: "wx", mode: 0o600 });
+        invalidateRecordCache(directory);
+        sendJson(res, 201, { file: record });
+      } catch {
+        fs.rmSync(destination, { force: true });
+        sendJson(res, 500, { error: "服务器无法完成保存" });
+      }
+    });
+  }
+
   return {
     metadataPath,
     invalidateRecordCache,
     readRecords,
     listFiles,
     upload,
+    uploadBase64,
   };
 }
 
